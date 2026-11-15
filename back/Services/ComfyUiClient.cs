@@ -80,8 +80,7 @@ public class ComfyUiClient : IAsyncDisposable
     }
 
     ///<summary>提交并等待执行完成，返回 prompt_id</summary>
-    public async Task<string> ExecutePromptAsync(
-        string promptJson, IProgress<ComfyProgress>? progress, TimeSpan timeout, CancellationToken ct = default)
+    public async Task<string> ExecutePromptAsync(string promptJson, IProgress<ComfyProgress>? progress, TimeSpan timeout, CancellationToken ct = default)
     {
         //超时统一在这里管：提交+执行+轮询一并计入，到点即抛中文超时
         using var timeoutCts = new CancellationTokenSource(timeout);

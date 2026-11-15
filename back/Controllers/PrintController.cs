@@ -13,8 +13,7 @@ namespace ERental.Controllers;
 [Route("api/[controller]")]
 //这里刻意只写[Authorize]（= 仅要求已登录）
 [Authorize(Policy = Policies.AnyAuthenticated)]
-public class PrintController(
-    PrintService svc, ReportService reportSvc, OrderService orderSvc) : ControllerBase
+public class PrintController(PrintService svc, ReportService reportSvc, OrderService orderSvc) : ControllerBase
 {
     private readonly PrintService _svc = svc;
     private readonly ReportService _reportSvc = reportSvc;

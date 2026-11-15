@@ -85,6 +85,78 @@ public class SettleOrderBriefDto
 }
 
 /// <summary>
+/// 财务对账结果：汇总口径（应收 / 实收 / 退款 / 补缴）之外，
+/// 再给出「分渠道流水 vs 系统收款」对照表与逐笔异常明细。
+/// 这张表要回答的不是「一共收了多少钱」，而是「哪一笔钱的凭据对不上」。
+/// </summary>
+public class ReconcileDto
+{
+    public string StartDate { get; init; } = "";
+    public string EndDate { get; init; } = "";
+    public int OrderCount { get; init; }
+    public int PaidCount { get; init; }
+    public int SettleCount { get; init; }
+    public decimal ExpectedRent { get; init; }
+    public decimal ExpectedDeposit { get; init; }
+    public decimal ExpectedTotal { get; init; }
+    public decimal ActualReceived { get; init; }
+    public decimal TotalRefund { get; init; }
+    public decimal TotalSupplement { get; init; }
+    public decimal NetIncome { get; init; }
+    public decimal Difference { get; init; }
+    public bool IsBalanced { get; init; }
+    public string Remark { get; init; } = "";
+
+    /// <summary>分渠道对照：系统收款（已到账）vs 渠道流水（带外部交易号的部分）</summary>
+    public List<ReconcileChannelDto> Channels { get; init; } = [];
+
+    /// <summary>逐笔异常：缺渠道流水、退款超额、金额与订单应收不符、到账未更新状态等</summary>
+    public List<ReconcileIssueDto> Issues { get; init; } = [];
+}
+
+/// <summary>单个收款渠道的对账行</summary>
+public class ReconcileChannelDto
+{
+    /// <summary>渠道名（支付宝 / 微信 / 银行卡 / 现金 / 未标注）</summary>
+    public string Channel { get; init; } = "";
+    /// <summary>是否为线上渠道（有外部流水可核）</summary>
+    public bool IsElectronic { get; init; }
+    /// <summary>系统收款笔数</summary>
+    public int SystemCount { get; init; }
+    /// <summary>系统收款金额（已到账）</summary>
+    public decimal SystemAmount { get; init; }
+    /// <summary>其中带渠道交易号的笔数</summary>
+    public int FlowCount { get; init; }
+    /// <summary>其中带渠道交易号的金额</summary>
+    public decimal FlowAmount { get; init; }
+    /// <summary>退款金额</summary>
+    public decimal RefundAmount { get; init; }
+    /// <summary>净收款 = 系统收款 - 退款</summary>
+    public decimal NetAmount { get; init; }
+    /// <summary>差异 = 系统收款 - 渠道流水（线上渠道 &gt; 0 表示有到账记录缺外部凭据）</summary>
+    public decimal Difference { get; init; }
+    /// <summary>一句话说明</summary>
+    public string Note { get; init; } = "";
+}
+
+/// <summary>对账异常明细行</summary>
+public class ReconcileIssueDto
+{
+    /// <summary>订单号（补缴/取消单同样落到这里）</summary>
+    public string OrderNo { get; init; } = "";
+    /// <summary>收款渠道</summary>
+    public string Channel { get; init; } = "";
+    /// <summary>异常类型：缺渠道流水 / 退款超额 / 收款金额不符 / 到账未更新状态 / 已取消订单有收款</summary>
+    public string Kind { get; init; } = "";
+    /// <summary>系统记录金额</summary>
+    public decimal Amount { get; init; }
+    /// <summary>应有金额（不适用时为 0）</summary>
+    public decimal Expected { get; init; }
+    /// <summary>补充说明（含交易号等排障信息）</summary>
+    public string Detail { get; init; } = "";
+}
+
+/// <summary>
 /// 结算记录的**分页信封**：total 是区间内的总条数（前端拿它算页数、显示「共 N 条」），
 /// items 才是当页数据。原来一次性返回全量数组，前端只能靠本地过滤，记录一多就整页变慢。
 /// </summary>

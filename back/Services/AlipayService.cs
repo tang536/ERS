@@ -1,7 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.Data;
-using System.Globalization;
-using System.Security.Cryptography;
+﻿using System.Data;
 using System.Text;
 using ERental.Data;
 using ERental.DTOs;
@@ -13,12 +10,13 @@ using Microsoft.Extensions.Options;
 namespace ERental.Services;
 
 ///<summary>支付宝收单服务：下单（生成收银台跳转链接）、异步回调验签与入账、订单状态查询</summary>
-public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions<AlipayOptions> opt, MemberService member, MessageService messages, ILogger<AlipayService> logger, IHttpClientFactory httpFactory, IConfiguration configuration)   //NOSONAR 依赖由 DI 容器逐个注入，合并参数会改变公共构造函数签名并影响所有调用方，故保留 8 个
+public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions<AlipayOptions> opt, MemberService member, MessageService messages, PayNotifyDeduplicator dedup, ILogger<AlipayService> logger, IHttpClientFactory httpFactory, IConfiguration configuration)   //NOSONAR 依赖由 DI 容器逐个注入，合并参数会改变公共构造函数签名并影响所有调用方，故保留 9 个
 {
     private readonly AppDbContext _db = db;
     private readonly PayConfigService _payConfig = payConfig;
     private readonly MemberService _member = member;
     private readonly MessageService _messages = messages;
+    private readonly PayNotifyDeduplicator _dedup = dedup;
     private readonly ILogger<AlipayService> _logger = logger;
     private readonly IHttpClientFactory _httpFactory = httpFactory;
     private readonly IConfiguration _configuration = configuration;
@@ -118,14 +116,15 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
             return "failure";
         }
 
-        //② 重放防护：验签通过后，5 分钟窗口内「完全相同的报文」只放行一次
+        //② 重放防护：验签通过后，5 分钟窗口内「完全相同的报文」只放行一次。
+        //   登记落在 pay_notify_log 唯一键上，多实例共享同一份判定（旧实现只在进程内有效）。
         form.TryGetValue("notify_id", out var notifyId);
         form.TryGetValue(AlipayParamOutTradeNo, out var outTradeNo);
         form.TryGetValue(AlipayParamTradeStatus, out var tradeStatus);
         form.TryGetValue(AlipayParamTradeNo, out var tradeNo);
         form.TryGetValue(AlipayParamTotalAmount, out var totalAmount);
-        var replayKey = PayNotifyGuard.BuildKey("alipay", sign, notifyId, outTradeNo, tradeStatus, tradeNo, totalAmount);
-        if (PayNotifyGuard.IsDuplicate(replayKey))
+        var replayKey = PayNotifyDeduplicator.BuildKey("alipay", sign, notifyId, outTradeNo, tradeStatus, tradeNo, totalAmount);
+        if (!await _dedup.TryRegisterAsync("alipay", outTradeNo, replayKey))
         {
             _logger.LogInformation("支付宝回调重复投递已忽略（订单 {OrderNo}）", outTradeNo ?? "(无)");
             return "success";//幂等确认：告诉支付宝已收到，停止重推
@@ -202,7 +201,7 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
         if (outTradeNo.StartsWith("HY"))
         {
             //与订单/补缴入账同一严格解析口径
-            var memberPaid = PayNotifyGuard.TryParseAmount(totalAmount, out var pa) ? pa : 0m;
+            var memberPaid = PayNotifyDeduplicator.TryParseAmount(totalAmount, out var pa) ? pa : 0m;
             var (mOk, mMsg, _, _) = await _member.ApplyPaidPurchaseAsync(outTradeNo, tradeNo, payType, memberPaid);
             _logger.LogInformation("会员购买 {TradeNo} 入账：{Result}（{Message}）", outTradeNo, mOk ? "成功" : "拒绝", mMsg);
             return (mOk, mMsg);
@@ -258,7 +257,7 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
 
             //③ 金额核对
             var expect = order.TotalRent + order.Deposit;
-            if (!PayNotifyGuard.TryParseAmount(totalAmount, out var paid))
+            if (!PayNotifyDeduplicator.TryParseAmount(totalAmount, out var paid))
             {
                 _logger.LogWarning("订单 {OrderNo} 支付通知缺少合法金额（total_amount={Amount}），拒绝入账", outTradeNo, totalAmount);
                 await tx.RollbackAsync();
@@ -327,7 +326,7 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
             }
 
             //金额核对：先严格解析，空串/非法值一律拒绝，再按补缴单应收金额 p.PayAmount 核对
-            if (!PayNotifyGuard.TryParseAmount(totalAmount, out var paid))
+            if (!PayNotifyDeduplicator.TryParseAmount(totalAmount, out var paid))
             {
                 _logger.LogWarning("补缴单 {OutTradeNo} 支付通知缺少合法金额（total_amount={Amount}），拒绝入账", outTradeNo, totalAmount);
                 await tx.RollbackAsync();
@@ -639,54 +638,5 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
         }
         try { return Encoding.GetEncoding("GBK").GetString(bytes); }
         catch { return Encoding.UTF8.GetString(bytes); }
-    }
-}
-
-///<summary>支付通知入账前的公共防护：严格金额解析+进程内重放去重（支付宝/微信/银行卡回调共用）</summary>
-internal static class PayNotifyGuard
-{
-    private static readonly TimeSpan Window = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(1);
-    private static readonly ConcurrentDictionary<string, DateTime> Seen = new();
-    private static long _lastCleanupTicks = AppClock.UtcNow.Ticks;
-
-    ///<summary>严格解析金额：空串/空白/非法值一律失败</summary>
-    public static bool TryParseAmount(string? text, out decimal value)
-    {
-        value = 0m;
-        return !string.IsNullOrWhiteSpace(text)
-               && decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out value);
-    }
-
-    ///<summary>登记报文键：窗口内首次出现返回 false（放行），重复出现返回 true（应忽略）</summary>
-    public static bool IsDuplicate(string key)
-    {
-        var now = AppClock.UtcNow;
-        MaybeCleanup(now);
-
-        //原子登记：并发下只有一个线程 TryAdd 成功，其余线程命中「窗口内已存在」被判重复
-        if (Seen.TryAdd(key, now)) return false;
-        if (Seen.TryGetValue(key, out var first) && now - first <= Window) return true;
-        //已过窗口的旧条目：刷新时间，按新一轮首次放行
-        Seen[key] = now;
-        return false;
-    }
-
-    ///<summary>把「通道+关键字段」拼成稳定键</summary>
-    public static string BuildKey(string channel, params string?[] parts)
-    {
-        var raw = channel + "\u001f" + string.Join("\u001f", parts.Select(p => p ?? ""));
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
-    }
-
-    ///<summary>按固定间隔清理过期条目</summary>
-    private static void MaybeCleanup(DateTime now)
-    {
-        var last = Interlocked.Read(ref _lastCleanupTicks);
-        if (now.Ticks - last < CleanupInterval.Ticks) return;
-        //只让一个线程执行清理
-        if (Interlocked.CompareExchange(ref _lastCleanupTicks, now.Ticks, last) != last) return;
-        foreach (var kv in Seen)
-            if (now - kv.Value > Window) Seen.TryRemove(kv.Key, out _);
     }
 }

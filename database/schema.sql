@@ -433,3 +433,18 @@ CREATE TABLE IF NOT EXISTS `message` (
 -- é¿å… MySQL é»˜è®¤çš„ 50 ç§’æŠŠè¯·æ±‚çº¿ç¨‹ä¸Žè¿žæŽ¥æ± ä¸€èµ·æ‹–ä½ï¼ˆè§ DbRowLock.PrepareAsyncï¼‰ã€‚
 -- äº‹åŠ¡éš”ç¦»çº§åˆ«ç»Ÿä¸€ç”¨ READ COMMITTEDï¼Œåªé”å‘½ä¸­çš„è¡Œï¼Œä¸é¢å¤–åŠ é—´éš™é”ã€‚
 
+
+-- Ö§¸¶»Øµ÷È¥ÖØµÇ¼Ç±í£¨pay_notify_log£©
+-- Ö§¸¶±¦ / Î¢ÐÅ / ÒøÐÐ¿¨ÈýÍ¨µÀ¹²ÓÃ£ºreplay_key Î¨Ò»¼ü×öÔ­×ÓµÇ¼Ç£¬¶àÊµÀý¹²ÏíÍ¬Ò»·ÝÅÐ¶¨¡£
+-- ¹ýÆÚ¼ÇÂ¼ÓÉ PayNotifyDeduplicator ¶¨ÆÚÇåÀí£»´°¿Ú¹ýºóÍ¬Ò»±¨ÎÄ¿ÉÖØÐÂµÇ¼Ç£¬ÈëÕËÃÝµÈÓÉÒµÎñ×´Ì¬ÅÐ¶Ï¶µµ×¡£
+CREATE TABLE IF NOT EXISTS `pay_notify_log` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `replay_key` CHAR(64) NOT NULL COMMENT '±¨ÎÄÖ¸ÎÆ£¨Í¨µÀ+¹Ø¼ü×Ö¶ÎµÄ SHA-256£©',
+  `channel` VARCHAR(20) NOT NULL COMMENT 'Ö§¸¶Í¨µÀ£¨alipay/wechat/bank£©',
+  `order_no` VARCHAR(40) DEFAULT NULL COMMENT 'ÒµÎñµ¥ºÅ£¨±ãÓÚÅÅÕÏ£©',
+  `created_at` DATETIME NOT NULL COMMENT 'µÇ¼ÇÊ±¼ä',
+  `expires_at` DATETIME NOT NULL COMMENT 'È¥ÖØ´°¿Ú½ØÖ¹Ê±¼ä',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_pay_replay` (`replay_key`),
+  KEY `idx_pay_expires` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ö§¸¶»Øµ÷È¥ÖØµÇ¼Ç±í';

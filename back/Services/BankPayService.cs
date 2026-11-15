@@ -5,11 +5,11 @@ using ERental.DTOs;
 namespace ERental.Services;
 
 ///<summary>银行卡支付服务（正式通道）：对接通用收银网关协议的跳转支付</summary>
-public class BankPayService(
-    PayConfigService payConfig, AlipayService alipay, IHttpClientFactory httpFactory, ILogger<BankPayService> logger)
+public class BankPayService(PayConfigService payConfig, AlipayService alipay, PayNotifyDeduplicator dedup, IHttpClientFactory httpFactory, ILogger<BankPayService> logger)
 {
     private readonly PayConfigService _payConfig = payConfig;
     private readonly AlipayService _alipay = alipay;
+    private readonly PayNotifyDeduplicator _dedup = dedup;
     private readonly IHttpClientFactory _httpFactory = httpFactory;
     private readonly ILogger<BankPayService> _logger = logger;
 
@@ -380,16 +380,16 @@ public class BankPayService(
         form.TryGetValue(BankParamTotalAmount, out var amt);
         form.TryGetValue(BankParamTimestamp, out var ts);
 
-        //② 重放防护：5 分钟窗口内「完全相同的报文」只放行一次
-        var replayKey = PayNotifyGuard.BuildKey("bank", actual, outTradeNo, tradeStatus, tradeNo, amt, ts);
-        if (PayNotifyGuard.IsDuplicate(replayKey))
+        //② 重放防护：5 分钟窗口内「完全相同的报文」只放行一次（pay_notify_log 唯一键，多实例共享）
+        var replayKey = PayNotifyDeduplicator.BuildKey("bank", actual, outTradeNo, tradeStatus, tradeNo, amt, ts);
+        if (!await _dedup.TryRegisterAsync("bank", outTradeNo, replayKey))
         {
             _logger.LogInformation("银行卡回调重复投递已忽略（订单 {OrderNo}）", outTradeNo ?? "(无)");
             return (true, "重复通知已忽略。");
         }
 
         //③ 金额校验：total_amount 缺失/非法一律拒绝
-        if (string.IsNullOrWhiteSpace(amt) || !decimal.TryParse(amt, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out _))
+        if (!PayNotifyDeduplicator.TryParseAmount(amt, out _))
         {
             _logger.LogWarning("银行卡回调缺少合法金额（订单 {OrderNo}，total_amount={Amount}），已拒绝", outTradeNo ?? "(无)", amt ?? "");
             return (false, "回调缺少合法金额（total_amount），已拒绝。");

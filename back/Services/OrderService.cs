@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿using System.Globalization;
+using System.Security.Cryptography;
 using System.Data;
 using ERental.Data;
 using ERental.DTOs;
@@ -23,8 +24,11 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     ///<summary>租车交易的硬性门槛：必须完成实名认证（已登记身份证号+手机号）</summary>
     private const string RealNameRequiredMessage = "该客户尚未完成实名认证（缺身份证号或手机号），请先补录资料后再租车";
 
-    ///<summary>待支付订单的有效期（分钟）</summary>
-    private const int PendingPayTimeoutMinutes = 15;
+    ///<summary>待支付订单的默认有效期（分钟）：可在系统配置 pending_pay_timeout_minutes 覆盖</summary>
+    private const int DefaultPendingPayTimeoutMinutes = 15;
+
+    ///<summary>待支付超时的配置键</summary>
+    private const string KeyPendingPayTimeout = "pending_pay_timeout_minutes";
 
     ///<summary>「已发起支付」订单的额外宽限（分钟）</summary>
     private const int PendingPayGraceMinutes = 10;
@@ -38,6 +42,16 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     ///<summary>订单号尾号发号器（进程内自增）</summary>
     private static int _orderSeq = Random.Shared.Next(0, 10_000);
 
+    ///<summary>柜台实收渠道归一：与前端 PAY_TYPES、补缴收款保持同一口径，未知渠道直接拒绝而不是污染报表</summary>
+    private static string NormalizeOfflineChannel(string? raw) => (raw?.Trim() ?? "") switch
+    {
+        "" or "现金" or "线下" or "cash" or "CASH" => "现金",
+        "微信" or "微信支付" or "wechat" or "Wechat" or "WECHAT" => "微信",
+        "支付宝" or "alipay" or "Alipay" => "支付宝",
+        "银行卡" or "银联" or "bank" or "Bank" => "银行卡",
+        var other => throw new BusinessException($"不支持的支付方式「{other}」"),
+    };
+
     ///<summary>惰性回收的最小间隔（秒）：列表页高频访问时不必每次都扫一遍超时单</summary>
     private const int LazyReleaseIntervalSeconds = 30;
 
@@ -47,23 +61,39 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     ///<summary>【兜底回收】把所有超时未支付的订单批量取消并释放车辆</summary>
     public async Task<int> ReleaseExpiredPendingOrders()
     {
-        var deadline = AppClock.Now.AddMinutes(-PendingPayTimeoutMinutes);
+        var timeoutMinutes = await PendingPayTimeoutMinutesAsync();
+        var deadline = AppClock.Now.AddMinutes(-timeoutMinutes);
 
         //快速失败：绝大多数请求到达时并没有超时单，不必为它们拿锁、开事务
         if (!await _db.RentalOrders.AsNoTracking().AnyAsync(o => o.OrderStatus == "待支付" && o.CreateTime < deadline))
             return 0;
 
-        //分批处理：存储过程内部用 FOR UPDATE SKIP LOCKED 圈定一批并提交，最多 20 批
+        //分批处理：存储过程内部用单条 UPDATE ... ORDER BY ... LIMIT 圈定一批并提交，最多 20 批
         var total = 0;
         for (var batch = 0; batch < 20; batch++)
         {
             var released = await DbConcurrency.RunAsync(
-                () => StoredProcedures.CancelExpiredPendingOrdersAsync(_db, PendingPayTimeoutMinutes, PendingPayGraceMinutes, CleanupBatchSize),
+                () => StoredProcedures.CancelExpiredPendingOrdersAsync(_db, timeoutMinutes, PendingPayGraceMinutes, CleanupBatchSize),
                 _logger, "超时订单回收", reset: () => _db.ChangeTracker.Clear());
             total += released;
             if (released < CleanupBatchSize) break;
         }
         return total;
+    }
+
+    ///<summary>
+    /// 待支付有效期（分钟）：读系统配置，缺省或非法值回退 15 分钟。
+    /// 读配置失败不回退成「立即回收」——宁可多等一会儿，也不能因为一次配置读取异常把顾客还没付完的单全取消。
+    /// </summary>
+    private async Task<int> PendingPayTimeoutMinutesAsync()
+    {
+        var raw = await _db.SystemConfigs.AsNoTracking()
+            .Where(c => c.ConfigKey == KeyPendingPayTimeout)
+            .Select(c => c.ConfigValue)
+            .FirstOrDefaultAsync();
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes) && minutes > 0
+            ? minutes
+            : DefaultPendingPayTimeoutMinutes;
     }
 
     ///<summary>惰性回收的节流版本：30 秒内只真正扫一次库</summary>
@@ -114,7 +144,7 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         var rows = await ProjectOrderRowsAsync(ordered, page, pageSize);
 
         //待支付单的截止时间与剩余秒数在内存里算：放进投影的 Select 会被 EF 试图翻译成 SQL而直接 500
-        ApplyPayDeadline(rows);
+        ApplyPayDeadline(rows, await PendingPayTimeoutMinutesAsync());
         return (rows, total);
     }
 
@@ -209,14 +239,14 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     }
 
     ///<summary>给待支付单补上支付截止时间与剩余秒数（其余状态保持 null，前端据此不显示倒计时）</summary>
-    private static void ApplyPayDeadline(List<OrderDto> rows)
+    private static void ApplyPayDeadline(List<OrderDto> rows, int timeoutMinutes)
     {
         var now = AppClock.Now;
         foreach (var dto in rows)
         {
             if (dto.OrderStatus != "待支付") continue;
 
-            dto.PayDeadline = dto.CreateTime.AddMinutes(PendingPayTimeoutMinutes);
+            dto.PayDeadline = dto.CreateTime.AddMinutes(timeoutMinutes);
             dto.PayRemainSeconds = (int)Math.Max(0, (dto.PayDeadline.Value - now).TotalSeconds);
         }
     }
@@ -370,6 +400,11 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
             throw new BusinessException($"该客户信用受限（{verdict.Note}），单次租期不能超过 {verdict.MaxLeaseDays} 天，请先缩短还车时间或结清历史账款");
         var deposit = verdict.ApplyToDeposit(depositBase);
 
+        //支付渠道：柜台单按前台实收渠道落账（未选择时默认现金），线上单统一占位、待发起支付时回写。
+        //注意不要再把渠道写死成「现金」——前台扫微信/刷卡收款时，那会把真实渠道覆盖掉，对账直接失真。
+        //校验放在事务外：非法渠道不必先占车、写单再回滚。
+        var channel = paidImmediately ? NormalizeOfflineChannel(payType) : PayTypePlaceholder;
+
         //── 从这里开始的一次性提交：占车+订单+支付记录 ──为什么必须包在同一个事务里：① 原实现是「先写订单、再改车辆状态、再写支付记录」三次独立提交
         await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
         try
@@ -391,11 +426,10 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
             _db.RentalOrders.Add(order);
             await _db.SaveChangesAsync();
 
-            //支付渠道占位：线上单下单时不选渠道，付款时由发起支付接口更新为实际所选
-            var fallbackChannel = paidImmediately ? "现金" : PayTypePlaceholder;
-            var pay = PaymentRecord.Create(order.OrderId, totalRent + deposit, string.IsNullOrWhiteSpace(payType) ? fallbackChannel : payType.Trim(), "order", null, paidImmediately ? "已支付" : "待支付");
-            //真实支付流水号在支付宝回调时写入
-            if (paidImmediately) pay.MarkPaid("现金", AppClock.Now, "TX" + AppClock.Now.ToString("yyyyMMddHHmmss"));
+            //支付渠道已在事务外归一（见上方 channel），这里只负责落库
+            var pay = PaymentRecord.Create(order.OrderId, totalRent + deposit, channel, "order", null, paidImmediately ? "已支付" : "待支付");
+            //真实支付流水号在支付宝/微信回调时写入；柜台现结用订单号生成唯一凭据，避免同一秒多单撞号
+            if (paidImmediately) pay.MarkPaid(channel, AppClock.Now, "TX" + order.OrderNo);
             _db.PaymentRecords.Add(pay);
             await _db.SaveChangesAsync();
 

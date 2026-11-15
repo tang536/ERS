@@ -57,14 +57,7 @@ public class CarCheckList
     public void AttachToReport(int reportId) => ReportId = reportId;
 
     ///<summary>盘点明细：实际状态与系统状态必须来自同一套合法状态，差异说明长度在实体内收口</summary>
-    public static CarCheckList Create(
-        string checkNo,
-        DateTime checkDate,
-        int vehicleId,
-        string systemStatus,
-        string actualStatus,
-        string? differenceDesc,
-        int? operatorId)
+    public static CarCheckList Create(string checkNo, DateTime checkDate, int vehicleId, string systemStatus, string actualStatus, string? differenceDesc, int? operatorId)
     {
         if (string.IsNullOrWhiteSpace(checkNo)) throw new BusinessException("盘点单号不能为空");
         if (vehicleId <= 0) throw new BusinessException("盘点明细必须关联有效车辆");

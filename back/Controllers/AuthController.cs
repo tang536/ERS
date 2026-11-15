@@ -19,6 +19,9 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
     ///<summary>用户类型默认值：门店员工（JWT 里没有 user_type 声明时按员工处理）</summary>
     private const string UserTypeStaff = "staff";
 
+    ///<summary>头像允许的扩展名（GIF 不做头像，避免动图在列表里乱跳）</summary>
+    private static readonly string[] AvatarImageExt = [".jpg", ".jpeg", ".png", ".webp"];
+
     private readonly AuthService _auth = auth;
     private readonly SystemConfigService _cfg = cfg;
 
@@ -36,9 +39,12 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
         {
             return Ok(new ApiResponse<LoginResponseDto> { Data = await _auth.RefreshAsync(dto.RefreshToken) });
         }
-        catch (Exception ex)
+        catch (BusinessException ex)
         {
-            return Unauthorized(new ApiResponse<object> { Code = 401, Message = ErrorText.Safe(ex), Success = false });
+            //只有「令牌无效/已下线」这类业务拒绝才回 401；
+            //数据库故障、配置错误等未预期异常交给全局中间件按 500 处理，
+            //不能被统一包装成「登录已失效」——那会让用户反复重新登录，掩盖真正的故障。
+            return Unauthorized(new ApiResponse<object> { Code = 401, Message = ex.Message, Success = false });
         }
     }
 
@@ -48,7 +54,7 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
     public async Task<IActionResult> StaffLogin([FromBody] StaffLoginDto dto)
     {
         //真实客户端 IP：ForwardedHeaders 中间件已按「仅信任本机反代」还原 X-Forwarded-For
-        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var ip = ClientIp.Resolve(HttpContext);
         try { return Ok(new ApiResponse<LoginResponseDto> { Data = await _auth.StaffLogin(dto, ip) }); }
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
@@ -58,7 +64,7 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
     [EnableRateLimiting(RateLimitPolicies.Auth)]
     public async Task<IActionResult> CustomerLogin([FromBody] CustomerLoginDto dto)
     {
-        try { return Ok(new ApiResponse<LoginResponseDto> { Data = await _auth.CustomerLogin(dto) }); }
+        try { return Ok(new ApiResponse<LoginResponseDto> { Data = await _auth.CustomerLogin(dto, ClientIp.Resolve(HttpContext)) }); }
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
@@ -146,8 +152,16 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
         const long maxAvatarBytes = 10 * 1024 * 1024;
         if (file.Length > maxAvatarBytes) return BadRequest(new ApiResponse<object> { Code = 400, Message = "头像不能超过 10MB；系统不压缩原图，请直接上传原文件", Success = false });
 
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        if (ext is not (".jpg" or ".jpeg" or ".png" or ".webp")) return BadRequest(new ApiResponse<object> { Code = 400, Message = "仅支持 jpg / jpeg / png / webp 格式", Success = false });
+        string ext;
+        try
+        {
+            //与业务图片同一套魔数校验：内容必须是真实图片，且与扩展名一致
+            ext = await ImageStorage.ValidateImageAsync(file, AvatarImageExt);
+        }
+        catch (BusinessException ex)
+        {
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = ex.Message, Success = false });
+        }
 
         var userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
         var dir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "avatars");

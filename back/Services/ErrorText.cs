@@ -11,16 +11,41 @@ internal static class ErrorText
     ///<summary>未预期异常的兜底文案</summary>
     public const string Generic = "服务内部错误，请稍后重试";
 
+    ///<summary>基础设施故障（连不上数据库/连接池耗尽/网络超时）的文案：不要归咎于用户输入</summary>
+    public const string Unavailable = "服务暂时不可用，请稍后重试";
+
     ///<summary>并发写冲突的固定文案</summary>
     public const string Conflict = "这条数据刚才已被其他人修改，请刷新后重试";
 
     ///<summary>这是不是「我们自己的业务校验失败」</summary>
     public static bool IsBusiness(Exception ex) => ex is BusinessException;
 
+    ///<summary>
+    /// 是不是基础设施故障（连不上库、连接被断、连接池耗尽、网络超时）。
+    /// 这类异常与用户填了什么无关，控制器不应把它翻译成 400「请检查输入」，
+    /// 必须交给全局中间件按 5xx 处理并记 Error 日志。
+    /// </summary>
+    public static bool IsInfrastructure(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e is TimeoutException or System.Net.Sockets.SocketException) return true;
+            if (!IsDatabaseException(e)) continue;
+
+            var detail = e.InnerException?.Message ?? e.Message;
+            if (IsInfrastructureMessage(detail)) return true;
+        }
+        return false;
+    }
+
     ///<summary>这个异常是否该由 Controller 自己翻译成 4xx 返回</summary>
     public static bool IsHandled(Exception ex)
     {
         if (IsBusiness(ex)) return true;
+
+        //基础设施故障一律不接：让请求落到全局中间件，按 500 记日志，而不是伪装成用户输入错误
+        if (IsInfrastructure(ex)) return false;
+
         if (ex is ConcurrentOperationException) return true;
         for (var e = ex; e != null; e = e.InnerException)
         {
@@ -46,8 +71,43 @@ internal static class ErrorText
         //③ 业务校验失败：文案是我们自己写的
         if (IsBusiness(ex)) return ex.Message;
 
-        //④ 数据库异常：分类翻译，不透原文
+        //④ 基础设施故障：与用户输入无关，统一提示稍后重试（不能回「请检查填写内容」）
+        if (IsInfrastructure(ex)) return fallback ?? Unavailable;
+
+        //⑤ 数据库异常：分类翻译，不透原文
         return DescribeDatabase(ex) ?? fallback ?? Generic;
+    }
+
+    ///<summary>判定基础设施故障的报错特征：连接失败、连接被断、连接池耗尽、DNS/SSL 失败</summary>
+    private static readonly string[] InfrastructureMarkers =
+    [
+        "Unable to connect to any of the specified MySQL hosts",
+        "Connect Timeout expired",
+        "Timeout expired. The timeout period elapsed",
+        "The timeout period elapsed prior to obtaining a connection",
+        "Reading from the stream has failed",
+        "Lost connection to MySQL server",
+        "server has gone away",
+        "Too many connections",
+        "Access denied for user",
+        "Authentication to host",
+        "Authentication plugin",
+        "SSL connection could not be established",
+        "No such host is known",
+        "connection attempt failed",
+        "The underlying connection was closed",
+        "Fatal error encountered during connection",
+        "The connection is already in use",
+        "Connection pool",
+        "network is unreachable",
+    ];
+
+    ///<summary>按报错特征判断是不是基础设施故障</summary>
+    private static bool IsInfrastructureMessage(string detail)
+    {
+        //锁等待超时属于并发争用（应提示「稍后刷新重试」但不是 5xx），先排除
+        if (detail.Contains("Lock wait timeout", StringComparison.OrdinalIgnoreCase)) return false;
+        return InfrastructureMarkers.Any(m => detail.Contains(m, StringComparison.OrdinalIgnoreCase));
     }
 
     ///<summary>沿 InnerException 链识别数据库异常并翻译成中文</summary>

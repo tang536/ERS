@@ -181,9 +181,5 @@ public class VehicleSaveDto
     /// 落成实体：只赋值白名单里的字段。
     /// <c>VehicleId</c> 走数据库自增，<c>QrCode</c> 由服务层拿到主键后生成，二者都不从入参来。
     /// </summary>
-    public Models.Vehicle ToEntity() => Models.Vehicle.Create(
-        (VehicleNo, FrameNumber, Brand),
-        (BuyTime, BuyPrice),
-        (DailyRent, Deposit),
-        (VehicleStatus, ImageUrl));
+    public Models.Vehicle ToEntity() => Models.Vehicle.Create((VehicleNo, FrameNumber, Brand), (BuyTime, BuyPrice), (DailyRent, Deposit), (VehicleStatus, ImageUrl));
 }

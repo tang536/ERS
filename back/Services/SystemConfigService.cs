@@ -1,4 +1,5 @@
-﻿using ERental.Data;
+﻿using System.Globalization;
+using ERental.Data;
 using ERental.DTOs;
 using ERental.Models;
 using Microsoft.EntityFrameworkCore;
@@ -20,6 +21,7 @@ public class SystemConfigService(AppDbContext db)
         ["lock_minutes"] = (1m, 10000m, true),//锁定时长（分钟）
         ["maintain_cycle_days"] = (0m, 3650m, true),//保养周期（天，0=关闭保养提醒）
         ["damage_maintenance_threshold"] = (0m, 100000m, false),//归还损坏费达到该金额自动转入维保（元，0=一律不转）
+        ["pending_pay_timeout_minutes"] = (1m, 1440m, true),//待支付订单有效期（分钟，超时自动取消并释放车辆）
         ["credit_deposit_multiplier"] = (1m, 10m, false),//信用受限客户（逾期/损坏多）的押金倍数
         ["credit_overdue_threshold"] = (0m, 100m, true),//逾期次数达到该值即押金加倍+限租期（0=关闭）
         ["credit_max_lease_days"] = (0m, 365m, true),//信用受限客户单次租期上限（天，0=不限）
@@ -145,21 +147,21 @@ public class SystemConfigService(AppDbContext db)
     ///<summary>整数型配置：必须是整数且落在区间内，统一去掉前导零等写法</summary>
     private static string NormalizeInteger(string name, (decimal Min, decimal Max, bool Integer) rule, string text)
     {
-        if (!int.TryParse(text, out var iv))
+        if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var iv))
             throw new BusinessException($"「{name}」必须填写整数");
         if (iv < rule.Min || iv > rule.Max)
             throw new BusinessException($"「{name}」需在 {rule.Min:0} ~ {rule.Max:0} 之间");
-        return iv.ToString();
+        return iv.ToString(CultureInfo.InvariantCulture);
     }
 
     ///<summary>小数型配置：必须是数字且落在区间内，统一四舍五入到两位</summary>
     private static string NormalizeDecimal(string name, (decimal Min, decimal Max, bool Integer) rule, string text)
     {
-        if (!decimal.TryParse(text, out var dv))
+        if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var dv))
             throw new BusinessException($"「{name}」必须填写数字");
         if (dv < rule.Min || dv > rule.Max)
             throw new BusinessException($"「{name}」需在 {rule.Min:0.##} ~ {rule.Max:0.##} 之间");
-        return decimal.Round(dv, 2).ToString("0.##");
+        return decimal.Round(dv, 2).ToString("0.##", CultureInfo.InvariantCulture);
     }
 
     ///<summary>删除配置项</summary>

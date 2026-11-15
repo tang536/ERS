@@ -48,14 +48,7 @@ public class SystemLog
     public string? IpAddress { get; private set; }
 
     ///<summary>审计日志：两套 ID 空间必须互斥</summary>
-    public static SystemLog Create(
-        int? userId,
-        int? customerId,
-        string? content,
-        string? module,
-        string? result,
-        string? ip = null,
-        DateTime? operateTime = null)
+    public static SystemLog Create(int? userId, int? customerId, string? content, string? module, string? result, string? ip = null, DateTime? operateTime = null)
     {
         if (userId.HasValue && customerId.HasValue)
             throw new BusinessException("操作人与归属顾客不能同时写入：两套 ID 空间必须分开");

@@ -2,7 +2,7 @@
 
 面向电动车出租门店的一体化业务系统，覆盖「车辆建档 → 柜台开单 → 支付 → 取车交付 → 租期内服务 → 归还验收 → 结算退款 → 经营分析」的完整链路。系统同时提供**门店工作人员端**与**顾客自助端**：工作人员完成车辆、客户、订单、验车与结算操作；顾客可自行注册登录、选车下单、支付、续租、查看订单与维护个人资料。
 
-技术栈为 .NET 10 + React，前后端分离部署，当前版本 v1.0.2，软件开发实践课程设计作品。
+技术栈为 .NET 10 + React，前后端分离部署，当前版本 v1.0.3，软件开发实践课程设计作品。
 
 ---
 
@@ -176,11 +176,11 @@ eRentalSystem/
 dotnet test back.Tests/ERental.Tests.csproj
 
 # MySQL 集成测试：连接串只放在当前进程环境变量里，不写入仓库
-$env:ERENTAL_TEST_CONNECTION="Server=127.0.0.1;Port=3306;User=root;Password=***;SslMode=Disabled;CharSet=utf8mb4"
+$env:ERENTAL_TEST_CONNECTION="Server=127.0.0.1;Port=3306;User=root;Password=***;SslMode=Disabled;AllowPublicKeyRetrieval=true;CharSet=utf8mb4"
 dotnet test back.Tests/ERental.Tests.csproj
 ```
 
-不设该环境变量时，6 个 MySQL 集成用例会自动 `Skip`；设了就真跑（每个用例自建库、跑完 DROP，不碰演示库）。
+不设该环境变量时，12 个 MySQL 集成用例会自动 `Skip`；设了就真跑（每个用例自建库、跑完 DROP，不碰演示库）。
 
 前端检查：
 

@@ -8,7 +8,7 @@ namespace ERental.Tests;
 /// MySQL 集成测试用的事实标记：只有显式配置了测试服务器连接串才执行。
 /// 连接串指向「服务器级」账号（不要带生产库名），测试会另建一个随机命名的临时库，
 /// 跑完即删，不会触碰开发/演示数据。
-/// <para>设置方式：<c>$env:ERENTAL_TEST_CONNECTION="Server=127.0.0.1;Port=3306;User=root;Password=***;SslMode=Disabled"</c></para>
+/// <para>设置方式：<c>$env:ERENTAL_TEST_CONNECTION="Server=127.0.0.1;Port=3306;User=root;Password=***;SslMode=Disabled;AllowPublicKeyRetrieval=true"</c></para>
 /// </summary>
 public sealed class MySqlFactAttribute : FactAttribute
 {

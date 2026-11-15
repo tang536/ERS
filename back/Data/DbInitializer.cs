@@ -22,11 +22,54 @@ public static class DbInitializer
     private const string ModuleRentalOrder = "租赁订单管理";
     private const string ModuleVehicle = "车辆信息管理";
 
+    ///<summary>
+    /// 老客户档案回填登录口令。历史档案没有可用的联系方式，随机口令等于把账号锁死，
+    /// 只能沿用建库时的公开口令，并在启动日志里提示管理员通知顾客尽快改密。
+    ///</summary>
+    private const string LegacyCustomerPassword = "123456";
+
     /// <summary>建表：库不存在时按实体映射一次性建好全部表</summary>
     public static void EnsureDatabase(AppDbContext db) => db.Database.EnsureCreated();
 
+    /// <summary>
+    /// 当前代码期望的数据库结构版本。
+    /// ⚠️ 改动 DbInitializer 里的 DDL（加列/加表/改约束）时必须把它 +1，
+    /// 否则老库会因「版本已是最新」而跳过这次升级。
+    /// </summary>
+    public const int SchemaVersion = 2;
+
     /// <summary>幂等的结构升级：保证「老数据库」也能平滑支持新功能</summary>
     public static void EnsureSchemaUpgrades(AppDbContext db)
+    {
+        EnsureMigrationTable(db);
+        var current = ReadSchemaVersion(db);
+        var upgraded = current < SchemaVersion;
+
+        if (upgraded)
+        {
+            RunStructuralUpgrades(db);
+            WriteSchemaVersion(db, SchemaVersion);
+            Console.WriteLine($"[schema] 数据库结构已升级：版本 {current} → {SchemaVersion}（版本未变化时启动将跳过这批 DDL）");
+        }
+        else
+        {
+            // 安全网每次启动都跑：只查 information_schema，模型新增可空列时即便忘了升版本也能补齐，
+            // 不缺列时不会发出任何 ALTER。它的代价远低于上面整批 DDL，因此不纳入版本门禁。
+            SchemaDrift.Reconcile(db);
+        }
+
+        // ── 数据库对象（视图/触发器/存储过程）：唯一定义在 database/objects.sql，
+        //    作为嵌入资源随程序发布。安装器按脚本哈希 + 对象存在性判断，已安装则直接跳过。
+        //    它与 schema 版本相互独立：objects.sql 改了哈希自然会触发重装。
+        SchemaObjects.EnsureInstalled(db);
+    }
+
+    /// <summary>
+    /// 一次性结构升级（版本落后时才执行）：
+    /// 第一阶段是纯 DDL（information_schema 探测 + ALTER/CREATE，可反复执行），
+    /// 第二阶段是依赖新列的数据回填，最后补索引与并发约束。
+    /// </summary>
+    private static void RunStructuralUpgrades(AppDbContext db)
     {
         // ── 第一阶段：结构变更（DDL）。全段不经过 EF 查询，
         //    只用 information_schema 探测存在性后 ALTER / CREATE，可反复执行。
@@ -61,11 +104,30 @@ public static class DbInitializer
         EnsureConcurrencyConstraints(db);
 
         EnsureSchemaIndexes(db);
-
-        // ── 数据库对象（视图/触发器/存储过程）：唯一定义在 database/objects.sql，
-        //    作为嵌入资源随程序发布。安装器按脚本哈希 + 对象存在性判断，已安装则直接跳过。
-        SchemaObjects.EnsureInstalled(db);
     }
+
+    /// <summary>版本登记表：一行即可，记录当前库已经升到哪一版</summary>
+    private static void EnsureMigrationTable(AppDbContext db) =>
+        db.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS `schema_migration` (
+            `id` TINYINT NOT NULL COMMENT '固定为 1',
+            `schema_version` INT NOT NULL COMMENT '已应用的数据库结构版本',
+            `applied_at` DATETIME NOT NULL COMMENT '最近一次升级时间',
+            PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='数据库结构版本（内部使用，请勿手工修改）';
+            """);
+
+    /// <summary>读取已应用的结构版本；没有记录（老库首次升级）按 0 处理</summary>
+    private static int ReadSchemaVersion(AppDbContext db) =>
+        db.Database.SqlQueryRaw<int>(
+            "SELECT `schema_version` AS `Value` FROM `schema_migration` WHERE `id` = 1").FirstOrDefault();
+
+    /// <summary>写入已应用的结构版本（幂等）</summary>
+    private static void WriteSchemaVersion(AppDbContext db, int version) =>
+        db.Database.ExecuteSqlRaw("""
+            INSERT INTO `schema_migration` (`id`, `schema_version`, `applied_at`) VALUES (1, {0}, NOW())
+            ON DUPLICATE KEY UPDATE `schema_version` = VALUES(`schema_version`), `applied_at` = VALUES(`applied_at`)
+            """, version);
 
     /// <summary>customer 的登录列（注册用户名 / 密码）与身份证列</summary>
     private static void UpgradeAccountColumns(AppDbContext db)
@@ -198,6 +260,23 @@ public static class DbInitializer
         KEY `idx_handover_order` (`order_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单交接验车快照表';
         """);
+
+        // 支付回调去重（支付宝/微信/银行卡共用）：唯一键原子登记，多实例共享同一份判定。
+        // 旧实现只在进程内去重，多实例部署时同一份回调会被各实例各处理一次。
+        // expires_at 只用于清理与窗口后重放：真正的幂等仍由入账侧的订单/支付状态判断兜底。
+        EnsureTable(db, "pay_notify_log", """
+        CREATE TABLE IF NOT EXISTS `pay_notify_log` (
+        `id` BIGINT NOT NULL AUTO_INCREMENT,
+        `replay_key` CHAR(64) NOT NULL COMMENT '报文指纹（通道+关键字段的 SHA-256）',
+        `channel` VARCHAR(20) NOT NULL COMMENT '支付通道（alipay/wechat/bank）',
+        `order_no` VARCHAR(40) DEFAULT NULL COMMENT '业务单号（便于排障）',
+        `created_at` DATETIME NOT NULL COMMENT '登记时间',
+        `expires_at` DATETIME NOT NULL COMMENT '去重窗口截止时间',
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `uk_pay_replay` (`replay_key`),
+        KEY `idx_pay_expires` (`expires_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付回调去重登记表';
+        """);
     }
 
     /// <summary>历史续租记录由「小时」折算为「天」</summary>
@@ -251,7 +330,10 @@ public static class DbInitializer
         // 就是一条关不掉的幽灵单——汇总表里点「审核」只会得到「请完成归还结算」，
         // 而单子早已结算过。这里一次性收口成空状态。
         // 幂等：条件写死 order_status，跑第二遍影响 0 行。
-        db.Database.ExecuteSqlRaw("UPDATE `rental_order` SET `early_return_status` = '' " + "WHERE `order_status` IN ('已完结', '已取消') AND `early_return_status` = '待审核';");
+        db.Database.ExecuteSqlRaw("""
+            UPDATE `rental_order` SET `early_return_status` = ''
+            WHERE `order_status` IN ('已完结', '已取消') AND `early_return_status` = '待审核';
+            """);
     }
 
     /// <summary>车辆图片路径，以及存量车辆的二维码码值回填</summary>
@@ -266,7 +348,10 @@ public static class DbInitializer
         // 存量车辆补二维码。⚠️ 码值用**车辆主键**而不是车牌号：车牌号含中文，
         // 相当一部分扫码枪按 ISO-8859-1 解码会得到乱码（实测 OpenCV 同样解不出）。
         // 无条件幂等：只补 NULL/空串，不动已有值
-        db.Database.ExecuteSqlRaw("UPDATE `vehicle` SET `qr_code` = CONCAT('ERENTAL:VEHICLE:', `vehicle_id`) " + "WHERE `qr_code` IS NULL OR `qr_code` = '';");
+        db.Database.ExecuteSqlRaw("""
+            UPDATE `vehicle` SET `qr_code` = CONCAT('ERENTAL:VEHICLE:', `vehicle_id`)
+            WHERE `qr_code` IS NULL OR `qr_code` = '';
+            """);
     }
 
     /// <summary>支付记录的业务类型与通道侧商户订单号（支撑线上补缴）</summary>
@@ -390,9 +475,10 @@ public static class DbInitializer
         // 存量回填：按等级名把老档案挂到对应权益行；只补空值，等级未建档的留空（读取时回退默认折扣）
         if (TableExists(db, "member_rights"))
         {
-            db.Database.ExecuteSqlRaw(
-                "UPDATE `customer` c JOIN `member_rights` r ON c.`member_level` = r.`member_level` " +
-                "SET c.`member_rights_id` = r.`rights_id` WHERE c.`member_rights_id` IS NULL;");
+            db.Database.ExecuteSqlRaw("""
+                UPDATE `customer` c JOIN `member_rights` r ON c.`member_level` = r.`member_level`
+                SET c.`member_rights_id` = r.`rights_id` WHERE c.`member_rights_id` IS NULL;
+                """);
         }
     }
 
@@ -413,11 +499,12 @@ public static class DbInitializer
         // 历史数据搬迁：user_id 里若存的是顾客 ID（顾客自助下单、支付、买会员、注册），
         // 该 ID 在 system_user 里查无此人、却能对上 customer——把它挪到 customer_id。
         // 只搬这一类，员工的 user_id 原样保留。
-        db.Database.ExecuteSqlRaw(
-            "UPDATE `system_log` l LEFT JOIN `system_user` u ON u.`user_id` = l.`user_id` " +
-            "SET l.`customer_id` = l.`user_id`, l.`user_id` = NULL " +
-            "WHERE l.`user_id` IS NOT NULL AND u.`user_id` IS NULL " +
-            "AND EXISTS (SELECT 1 FROM `customer` c WHERE c.`customer_id` = l.`user_id`);");
+        db.Database.ExecuteSqlRaw("""
+            UPDATE `system_log` l LEFT JOIN `system_user` u ON u.`user_id` = l.`user_id`
+            SET l.`customer_id` = l.`user_id`, l.`user_id` = NULL
+            WHERE l.`user_id` IS NOT NULL AND u.`user_id` IS NULL
+            AND EXISTS (SELECT 1 FROM `customer` c WHERE c.`customer_id` = l.`user_id`);
+            """);
     }
 
     /// <summary>第二阶段：老库账号回填（EF 查询，依赖上面所有列已就绪）</summary>
@@ -434,12 +521,13 @@ public static class DbInitializer
             .ToList();
         if (legacy.Count > 0 || needPwd.Count > 0)
         {
-            var hash = BCrypt.Net.BCrypt.HashPassword("123456");
+            var hash = BCrypt.Net.BCrypt.HashPassword(LegacyCustomerPassword);
             foreach (var c in legacy.Where(c => string.IsNullOrWhiteSpace(c.LoginAccount)))
                 c.AssignLoginAccount(!string.IsNullOrWhiteSpace(c.IdCard) ? c.IdCard : $"user{c.CustomerId}");
             foreach (var c in needPwd.Where(c => string.IsNullOrWhiteSpace(c.LoginPassword)))
                 c.SetPasswordHash(hash);
             db.SaveChanges();
+            Console.WriteLine($"[安全] 已为 {legacy.Count + needPwd.Count} 个老客户档案回填登录账号/口令（初始口令为 {LegacyCustomerPassword}），请通知顾客首次登录后修改。");
         }
         db.SaveChanges();
     }
@@ -524,7 +612,7 @@ public static class DbInitializer
         // ② 金额与租期的恒定事实
         EnsureCheckConstraint(db, TablePaymentRecord, "ck_pay_amount", "`pay_amount` >= 0");
         EnsureCheckConstraint(db, TablePaymentRecord, "ck_pay_refund", "`refund_amount` >= 0 AND `refund_amount` <= `pay_amount`");
-        EnsureCheckConstraint(db, "settle_record", "ck_settle_amount", "`actual_rent` >= 0 AND `overdue_fee` >= 0 AND `damage_fee` >= 0 " + "AND `refund_amount` >= 0 AND `supplement_amount` >= 0");
+        EnsureCheckConstraint(db, "settle_record", "ck_settle_amount", "`actual_rent` >= 0 AND `overdue_fee` >= 0 AND `damage_fee` >= 0 AND `refund_amount` >= 0 AND `supplement_amount` >= 0");
         EnsureCheckConstraint(db, TableRentalOrder, "ck_order_amount", "`total_rent` >= 0 AND `deposit` >= 0");
         EnsureCheckConstraint(db, TableRentalOrder, "ck_order_period", "`lease_end` > `lease_start`");
 
@@ -547,8 +635,7 @@ public static class DbInitializer
     private static string Q(string identifier) => string.Concat(Tick, identifier, Tick);
 
     /// <summary>建唯一索引</summary>
-    private static void EnsureUniqueIndex(
-        AppDbContext db, string table, string index, string columns, string purpose)
+    private static void EnsureUniqueIndex(AppDbContext db, string table, string index, string columns, string purpose)
     {
         if (!TableExists(db, table) || IndexExists(db, table, index)) return;
 
@@ -556,7 +643,7 @@ public static class DbInitializer
             $"SELECT COUNT(*) FROM (SELECT {columns} FROM `{table}` GROUP BY {columns} HAVING COUNT(*) > 1) AS d");
         if (dups > 0)
         {
-            Console.WriteLine($"[并发约束] 跳过 {table}.{index}（{purpose}）：存量数据中有 {dups} 组重复值，" + "请先人工核对并清理后再建唯一索引。");
+            Console.WriteLine($"[并发约束] 跳过 {table}.{index}（{purpose}）：存量数据中有 {dups} 组重复值，请先人工核对并清理后再建唯一索引。");
             return;
         }
 
@@ -574,8 +661,7 @@ public static class DbInitializer
     }
 
     /// <summary>建复合索引（普通索引，幂等）</summary>
-    private static void EnsureCompositeIndex(
-        AppDbContext db, string table, string index, string columns, string purpose)
+    private static void EnsureCompositeIndex(AppDbContext db, string table, string index, string columns, string purpose)
     {
         if (!TableExists(db, table) || IndexExists(db, table, index)) return;
         try
@@ -650,7 +736,7 @@ public static class DbInitializer
     private static bool ConstraintExists(AppDbContext db, string table, string name)
     {
         using var cmd = db.Database.GetDbConnection().CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS " + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @t AND CONSTRAINT_NAME = @c";
+        cmd.CommandText = "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @t AND CONSTRAINT_NAME = @c";
         var p1 = cmd.CreateParameter(); p1.ParameterName = "@t"; p1.Value = table; cmd.Parameters.Add(p1);
         var p2 = cmd.CreateParameter(); p2.ParameterName = "@c"; p2.Value = name; cmd.Parameters.Add(p2);
         if (cmd.Connection!.State != ConnectionState.Open) cmd.Connection.Open();
@@ -713,7 +799,7 @@ public static class DbInitializer
         return cmd.ExecuteScalar()?.ToString() ?? string.Empty;
     }
 
-    public static void Seed(AppDbContext db, IConfiguration? config = null)
+    public static void Seed(AppDbContext db, IConfiguration? config = null, IHostEnvironment? env = null, ILogger? logger = null)
     {
         if (!db.Roles.Any())
         {
@@ -757,12 +843,39 @@ public static class DbInitializer
         // 随代码一起版本化，改动可评审、可追溯，不会出现「库里授了权、接口仍 403」两处口径打架。
         // permission 表仍保留为权限字典（权限名 / 编码 / 所属模块 / 说明），供权限项展示与编码校验。
 
-        if (!db.SystemUsers.Any(u => u.LoginAccount == "trq"))
+        if (!db.SystemUsers.Any(u => u.LoginAccount == AdminCredentialProvider.Account))
         {
             var adminRole = db.Roles.First(r => r.RoleName == "管理员");
+
+            //配置里写了弱口令就当没写：宁可随机生成，也不能让公开的 123456 继续生效
+            var configuredAdminPwd = (config?["Admin:InitialPassword"] ?? "").Trim();
+            if (configuredAdminPwd.Length > 0 && !AdminCredentialProvider.IsStrong(configuredAdminPwd))
+            {
+                logger?.LogWarning("Admin:InitialPassword 长度不足 8 位或属于弱口令，已忽略并改用随机口令");
+            }
+
+            var credential = AdminCredentialProvider.Resolve(config, env);
             db.SystemUsers.Add(SystemUser.CreateStaff<AdminUser>(
-                "trq", BCrypt.Net.BCrypt.HashPassword("123456"), adminRole.RoleId, "唐荣强"));
+                AdminCredentialProvider.Account, BCrypt.Net.BCrypt.HashPassword(credential.Password), adminRole.RoleId, "唐荣强"));
             db.SaveChanges();
+
+            //口令本身不写日志：日志常被采集/转发；只有随机生成的场景才在控制台打印一次供首次登录
+            logger?.LogWarning("已创建管理员账号 {Account}，初始口令来源：{Source}。请首次登录后立即修改密码", AdminCredentialProvider.Account, credential.Source);
+            Console.WriteLine($"[安全] 已创建管理员账号 {AdminCredentialProvider.Account}，初始口令来源：{credential.Source}");
+            if (credential.GeneratedFilePath is not null)
+                Console.WriteLine($"[安全] 随机初始口令已写入 {credential.GeneratedFilePath}；登录后请立即改密并删除该文件");
+            else
+                Console.WriteLine("[安全] 请用配置的初始口令登录，随后立即改密并从部署配置中移除 Admin:InitialPassword");
+        }
+        else
+        {
+            //存量部署只告警、不擅自重置：直接改密会让正在使用系统的管理员瞬间失去入口
+            var admin = db.SystemUsers.First(u => u.LoginAccount == AdminCredentialProvider.Account);
+            if (AdminCredentialProvider.IsLegacyDefaultHash(admin.LoginPwd))
+            {
+                logger?.LogWarning("管理员账号 {Account} 仍在使用公开的出厂口令 123456，请立即修改", AdminCredentialProvider.Account);
+                Console.WriteLine($"[安全] ⚠ 管理员账号 {AdminCredentialProvider.Account} 仍在使用出厂口令 123456，请立即在「个人设置」修改。");
+            }
         }
 
         // 出厂口径：只有管理员一个账号。前台/财务账号由管理员在「用户管理」自行创建，
@@ -774,10 +887,11 @@ public static class DbInitializer
             ("daily_rent", "30", "日租金（元/天）"),
             ("deposit", "500", "押金（元）"),
             ("overdue_multiplier", "1.5", "超时租金倍数（超出约定还车时间后，超出部分按小时租金的倍数计费）"),
-            ("max_login_fail", "5", "单IP最大登录失败次数（工作人员登录，达标后封锁该IP）"),
-            ("lock_minutes", "10", "IP锁定时长（分钟，登录失败达标后封锁来源IP）"),
+            ("max_login_fail", "5", "单IP（顾客按账号+IP）最大登录失败次数，达标后封锁该网络来源"),
+            ("lock_minutes", "10", "IP锁定时长（分钟，登录失败达标后封锁来源网络）"),
             ("maintain_cycle_days", "90", "保养周期（天，0 表示关闭保养提醒）"),
     ("damage_maintenance_threshold", "100", "归还损坏费达到该金额时自动把车辆转入维保（元，0 表示一律不转）"),
+            ("pending_pay_timeout_minutes", "15", "待支付订单有效期（分钟，超时自动取消并释放车辆；前台倒计时与超时回收共用该值）"),
             // 租前信用体检的三条阈值（CreditPolicy 读）：逾期多的客户押金加倍并限租期，
             // 欠缴未清的直接拒单。一个都不用是 0/1 就能关掉，不需要改代码
             ("credit_deposit_multiplier", "2", "信用受限客户押金倍数（历史逾期次数达阈值或累计损坏赔付较高的客户）"),

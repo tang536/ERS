@@ -88,7 +88,7 @@ public class MemberService(AppDbContext db, LogService log, ILogger<MemberServic
         {
             ["c"] = customerId.ToString(),
             ["l"] = right.MemberLevel,
-            ["p"] = price.ToString("0.00"),
+            ["p"] = price.ToString("0.00", CultureInfo.InvariantCulture),
             ["t"] = pay,
             ["old"] = c.MemberLevel,
             ["ts"] = AppClock.Now.ToString("yyyy-MM-dd HH:mm:ss")
@@ -140,13 +140,13 @@ public class MemberService(AppDbContext db, LogService log, ILogger<MemberServic
         catch { return (false, "会员购买意向数据损坏，请联系管理员。", 0m, ""); }
 
         //幂等：已完成标记直接确认成功，不重复升级
-        if (intent.TryGetValue("done", out _)) return (true, "该笔会员购买已完成。", decimal.Parse(intent.GetValueOrDefault("p", "0")), intent.GetValueOrDefault("alipay", ""));
+        if (intent.TryGetValue("done", out _)) return (true, "该笔会员购买已完成。", decimal.Parse(intent.GetValueOrDefault("p", "0"), CultureInfo.InvariantCulture), intent.GetValueOrDefault("alipay", ""));
 
         //过期保护：意向创建超过有效期不再入账（钱已付需人工对账）
         if (IsIntentExpired(intent)) return (false, "会员购买意向已过期，请联系管理员人工核对退款。", 0m, "");
         var customerId = int.Parse(intent.GetValueOrDefault("c", "0"));
         var level = intent.GetValueOrDefault("l", "");
-        var price = decimal.Parse(intent.GetValueOrDefault("p", "0"));
+        var price = decimal.Parse(intent.GetValueOrDefault("p", "0"), CultureInfo.InvariantCulture);
 
         //金额核对
         if (Math.Abs(paidAmount - price) > 0.01m) return (false, $"支付金额不符：实付 ¥{paidAmount:0.00}，应付 ¥{price:0.00}。", 0m, "");
@@ -194,7 +194,7 @@ public class MemberService(AppDbContext db, LogService log, ILogger<MemberServic
         cfg.SetValue(JsonSerializer.Serialize(new Dictionary<string, string>
         {
             ["done"] = "1",
-            ["p"] = price.ToString("0.00"),
+            ["p"] = price.ToString("0.00", CultureInfo.InvariantCulture),
             ["alipay"] = alipayTradeNo,
             ["ts"] = AppClock.Now.ToString("yyyy-MM-dd HH:mm:ss")
         }));
@@ -209,7 +209,7 @@ public class MemberService(AppDbContext db, LogService log, ILogger<MemberServic
         {
             var intent = JsonSerializer.Deserialize<Dictionary<string, string>>(cfg.ConfigValue ?? "{}") ?? new Dictionary<string, string>();
             var done = intent.ContainsKey("done");
-            var price = decimal.Parse(intent.GetValueOrDefault("p", "0"));
+            var price = decimal.Parse(intent.GetValueOrDefault("p", "0"), CultureInfo.InvariantCulture);
             //时间戳解析失败时 ts 保持 default(DateTime)，与原「忽略返回值」的语义一致
             _ = DateTime.TryParse(intent.GetValueOrDefault("ts", ""), CultureInfo.InvariantCulture, DateTimeStyles.None, out var ts);
             return (done, price, intent.GetValueOrDefault("alipay", ""), ts, true);

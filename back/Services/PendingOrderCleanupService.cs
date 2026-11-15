@@ -1,8 +1,7 @@
 namespace ERental.Services;
 
 ///<summary>后台定时回收「超时未支付」的订单</summary>
-public class PendingOrderCleanupService(
-    IServiceScopeFactory scopeFactory, ILogger<PendingOrderCleanupService> logger) : BackgroundService
+public class PendingOrderCleanupService(IServiceScopeFactory scopeFactory, ILogger<PendingOrderCleanupService> logger) : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
     private readonly ILogger<PendingOrderCleanupService> _logger = logger;

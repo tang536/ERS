@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Globalization;
+using System.Net;
 using System.Security.Claims;
 using ERental.DTOs;
 using ERental.Models;
@@ -40,7 +41,7 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
     ///<summary>匿名端点（支付回调）取不到操作人</summary>
     private int? CurrentUserIdOrNull => int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
 
-    private string? ClientIp => HttpContext.Connection.RemoteIpAddress?.ToString();
+    private string? ClientIp => Services.ClientIp.Resolve(HttpContext);
 
     ///<summary>浏览器此刻的地址栏源：优先 X-Client-Origin（前端拦截器注入）</summary>
     private string? ClientOrigin => PayConfigService.ResolveClientOrigin(Request.Headers["X-Client-Origin"].ToString(), Request.Headers.Referer.ToString());//NOSONAR 访问源只能从原始请求头读取，Header/Referer 无法用模型绑定，且这里只是取值不做信任判断
@@ -397,10 +398,11 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
     {
         //验签必须基于原始报文
         using var reader = new StreamReader(Request.Body);
-        var body = await reader.ReadToEndAsync();
+        var body = await reader.ReadToEndAsync(HttpContext.RequestAborted);
 
         var headers = new Dictionary<string, string>();
-        foreach (var h in new[] { "Wechat-Timestamp", "Wechat-Nonce", "Wechat-Signature", "Wechat-Serial" })
+        //头名称以 WechatPayService.NotifyHeaders 为唯一来源：官方是 Wechatpay-*，写错会导致验签全部失败
+        foreach (var h in WechatPayService.NotifyHeaders)
             if (Request.Headers.TryGetValue(h, out var v))
                 headers[h] = v.ToString();
 
@@ -581,7 +583,7 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
             var (_, tradeStatus, tNo, totalAmount) = await _alipay.QueryTradeRawAsync(tradeNo);
             if (tradeStatus is not ("TRADE_SUCCESS" or "TRADE_FINISHED")) return (false, statusText, alipayNo);
 
-            var paidAmt = decimal.TryParse(totalAmount, out var pa) ? pa : 0m;
+            var paidAmt = decimal.TryParse(totalAmount, NumberStyles.Number, CultureInfo.InvariantCulture, out var pa) ? pa : 0m;
             var (ok, msg, _, no) = await _member.ApplyPaidPurchaseAsync(tradeNo, tNo, "支付宝", paidAmt);
             _logger.LogInformation("会员购买 {TradeNo} 查单兜底入账：{Result}（{Message}）", tradeNo, ok ? "成功" : "拒绝", msg);
             if (ok) return (true, "已支付", no);

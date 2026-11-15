@@ -56,16 +56,14 @@ internal static class StoredProcedures
     }
 
     /// <summary>批量回收超时待支付订单，返回本批取消数量</summary>
-    public static async Task<int> CancelExpiredPendingOrdersAsync(
-        AppDbContext db, int timeoutMinutes, int graceMinutes, int batch, CancellationToken ct = default)
+    public static async Task<int> CancelExpiredPendingOrdersAsync(AppDbContext db, int timeoutMinutes, int graceMinutes, int batch, CancellationToken ct = default)
     {
         var rows = await QueryAsync(db, "sp_cancel_expired_pending_orders", [timeoutMinutes, graceMinutes, batch], ct);
         return ReadInt(rows, "cancelled");
     }
 
     /// <summary>执行 CALL，并把每个结果集读成「列名 → 值」的字典</summary>
-    private static async Task<List<Dictionary<string, object?>>> QueryAsync(
-        AppDbContext db, string procedure, object?[] args, CancellationToken ct)
+    private static async Task<List<Dictionary<string, object?>>> QueryAsync(AppDbContext db, string procedure, object?[] args, CancellationToken ct)
     {
         await using var cmd = await CreateCommandAsync(db, procedure, args, ct);
         var rows = new List<Dictionary<string, object?>>();

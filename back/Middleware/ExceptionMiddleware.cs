@@ -9,7 +9,7 @@ namespace ERental.Middleware;
 /// 全局异常兜底 + **对外响应脱敏**。
 /// 三类异常的处理口径：
 ///  ① 业务校验异常（我方主动 throw 的中文提示）→ 原样返回，管理员/用户需要知道原因；
-///  ② 数据库异常 → 翻译成中文提示（原始英文报错进日志）；
+///  ② 数据库异常 → 区分「数据本身不合规则」（400，分类翻译）与「连不上库/连接池耗尽」（500，通用文案）；
 ///  ③ 其余未预期异常 → 只回**通用中文提示**，**绝不回 ex.Message**。
 /// ⚠️ 为什么 ③ 不能回原始 Message（本轮安全审查的重点）：
 ///  未预期异常的 Message 常常暴露实现细节——连接字符串、文件绝对路径、
@@ -19,10 +19,7 @@ namespace ERental.Middleware;
 ///    - 真实异常（含堆栈）**只写服务端日志**；
 ///    - 若要在日志里附异常消息，必须先过 <see cref="SecretMasker.Scrub"/> 清掉已知敏感值。
 /// </summary>
-public class ExceptionMiddleware(
-    RequestDelegate next,
-    ILogger<ExceptionMiddleware> logger,
-    IServiceScopeFactory scopeFactory)
+public class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddleware> logger, IServiceScopeFactory scopeFactory)
 {
     private readonly RequestDelegate _next = next;
     private readonly ILogger<ExceptionMiddleware> _logger = logger;
@@ -53,7 +50,7 @@ public class ExceptionMiddleware(
             // 控制器层那 68 处 catch 现在调用的是同一个方法，两条出口口径一致。
             var safeMessage = ErrorText.Safe(ex);
 
-            var status = isBusiness || ErrorText.DescribeDatabase(ex) != null ? (int)HttpStatusCode.BadRequest : (int)HttpStatusCode.InternalServerError;
+            var status = ErrorText.IsHandled(ex) ? (int)HttpStatusCode.BadRequest : (int)HttpStatusCode.InternalServerError;
 
             context.Response.ContentType = "application/json; charset=utf-8";
             context.Response.StatusCode = status;

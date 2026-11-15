@@ -1,4 +1,5 @@
 using ERental.Data;
+using ERental.DTOs;
 using ERental.Models;
 using ERental.Services;
 using Microsoft.EntityFrameworkCore;
@@ -122,6 +123,10 @@ public class MySqlIntegrationTests
         var page = await service.GetPaged(null, null, 1, 50);
         var rows = page.Items;
 
+        // 分页信封必须回传归一化后的 Page/PageSize，前端才能正确算页数
+        Assert.Equal(1, page.Page);
+        Assert.Equal(50, page.PageSize);
+
         var row = Assert.Single(rows);
         Assert.Equal(order.OrderNo, row.RentalOrder!.OrderNo);
         Assert.Equal(vehicle.VehicleNo, row.RentalOrder.VehicleNo);
@@ -132,7 +137,44 @@ public class MySqlIntegrationTests
         Assert.Equal(0m, row.SupplementAmount);
         Assert.True(row.SupplementCollected);
         Assert.Equal("集成测试结算", row.Remark);
+
+        // pageSize 超上限时实际只取 200 条，信封不能再回原值 500
+        var clamped = await service.GetPaged(null, null, 0, 500);
+        Assert.Equal(1, clamped.Page);
+        Assert.Equal(Paging.MaxPageSize, clamped.PageSize);
     }
+
+    [MySqlFact]
+    public void SchemaUpgrades_AreVersionGatedAndReplayOnVersionMismatch()
+    {
+        using var testDb = TestDatabase.Create();
+        var db = testDb.Db;
+
+        //首次升级：写入版本号，并建出只在升级流程里出现的索引
+        DbInitializer.EnsureSchemaUpgrades(db);
+        Assert.Equal(DbInitializer.SchemaVersion, ReadSchemaVersion(db));
+        Assert.True(IndexExists(db, "idx_msg_inbox"));
+
+        //模拟「有人手工删了索引」：版本未变时不重跑整批 DDL，索引保持缺失（证明版本门禁生效）
+        db.Database.ExecuteSqlRaw("DROP INDEX `idx_msg_inbox` ON `message`;");
+        DbInitializer.EnsureSchemaUpgrades(db);
+        Assert.False(IndexExists(db, "idx_msg_inbox"));
+
+        //版本记录丢失（老库首次升级 / 回滚到更早版本）：必须重新执行升级并补回索引
+        db.Database.ExecuteSqlRaw("DELETE FROM `schema_migration`");
+        DbInitializer.EnsureSchemaUpgrades(db);
+        Assert.True(IndexExists(db, "idx_msg_inbox"));
+        Assert.Equal(DbInitializer.SchemaVersion, ReadSchemaVersion(db));
+    }
+
+    private static int ReadSchemaVersion(AppDbContext db) =>
+        db.Database.SqlQueryRaw<int>("SELECT `schema_version` AS `Value` FROM `schema_migration` WHERE `id` = 1").Single();
+
+    private static bool IndexExists(AppDbContext db, string indexName) =>
+        db.Database.SqlQueryRaw<int>(
+            "SELECT COUNT(*) AS `Value` FROM information_schema.statistics " +
+            "WHERE table_schema = DATABASE() AND table_name = 'message' AND index_name = {0}",
+            indexName).Single() > 0;
 
     [MySqlFact]
     public async Task OrderOverviewView_IsOverdueUsesDatabaseNowWithSessionTimeZone()

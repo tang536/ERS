@@ -111,6 +111,13 @@ public class SettlePreviewDto
     public decimal RentDiff { get; init; }
     /// <summary>预退还金额（损坏费按 0 预估，实际以结算时录入为准）</summary>
     public decimal RefundAmount { get; init; }
+
+    /// <summary>
+    /// 损坏费自动转维保的阈值（system_config.damage_maintenance_threshold，0 表示不转）。
+    /// 前台录入损坏费时需要知道「这笔钱够不够让车下线」，否则收完赔偿车还带伤在租。
+    /// </summary>
+    public decimal DamageMaintenanceThreshold { get; init; }
+
     /// <summary>预补缴金额（退款为负时取正值）</summary>
     public decimal SupplementAmount { get; init; }
 }

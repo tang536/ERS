@@ -16,9 +16,7 @@ namespace ERental.Controllers;
 [Authorize(Policy = Policies.AdminOnly)]
 [SuppressMessage("Major Code Smell", "S6960:Controllers should have a single responsibility",
     Justification = "配置、数据字典、AI 生图设置都是「系统参数维护」同一职责域，且前端设置页一次打开会同时拉多组参数；按子域拆控制器只会把一个页面的请求打散到多个前缀，收益不抵契约变更成本。")]
-public class ConfigController(
-    SystemConfigService svc, ComfyConfigService comfyCfg, ComfyUiClient comfy,
-    IHttpClientFactory httpFactory) : ControllerBase
+public class ConfigController(SystemConfigService svc, ComfyConfigService comfyCfg, ComfyUiClient comfy, IHttpClientFactory httpFactory) : ControllerBase
 {
     private readonly SystemConfigService _svc = svc;
     private readonly ComfyConfigService _comfyCfg = comfyCfg;
@@ -155,7 +153,7 @@ public class ConfigController(
     {
         try
         {
-            var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+            var ip = ClientIp.Resolve(HttpContext);
             var (tables, rows) = await _svc.ResetDatabaseAsync(CurrentUserId, ip);
             return Ok(new ApiResponse<object> { Message = $"初始化完成：已清空 {tables} 张表（共 {rows} 行），管理员账号、系统配置与支付配置保留" });
         }

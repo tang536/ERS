@@ -51,7 +51,7 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         }
 
         var total = await q.CountAsync();
-        var (_, _, skip, take) = Paging.Normalize(page, pageSize);
+        var (pageNo, size, skip, take) = Paging.Normalize(page, pageSize);
         //取 0 表示「不分页」（Paging.Normalize 的既有约定），对账导出类调用才用得到
         var ordered = q.OrderByDescending(b => b.SettleTime).ThenByDescending(b => b.SettleId);
         var rows = take > 0 ? await ordered.Skip(skip).Take(take).ToListAsync() : await ordered.ToListAsync();
@@ -59,8 +59,10 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         return new SettlePageDto
         {
             Total = total,
-            Page = page < 1 ? 1 : page,
-            PageSize = pageSize,
+            //回传归一化后的值：pageSize 超 200 时实际只取了 200 条，
+            //仍回原值会让前端按错误页大小算页数、翻页直接跳空。
+            Page = pageNo,
+            PageSize = size,
             Items = rows.Select(b => new SettleListDto
             {
                 SettleId = b.SettleId,
@@ -287,6 +289,7 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
             ActualHours = c.ActualHours,
             RentDiff = c.RentDiff,
             RefundAmount = c.Refund,
+            DamageMaintenanceThreshold = await DamageThresholdAsync(),
             SupplementAmount = c.Supplement
         };
     }
@@ -487,8 +490,11 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         return r.RealMoney ? $"结算完成 · 已退 ¥{c.Refund:0.00} 至原支付渠道（{paid.PayType}）" : $"结算完成 · 未真实划款，请线下退现金 ¥{c.Refund:0.00}";
     }
 
-    ///<summary>财务对账：按日期范围核对「应收（订单租金+押金）」与「实收（支付记录）」</summary>
-    public async Task<object> Reconcile(DateTime startDate, DateTime endDate)
+    ///<summary>
+    /// 财务对账：按日期范围核对「应收（订单租金+押金）」与「实收（支付记录）」，
+    /// 并给出分渠道「系统收款 vs 渠道流水」对照与逐笔异常（口径见 <see cref="ReconcileBuilder"/>）。
+    ///</summary>
+    public async Task<ReconcileDto> Reconcile(DateTime startDate, DateTime endDate)
     {
         if (endDate < startDate) throw new BusinessException("结束日期不能早于开始日期");
         var end = endDate.Date.AddDays(1).AddSeconds(-1);//包含结束日全天
@@ -505,49 +511,26 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         //该时间段内的结算记录
         var settles = await _db.SettleRecords.Where(s => s.SettleTime >= startDate.Date && s.SettleTime <= end).ToListAsync();
 
-        var expectedRent = orders.Sum(o => o.TotalRent);
-        var expectedDeposit = orders.Sum(o => o.Deposit);
-        var expectedTotal = expectedRent + expectedDeposit;
+        //异常口径：已取消订单仍存在的到账记录。上面的应收口径刻意排除已取消单，
+        //但「取消后钱还挂着」正是对账最该抓到的情况，单独捞一批用于差异明细。
+        var cancelledPaid = await _db.PaymentRecords
+            .Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus)
+                && p.PayTime.HasValue && p.PayTime >= startDate.Date && p.PayTime <= end
+                && _db.RentalOrders.Any(o => o.OrderId == p.OrderId && o.OrderStatus == "已取消"))
+            .Select(p => new
+            {
+                Pay = p,
+                OrderNo = _db.RentalOrders.Where(o => o.OrderId == p.OrderId).Select(o => o.OrderNo).FirstOrDefault() ?? ""
+            })
+            .ToListAsync();
 
-        //实收只统计「钱到过账」的支付记录
-        var actualReceived = payments.Sum(p => p.PayAmount);
-        var paidCount = payments.Count;
-
-        //退款口径：只认支付记录上实际执行的累计退款（refund_amount）
-        var totalRefund = payments.Sum(p => p.RefundAmount);
-        var totalSupplement = paidSupplement;
-        var settleCount = settles.Count;
-
-        //净收入=实收-退款+补缴
-        var netIncome = Math.Round(actualReceived - totalRefund + totalSupplement, 2);
-        //对账差异=应收-实收（正数表示少收，负数表示多收）
-        var difference = Math.Round(expectedTotal - actualReceived, 2);
-
-        //差异文案单独算：三级判断用 switch 表达式，既不嵌套三元（Sonar S3358）
-        var remark = difference switch
-        {
-            _ when Math.Abs(difference) < 0.01m => "账目平衡",
-            > 0 => $"存在 {difference:C} 差额（应收大于实收）",
-            _ => $"存在 {-difference:C} 差额（实收大于应收）"
-        };
-
-        return new
-        {
-            StartDate = startDate.Date.ToString("yyyy-MM-dd"),
-            EndDate = endDate.Date.ToString("yyyy-MM-dd"),
-            OrderCount = orders.Count,
-            PaidCount = paidCount,
-            SettleCount = settleCount,
-            ExpectedRent = Math.Round(expectedRent, 2),
-            ExpectedDeposit = Math.Round(expectedDeposit, 2),
-            ExpectedTotal = Math.Round(expectedTotal, 2),
-            ActualReceived = Math.Round(actualReceived, 2),
-            TotalRefund = Math.Round(totalRefund, 2),
-            TotalSupplement = Math.Round(totalSupplement, 2),
-            NetIncome = netIncome,
-            Difference = difference,
-            IsBalanced = Math.Abs(difference) < 0.01m,
-            Remark = remark
-        };
+        return ReconcileBuilder.Build(
+            orders,
+            payments,
+            paidSupplement,
+            cancelledPaid.Select(x => (x.Pay, x.OrderNo)),
+            settles.Count,
+            startDate.Date,
+            endDate.Date);
     }
 }

@@ -3,11 +3,7 @@
 namespace ERental.Services;
 
 ///<summary>三步都是幂等的：EnsureCreated 只在库不存在时建表</summary>
-public sealed class SystemStartupService(
-    AppDbContext db,
-    IConfiguration config,
-    EvidenceArchiveService archive,
-    ILogger<SystemStartupService> logger)
+public sealed class SystemStartupService(AppDbContext db, IConfiguration config, IHostEnvironment env, EvidenceArchiveService archive, ILogger<SystemStartupService> logger)
 {
     ///<summary>执行启动序列，返回本次启动后的规模快照（用于日志与健康检查）</summary>
     public StartupReport Startup()
@@ -19,7 +15,7 @@ public sealed class SystemStartupService(
         // 否则逾期判定与计费小时数会在列表和结算两处给出不同结果。
         DatabaseClock.EnsureSessionMatchesLocalTime(db);
         DbInitializer.EnsureSchemaUpgrades(db);
-        DbInitializer.Seed(db, config);
+        DbInitializer.Seed(db, config, env, logger);
 
         // 证据照片归档放在启动末尾做一次：启动流程本身不能因为一次文件移动失败而起不来，
         // 所以这里整体兜住异常，失败只记 warning，下次启动再补。

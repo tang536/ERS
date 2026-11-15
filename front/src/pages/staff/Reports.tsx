@@ -708,6 +708,86 @@ export default function Reports() {
               </tbody>
             </table>
           </div>
+
+          {/* 分渠道「系统收款 vs 渠道流水」：线上渠道缺交易号的金额就是差异，
+              线下（现金）没有外部流水，不参与差异判断，只在说明里标注 */}
+          {(reconcile.channels?.length ?? 0) > 0 && (
+            <div className="table-wrap" style={{ marginTop: 16 }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>收款渠道</th>
+                    <th className="num">系统收款</th>
+                    <th className="num">渠道流水</th>
+                    <th className="num">退款</th>
+                    <th className="num">净收款</th>
+                    <th className="num">差异</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reconcile.channels.map((c: any) => {
+                    const diff = Number(c.difference ?? 0)
+                    return (
+                      <tr key={c.channel}>
+                        <td>{c.channel}{c.isElectronic ? '' : <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>（线下）</span>}</td>
+                        <td className="num">{money(c.systemAmount)}<span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>{c.systemCount} 笔</span></td>
+                        <td className="num">{money(c.flowAmount)}<span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>{c.flowCount} 笔</span></td>
+                        <td className="num">{money(c.refundAmount)}</td>
+                        <td className="num">{money(c.netAmount)}</td>
+                        <td className="num">
+                          <span style={{ color: Math.abs(diff) < 0.01 ? 'var(--success-text)' : 'var(--danger-text)', fontWeight: 600 }}>
+                            {c.isElectronic ? money(diff) : '—'}
+                          </span>
+                        </td>
+                        <td>{c.note}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* 逐笔异常：这是对账真正要人去处理的清单；一条都没有才说明这批账目干净。
+              只展示前 50 条，避免异常多时把整页拉得过长（后端已按类型/订单号稳定排序）。 */}
+          <div className="table-wrap" style={{ marginTop: 16 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>异常类型</th>
+                  <th>订单号</th>
+                  <th>渠道</th>
+                  <th className="num">系统金额</th>
+                  <th className="num">应有金额</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(reconcile.issues ?? []).length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ color: 'var(--success-text)', textAlign: 'center' }}>
+                      未发现凭据或金额异常
+                    </td>
+                  </tr>
+                ) : (reconcile.issues as any[]).slice(0, 50).map((it, idx) => (
+                  <tr key={`${it.kind}-${it.orderNo}-${idx}`}>
+                    <td><span className="status-tag status-warning">{it.kind}</span></td>
+                    <td>{it.orderNo}</td>
+                    <td>{it.channel}</td>
+                    <td className="num">{money(it.amount)}</td>
+                    <td className="num">{Number(it.expected ?? 0) > 0 ? money(it.expected) : '—'}</td>
+                    <td>{it.detail}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(reconcile.issues?.length ?? 0) > 50 && (
+              <div style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>
+                仅展示前 50 条，共 {reconcile.issues.length} 条异常；请缩小日期范围后复查。
+              </div>
+            )}
+          </div>
         </div>
       )}
 

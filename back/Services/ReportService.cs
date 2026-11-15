@@ -313,8 +313,7 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
     }
 
     ///<summary>时间维度明细</summary>
-    private static (List<string> Columns, List<DrillRowDto> Rows) BuildTimeDrillSection(
-        List<PaymentRecord> pays, bool hasRange, DateTime? rangeFrom, DateTime? rangeTo)
+    private static (List<string> Columns, List<DrillRowDto> Rows) BuildTimeDrillSection(List<PaymentRecord> pays, bool hasRange, DateTime? rangeFrom, DateTime? rangeTo)
     {
         //区间超过 31 天按天铺会出几百行
         var spanDays = hasRange ? (int)(rangeTo!.Value.Date - rangeFrom!.Value.Date).TotalDays : 7;
@@ -695,8 +694,7 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
     }
 
     ///<summary>营收按车辆归集：流水挂的是订单号，先用订单映射换到车辆</summary>
-    private async Task<Dictionary<int, decimal>> AggregateRevenueByVehicleAsync(
-        DateTime? rangeFrom, DateTime? rangeTo, bool hasRange, Dictionary<int, int> orderVehicle)
+    private async Task<Dictionary<int, decimal>> AggregateRevenueByVehicleAsync(DateTime? rangeFrom, DateTime? rangeTo, bool hasRange, Dictionary<int, int> orderVehicle)
     {
         var payQ = _db.PaymentRecords.AsNoTracking().Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus) && p.PayTime.HasValue);
         if (hasRange) payQ = payQ.Where(p => p.PayTime >= rangeFrom && p.PayTime < rangeTo);
@@ -711,8 +709,7 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
     }
 
     ///<summary>维保按车辆归集：次数统计全部工单（含未完工），费用只累计「已完成」</summary>
-    private async Task<(Dictionary<int, int> Count, Dictionary<int, decimal> Fee)> AggregateMaintenanceByVehicleAsync(
-        DateTime? rangeFrom, DateTime? rangeTo, bool hasRange)
+    private async Task<(Dictionary<int, int> Count, Dictionary<int, decimal> Fee)> AggregateMaintenanceByVehicleAsync(DateTime? rangeFrom, DateTime? rangeTo, bool hasRange)
     {
         var maintQ = _db.MaintenanceOrders.AsNoTracking().AsQueryable();
         if (hasRange) maintQ = maintQ.Where(m => m.CreateTime >= rangeFrom && m.CreateTime < rangeTo);
@@ -753,8 +750,7 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
     }
 
     ///<summary>筛选条件都是「空即不过滤」：状态精确匹配，关键字命中车号或品牌（忽略大小写）</summary>
-    private static IEnumerable<VehicleStatRowDto> FilterVehicleStatRows(
-        IEnumerable<VehicleStatRowDto> rows, string? keyword, string? status) =>
+    private static IEnumerable<VehicleStatRowDto> FilterVehicleStatRows(IEnumerable<VehicleStatRowDto> rows, string? keyword, string? status) =>
         rows.Where(r => string.IsNullOrWhiteSpace(status) || r.VehicleStatus == status)
             .Where(r => MatchesVehicleKeyword(r, keyword));
 

@@ -240,7 +240,7 @@ static void ConfigureRateLimiter(IServiceCollection services)
         // 全站：每 IP 令牌桶，容量 120、每秒回补 40。
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
             RateLimitPartition.GetTokenBucketLimiter(
-                ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                ClientIp.ResolveOrUnknown(ctx),
                 _ => new TokenBucketRateLimiterOptions
                 {
                     TokenLimit = 120,
@@ -253,7 +253,7 @@ static void ConfigureRateLimiter(IServiceCollection services)
         // 认证类接口：每 IP 每分钟 10 次（登录 / 注册 / 改密共用）。
         options.AddPolicy(RateLimitPolicies.Auth, ctx =>
             RateLimitPartition.GetFixedWindowLimiter(
-                ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                ClientIp.ResolveOrUnknown(ctx),
                 _ => new FixedWindowRateLimiterOptions
                 {
                     PermitLimit = 10,
@@ -265,7 +265,7 @@ static void ConfigureRateLimiter(IServiceCollection services)
         // 匿名支付状态查询：订单号加随机熵之后仍可能被批量试探，单独按 IP 限流。
         options.AddPolicy(RateLimitPolicies.PayStatus, ctx =>
             RateLimitPartition.GetFixedWindowLimiter(
-                ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                ClientIp.ResolveOrUnknown(ctx),
                 _ => new FixedWindowRateLimiterOptions
                 {
                     PermitLimit = 30,
@@ -304,10 +304,16 @@ static void ConfigureHttpClients(IServiceCollection services)
 static void RegisterBusinessServices(IServiceCollection services, IConfiguration configuration)
 {
     services.AddScoped<ImageStorage>();
+    // 单点登录校验的本地短缓存（5 秒）：每个已认证请求都要读会话键，缓存把这次 DB 查询让掉；
+    // 写操作（登录/登出/强制下线）会主动失效本机缓存，多实例之间的失效延迟上限即 TTL。
+    services.AddMemoryCache();
     // 登录 IP 防护闸：按来源 IP 累计登录失败并封锁。进程内单例——封锁记录只在内存，
     services.AddSingleton<LoginIpGuard>();
-    // 单点登录登记表：同一账号不允许同时登录。进程内单例（本地单实例部署），
+    // 单点登录登记表：同一账号不允许同时登录。按请求作用域注册即可——会话落在 system_config，
+    // 多实例看到的是同一份真相，不需要进程内单例；本地只缓存 5 秒的校验结果，写操作主动失效。
     services.AddScoped<SessionRegistry>();
+    // 支付回调去重：按 pay_notify_log 唯一键原子登记，多实例共享判定（见 PayNotifyDeduplicator）
+    services.AddScoped<PayNotifyDeduplicator>();
     // 基于 MySQL GET_LOCK 的分布式锁：定时任务（备份、超时单回收）多实例选主
     services.AddScoped<DbLockService>();
     services.AddScoped<AuthService>();
@@ -341,6 +347,9 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     // 支付配置：凭证由管理员在管理员端填写，存 system_config（pay.* 前缀），支持「生产→沙箱→模拟」三级自动降级。
     services.AddSingleton<SecretProvider>();
     services.AddScoped<PayConfigService>();
+
+    // 健康检查：数据库 / 备份新鲜度 / 支付回调活跃度，供 /health 与监控轮询使用
+    services.AddScoped<HealthService>();
 
     // 账户余额查询：支付宝/微信官方余额接口，带超时、重试、缓存与降级兜底。
     services.AddScoped<BalanceService>();
@@ -407,6 +416,14 @@ static void ConfigurePipeline(WebApplication app, string corsPolicyName)
     // 反代头还原必须排在任何「读客户端 IP」的组件之前：
     app.UseForwardedHeaders();
 
+    // 全站禁止 MIME 嗅探：上传目录里即便混进内容与扩展名不符的文件，
+    // 浏览器也不会把它当 HTML/脚本执行（配合上传时的魔数校验形成双保险）。
+    app.Use(async (ctx, next) =>
+    {
+        ctx.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        await next();
+    });
+
     // 静态资源：对外提供维保现场照片（wwwroot/uploads/maintenance/**）。
     app.UseStaticFiles();
 
@@ -426,6 +443,15 @@ static void ConfigurePipeline(WebApplication app, string corsPolicyName)
     app.UseMiddleware<SingleSessionMiddleware>();
     app.UseAuthorization();
     app.MapControllers();
+
+    // 健康检查：匿名可读，只回状态与简短说明（不含连接串、密钥或异常原文）。
+    // 200 = 可用（含 Degraded，便于监控区分「能用但需处理」），503 = 核心依赖不可用。
+    app.MapGet("/health", async (HealthService health, CancellationToken ct) =>
+    {
+        var report = await health.CheckAsync(ct);
+        var status = report.Status == HealthService.Unhealthy ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status200OK;
+        return TypedResults.Json(report, statusCode: status);
+    }).AllowAnonymous();
 
     if (app.Environment.IsDevelopment())
     {

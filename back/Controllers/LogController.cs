@@ -16,7 +16,7 @@ public class LogController(LogService svc, BackupService backup) : ControllerBas
     private readonly BackupService _backup = backup;
 
     private int CurrentUserId => int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-    private string? ClientIp => HttpContext.Connection.RemoteIpAddress?.ToString();
+    private string? ClientIp => Services.ClientIp.Resolve(HttpContext);
 
     ///<summary>耗时文案</summary>
     private static string Elapsed(long ms) => ms < 1000 ? $"{ms}ms" : $"{ms / 1000.0:0.0}s";

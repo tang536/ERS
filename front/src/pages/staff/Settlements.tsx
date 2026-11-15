@@ -53,6 +53,14 @@ export default function Settlements() {
   /** 结算试算结果（逾期费 / 实际租金 / 预计退还补缴），选定订单后拉取 */
   const [preview, setPreview] = useState<any>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  /** 损坏费阈值（0 = 不启用自动转维保）：告诉前台这笔赔偿会不会让车下线 */
+  const damageThreshold = Number(preview?.damageMaintenanceThreshold ?? 0)
+  const damageThresholdHint = (fee: number) => {
+    if (damageThreshold <= 0) return '未启用「损坏费自动转维保」（阈值为 0）：只计赔偿，车辆状态不变。'
+    return fee >= damageThreshold
+      ? `已达 ¥${damageThreshold.toFixed(2)} 阈值：结算后车辆自动转入「维保中」。`
+      : `未达 ¥${damageThreshold.toFixed(2)} 阈值：只计赔偿，车辆状态不变。`
+  }
   /** 正在催缴的结算单 id（只用于按钮 loading 态，防止连点） */
   const [reminding, setReminding] = useState<number | null>(null)
   /**
@@ -905,6 +913,9 @@ export default function Settlements() {
                 <div className="field-hint">
                   押金不足以覆盖时会并入补缴金额；金额由顾客在结算单上可见，请如实录入。
                 </div>
+                <div className={`field-hint${reviewDamageFee > 0 && damageThreshold > 0 && reviewDamageFee >= damageThreshold ? ' text-warning' : ''}`}>
+                  {damageThresholdHint(reviewDamageFee)}
+                </div>
               </div>
 
               <div className="form-group">
@@ -1031,6 +1042,9 @@ export default function Settlements() {
                   onChange={e => setForm({ ...form, damageFee: parseFloat(e.target.value) || 0 })}
                 />
                 {errors.damageFee && <div className="field-error">{errors.damageFee}</div>}
+                <div className={`field-hint${form.damageFee > 0 && damageThreshold > 0 && form.damageFee >= damageThreshold ? ' text-warning' : ''}`}>
+                  {damageThresholdHint(form.damageFee)}
+                </div>
               </div>
 
               {/* 归还验车：电量 + 车况 + 现场照片。与损坏费同屏，是因为损坏费本来就是凭车况定的——

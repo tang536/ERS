@@ -9,11 +9,12 @@ using Microsoft.EntityFrameworkCore;
 namespace ERental.Services;
 
 ///<summary>微信支付 APIv3 收单服务（正式通道）：H5 下单、订单查询、异步回调验签与解密入账</summary>
-public class WechatPayService(AppDbContext db, PayConfigService payConfig, AlipayService alipay, IHttpClientFactory httpFactory, ILogger<WechatPayService> logger)
+public class WechatPayService(AppDbContext db, PayConfigService payConfig, AlipayService alipay, PayNotifyDeduplicator dedup, IHttpClientFactory httpFactory, ILogger<WechatPayService> logger)
 {
     private readonly AppDbContext _db = db;
     private readonly PayConfigService _payConfig = payConfig;
     private readonly AlipayService _alipay = alipay;
+    private readonly PayNotifyDeduplicator _dedup = dedup;
     private readonly IHttpClientFactory _httpFactory = httpFactory;
     private readonly ILogger<WechatPayService> _logger = logger;
 
@@ -27,6 +28,24 @@ public class WechatPayService(AppDbContext db, PayConfigService payConfig, Alipa
 
     ///<summary>APIv3 请求签名所在的请求头</summary>
     private const string AuthorizationHeader = "Authorization";
+
+    //── APIv3 回调签名头 ──
+    //官方名称是 Wechatpay-（不是 Wechat-）：少写 "pay" 会让真回调取不到签名头而全部验签失败。
+    //控制器与验签逻辑共用这组常量，避免两处各写一份字符串再各错一次。
+    ///<summary>回调时间戳头</summary>
+    public const string HeaderTimestamp = "Wechatpay-Timestamp";
+
+    ///<summary>回调随机串头</summary>
+    public const string HeaderNonce = "Wechatpay-Nonce";
+
+    ///<summary>回调签名头</summary>
+    public const string HeaderSignature = "Wechatpay-Signature";
+
+    ///<summary>回调平台证书/公钥序列号头</summary>
+    public const string HeaderSerial = "Wechatpay-Serial";
+
+    ///<summary>验签所需的全部回调请求头</summary>
+    public static readonly IReadOnlyList<string> NotifyHeaders = [HeaderTimestamp, HeaderNonce, HeaderSignature, HeaderSerial];
 
     ///<summary>一次微信支付调用所需的运行参数（由配置解析而来）</summary>
     public sealed record WechatRuntime(string AppId, string MchId, string ApiV3Key, string CertSerial, string PrivateKey, string NotifyUrl, string Gateway, string PayMode, bool Enabled)
@@ -352,10 +371,10 @@ public class WechatPayService(AppDbContext db, PayConfigService payConfig, Alipa
         var platformKey = _payConfig.Secret(PayConfigService.KeyWechatPlatformKey, (await _payConfig.GetRawAsync()).TryGetValue(PayConfigService.KeyWechatPlatformKey, out var pk) ? pk.Trim() : "");
         if (string.IsNullOrWhiteSpace(platformKey)) return (false, "未配置微信支付公钥，无法验签回调。");
 
-        var ts = headers.TryGetValue("Wechat-Timestamp", out var v1) ? v1 : "";
-        var nonce = headers.TryGetValue("Wechat-Nonce", out var v2) ? v2 : "";
-        var sign = headers.TryGetValue("Wechat-Signature", out var v3) ? v3 : "";
-        var serial = headers.TryGetValue("Wechat-Serial", out var v4) ? v4 : "";
+        var ts = headers.TryGetValue(HeaderTimestamp, out var v1) ? v1 : "";
+        var nonce = headers.TryGetValue(HeaderNonce, out var v2) ? v2 : "";
+        var sign = headers.TryGetValue(HeaderSignature, out var v3) ? v3 : "";
+        var serial = headers.TryGetValue(HeaderSerial, out var v4) ? v4 : "";
         var message = $"{ts}\n{nonce}\n{body}\n";
         if (!AlipaySigner.Verify(message, sign, platformKey))
         {
@@ -363,10 +382,10 @@ public class WechatPayService(AppDbContext db, PayConfigService payConfig, Alipa
             return (false, "回调验签失败。");
         }
 
-        //①a 时效校验：Wechat-Timestamp 必须是 ±5 分钟内的 Unix 秒
+        //①a 时效校验：Wechatpay-Timestamp 必须是 ±5 分钟内的 Unix 秒
         if (!long.TryParse(ts, NumberStyles.None, CultureInfo.InvariantCulture, out var tsSeconds))
         {
-            _logger.LogWarning("微信回调缺少合法 Wechat-Timestamp，已拒绝（serial {Serial}）", serial);
+            _logger.LogWarning("微信回调缺少合法 Wechatpay-Timestamp，已拒绝（serial {Serial}）", serial);
             return (false, "回调时间戳缺失或非法，已拒绝。");
         }
         if (Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - tsSeconds) > 300)
@@ -375,9 +394,9 @@ public class WechatPayService(AppDbContext db, PayConfigService payConfig, Alipa
             return (false, "回调已过期，拒绝处理。");
         }
 
-        //①b 重放防护：5 分钟窗口内「完全相同的报文」只放行一次
-        var replayKey = PayNotifyGuard.BuildKey("wechat", ts, nonce, serial, sign, body);
-        if (PayNotifyGuard.IsDuplicate(replayKey))
+        //①b 重放防护：5 分钟窗口内「完全相同的报文」只放行一次（pay_notify_log 唯一键，多实例共享）
+        var replayKey = PayNotifyDeduplicator.BuildKey("wechat", ts, nonce, serial, sign, body);
+        if (!await _dedup.TryRegisterAsync("wechat", null, replayKey))
         {
             _logger.LogInformation("微信回调重复投递已忽略（serial {Serial}）", serial);
             return (true, "重复通知已忽略。");

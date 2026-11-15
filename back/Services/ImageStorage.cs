@@ -8,7 +8,63 @@ public class ImageStorage(IWebHostEnvironment env)
     private readonly IWebHostEnvironment _env = env;
 
     private static readonly string[] AllowedImageExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
+
+    /// <summary>扩展名 → 内容格式的归一映射：.jpeg 与 .jpg 是同一格式</summary>
+    private static readonly Dictionary<string, string> ExtAlias = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".jpg"] = ".jpg",
+        [".jpeg"] = ".jpg",
+        [".png"] = ".png",
+        [".webp"] = ".webp",
+        [".gif"] = ".gif"
+    };
+
     private const long MaxImageBytes = 5 * 1024 * 1024;
+
+    /// <summary>PNG 文件头：避免在比较里写集合表达式导致类型推断成 int</summary>
+    private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    /// <summary>读取文件头并判断真实图片格式</summary>
+    private static string? DetectImageFormat(ReadOnlySpan<byte> header)
+    {
+        //JPEG：FF D8 FF
+        if (header.Length >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF) return ".jpg";
+        //PNG：89 50 4E 47 0D 0A 1A 0A
+        if (header.Length >= 8 && header[..8].SequenceEqual(PngSignature)) return ".png";
+        //GIF：GIF87a / GIF89a
+        if (header.Length >= 6 && (header[..6].SequenceEqual("GIF87a"u8) || header[..6].SequenceEqual("GIF89a"u8))) return ".gif";
+        //WebP：RIFF....WEBP
+        if (header.Length >= 12 && header[..4].SequenceEqual("RIFF"u8) && header[8..12].SequenceEqual("WEBP"u8)) return ".webp";
+        return null;
+    }
+
+    /// <summary>
+    /// 校验上传文件确实是图片，并确认内容与扩展名一致。
+    /// 只信任扩展名会让「把任意脚本改名为 .jpg」直接落进 wwwroot；这里读文件头做一次内容判定，
+    /// 两类结果都拒绝：不是已知图片格式、或内容格式与声明的扩展名不一致。
+    /// </summary>
+    public static async Task<string> ValidateImageAsync(IFormFile file, IReadOnlyCollection<string> allowedExt, CancellationToken ct = default)
+    {
+        await using var stream = file.OpenReadStream();
+        var header = new byte[12];
+        var read = await stream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, ct);
+        return ValidateImage(file.FileName, header.AsSpan(0, read), allowedExt);
+    }
+
+    /// <summary>纯内容校验：单独抽出来便于用固定文件头做单元测试</summary>
+    public static string ValidateImage(string fileName, ReadOnlySpan<byte> header, IReadOnlyCollection<string> allowedExt)
+    {
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        if (!allowedExt.Contains(ext)) throw new BusinessException("仅支持 jpg / jpeg / png / webp / gif 格式的图片");
+
+        var actual = DetectImageFormat(header)
+            ?? throw new BusinessException("文件内容不是可识别的图片，请重新选择原始图片");
+
+        if (!string.Equals(ExtAlias.GetValueOrDefault(ext), actual, StringComparison.Ordinal))
+            throw new BusinessException("图片内容与扩展名不一致，请改用原始图片文件");
+
+        return ext;
+    }
 
     ///<summary>上传根目录（…/wwwroot/uploads）</summary>
     private string RootUploadsPath
@@ -38,8 +94,8 @@ public class ImageStorage(IWebHostEnvironment env)
         if (file == null || file.Length == 0) throw new BusinessException("请选择要上传的图片");
         if (file.Length > MaxImageBytes) throw new BusinessException("图片不能超过 5MB，请压缩后再上传");
 
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        if (!AllowedImageExt.Contains(ext)) throw new BusinessException("仅支持 jpg / jpeg / png / webp / gif 格式的图片");
+        //扩展名白名单 + 文件头魔数双重校验：只认扩展名的话，把脚本改名为 .jpg 也能落到 wwwroot 下
+        var ext = await ValidateImageAsync(file, AllowedImageExt);
 
         //按年月分桶：老文件留在原目录照样能访问，新文件进新目录
         var bucket = AppClock.Now.ToString("yyyy-MM");

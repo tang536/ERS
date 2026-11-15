@@ -1,4 +1,5 @@
-﻿using System.IdentityModel.Tokens.Jwt;
+﻿using System.Globalization;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using ERental.Authorization;
@@ -48,9 +49,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         var ip = string.IsNullOrWhiteSpace(clientIp) ? "unknown" : clientIp;
 
         //阈值读系统配置：登录是低频操作，一次 ToList 的代价可忽略
-        var configs = await _db.SystemConfigs.ToListAsync();
-        var maxFail = ConfigValue.Int(configs, "max_login_fail", 5);
-        var lockMinutes = ConfigValue.Int(configs, "lock_minutes", 10);
+        var (maxFail, lockMinutes) = await LoadLoginGuardAsync();
 
         //① IP 封锁闸：先于账号存在性判断
         if (_ipGuard.IsLocked(ip, out var lockTo)) throw new BusinessException($"当前网络登录失败次数过多，已被暂时封锁，请于 {lockTo:HH:mm} 后重试");
@@ -119,14 +118,15 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
 
         //关键：角色一律以数据库中的真实角色为准，前端不再根据"登录时点的哪个页签"决定跳转
         var roleName = user.Role?.RoleName ?? RoleReception;
-        //单点登录
-        var sid = await _sessions.IssueAsync(user.UserType, user.UserId);
+        //单点登录 + 刷新令牌轮换：刷新令牌带独立 jti，登录时与 sid 一起登记
+        var refreshJti = Guid.NewGuid().ToString("N");
+        var sid = await _sessions.IssueAsync(user.UserType, user.UserId, refreshJti);
         var token = GenerateJwt(user.UserId, user.LoginAccount, user.UserType, roleName, sid);
         return new LoginResponseDto
         {
             Token = token,
             //续期令牌
-            RefreshToken = GenerateJwt(user.UserId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime()),
+            RefreshToken = GenerateJwt(user.UserId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime(), refreshJti),
             UserType = user.UserType,
             RoleName = roleName,
             //权限项：代码层授予清单（RolePermissionMap）对接出的权限编码
@@ -135,6 +135,13 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
             UserId = user.UserId,
             ProfileCompleted = true
         };
+    }
+
+    ///<summary>登录防护阈值：员工与顾客共用同一组系统配置</summary>
+    private async Task<(int MaxFail, int LockMinutes)> LoadLoginGuardAsync()
+    {
+        var configs = await _db.SystemConfigs.ToListAsync();
+        return (ConfigValue.Int(configs, "max_login_fail", 5), ConfigValue.Int(configs, "lock_minutes", 10));
     }
 
     ///<summary>登录页页签（admin/reception/finance）→ 系统角色名 的映射</summary>
@@ -160,11 +167,20 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
     }
 
     ///<summary>顾客登录：只认「用户名+密码」</summary>
-    public async Task<LoginResponseDto> CustomerLogin(CustomerLoginDto dto)
+    public async Task<LoginResponseDto> CustomerLogin(CustomerLoginDto dto, string? clientIp = null)
     {
+        var ip = string.IsNullOrWhiteSpace(clientIp) ? "unknown" : clientIp;
         if (string.IsNullOrWhiteSpace(dto.Account)) throw new BusinessException("请输入用户名");
 
         var account = dto.Account.Trim();
+
+        //顾客端与员工端共用登录防护闸，但键按「账号 + IP」组合：
+        //只在同一账号反复试错时封锁，避免校园/网吧共用出口 IP 时一个账号把整网都锁死
+        var guardKey = $"customer|{account.ToLowerInvariant()}|{ip}";
+        var (maxFail, lockMinutes) = await LoadLoginGuardAsync();
+        if (_ipGuard.IsLocked(guardKey, out var lockTo))
+            throw new BusinessException($"该账号在当前网络登录失败次数过多，请于 {lockTo:HH:mm} 后重试");
+
         //同员工登录：_ci 排序规则下 SQL 比较不区分大小写，顾客登录也必须精确匹配
         var cCandidates = await _db.Customers.Where(c => c.LoginAccount == account).ToListAsync();
         var customer = cCandidates.FirstOrDefault(c => string.Equals(c.LoginAccount, account, StringComparison.Ordinal));
@@ -172,25 +188,36 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         {
             //同员工登录
             _ = BCrypt.Net.BCrypt.Verify(dto.Password, DummyPasswordHash);
-            //员工账号不在 customers 表，天然落到这里
-            await WriteLog(null, $"顾客登录失败：用户名未注册（{account}）", "用户登录", "失败");
-            throw new BusinessException("用户名或密码错误");
+            //员工账号不在 customers 表，天然落到这里；账号不存在也记一笔，防止用不存在的用户名探测
+            var locked = _ipGuard.RegisterFailure(guardKey, maxFail, lockMinutes, out _);
+            await WriteLog(null, $"顾客登录失败：用户名未注册（{account}，IP {ip}）", "用户登录", "失败");
+            if (locked) throw new BusinessException($"用户名或密码错误，当前网络已被封锁{lockMinutes}分钟，请稍后再试");
+            throw new BusinessException($"用户名或密码错误，当前网络还剩 {_ipGuard.Remaining(guardKey, maxFail)} 次机会");
         }
         if (customer.AccountStatus == "已注销") throw new BusinessException("该账号已注销，如需继续租车请重新注册或联系门店");
         if (string.IsNullOrEmpty(customer.LoginPassword) || !BCrypt.Net.BCrypt.Verify(dto.Password, customer.LoginPassword))
         {
-            await WriteLog(null, $"顾客登录失败：密码错误（{account}）", "用户登录", "失败");
-            throw new BusinessException("用户名或密码错误");
+            var locked = _ipGuard.RegisterFailure(guardKey, maxFail, lockMinutes, out _);
+            if (locked)
+            {
+                await WriteLog(null, $"顾客登录失败次数过多，IP {ip} 已对该账号封锁{lockMinutes}分钟（{account}）", "用户登录", "失败");
+                throw new BusinessException($"用户名或密码错误，当前网络已被封锁{lockMinutes}分钟，请稍后再试");
+            }
+            var left = _ipGuard.Remaining(guardKey, maxFail);
+            await WriteLog(null, $"顾客登录失败：密码错误，当前网络还剩 {left} 次机会（{account}，IP {ip}）", "用户登录", "失败");
+            throw new BusinessException($"用户名或密码错误，当前网络还剩 {left} 次机会");
         }
-        await WriteLog(null, $"顾客登录成功（{account}）", "用户登录", "成功");
+        _ipGuard.Reset(guardKey);
+        await WriteLog(null, $"顾客登录成功（{account}，IP {ip}）", "用户登录", "成功");
 
-        //单点登录：顾客端同理
-        var sid = await _sessions.IssueAsync(UserTypeCustomer, customer.CustomerId);
+        //单点登录：顾客端同理；刷新令牌与 sid 一起登记，续期时轮换
+        var refreshJti = Guid.NewGuid().ToString("N");
+        var sid = await _sessions.IssueAsync(UserTypeCustomer, customer.CustomerId, refreshJti);
         var token = GenerateJwt(customer.CustomerId, customer.LoginAccount ?? account, UserTypeCustomer, RoleCustomer, sid);
         return new LoginResponseDto
         {
             Token = token,
-            RefreshToken = GenerateJwt(customer.CustomerId, customer.LoginAccount ?? account, UserTypeCustomer, RoleCustomer, sid, TokenTypeRefresh, RefreshLifetime()),
+            RefreshToken = GenerateJwt(customer.CustomerId, customer.LoginAccount ?? account, UserTypeCustomer, RoleCustomer, sid, TokenTypeRefresh, RefreshLifetime(), refreshJti),
             UserType = UserTypeCustomer,
             //角色名固定为「顾客」，与前端菜单表逐条对应
             RoleName = RoleCustomer,
@@ -383,33 +410,31 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
     private async Task WriteLog(int? userId, string content, string module, string result, int? customerId = null)
     {
         //审计日志要能追溯「谁、在什么时间、从哪台机器」做了什么
-        _db.SystemLogs.Add(SystemLog.Create(userId, customerId, content, module, result, ClientIp()));
+        _db.SystemLogs.Add(SystemLog.Create(userId, customerId, content, module, result, ResolveClientIp()));
         await _db.SaveChangesAsync();
     }
 
     ///<summary>当前请求的客户端 IP</summary>
-    private string? ClientIp()
-    {
-        var addr = _http.HttpContext?.Connection.RemoteIpAddress;
-        if (addr is null) return null;
-        return addr.IsIPv4MappedToIPv6 ? addr.MapToIPv4().ToString() : addr.ToString();
-    }
+    private string? ResolveClientIp() => ClientIp.Resolve(_http.HttpContext);
 
-    private string GenerateJwt(int userId, string account, string userType, string role, string sessionToken, string tokenType = TokenTypeAccess, TimeSpan? lifetime = null)
+    private string GenerateJwt(int userId, string account, string userType, string role, string sessionToken, string tokenType = TokenTypeAccess, TimeSpan? lifetime = null, string? refreshJti = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var claims = new[]
-        {
-            new Claim(ClaimTypes.NameIdentifier,userId.ToString()),
-            new Claim(ClaimTypes.Name,account),
-            new Claim("user_type",userType),
-            new Claim(ClaimTypes.Role,role),
+        List<Claim> claims =
+        [
+            new(ClaimTypes.NameIdentifier, userId.ToString()),
+            new(ClaimTypes.Name, account),
+            new("user_type", userType),
+            new(ClaimTypes.Role, role),
             //sid：本次登录的会话标识
-            new Claim(Middleware.SingleSessionMiddleware.SessionClaim,sessionToken),
+            new(Middleware.SingleSessionMiddleware.SessionClaim, sessionToken),
             //token_type：区分「访问令牌」与「续期令牌」
-            new Claim(TokenTypeClaim,tokenType)
-        };
+            new(TokenTypeClaim, tokenType)
+        ];
+        //jti：续期令牌的一次性标识，刷新时轮换（旧令牌立即作废）
+        if (!string.IsNullOrEmpty(refreshJti)) claims.Add(new(JwtRegisteredClaimNames.Jti, refreshJti));
+
         var token = new JwtSecurityToken(
             issuer: _config["Jwt:Issuer"],
             audience: _config["Jwt:Audience"],
@@ -421,10 +446,17 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
     }
 
     ///<summary>访问令牌有效期（配置 Jwt:ExpireMinutes，默认 120 分钟）</summary>
-    private TimeSpan AccessLifetime() => TimeSpan.FromMinutes(double.Parse(_config["Jwt:ExpireMinutes"] ?? "120"));
+    private TimeSpan AccessLifetime() => TimeSpan.FromMinutes(ReadLifetime("Jwt:ExpireMinutes", 120));
 
     ///<summary>续期令牌有效期（配置 Jwt:RefreshExpireDays，默认 7 天）</summary>
-    private TimeSpan RefreshLifetime() => TimeSpan.FromDays(double.Parse(_config["Jwt:RefreshExpireDays"] ?? "7"));
+    private TimeSpan RefreshLifetime() => TimeSpan.FromDays(ReadLifetime("Jwt:RefreshExpireDays", 7));
+
+    ///<summary>
+    /// 读取时长配置：固定用不变文化解析。服务器区域设置若把小数点当千分位，
+    /// double.Parse("0.5") 会得到 5，令牌有效期就被悄悄放大了 10 倍。
+    /// </summary>
+    private double ReadLifetime(string key, double fallback) =>
+        double.TryParse(_config[key], NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v > 0 ? v : fallback;
 
     ///<summary>用续期令牌换一对新令牌</summary>
     public async Task<LoginResponseDto> RefreshAsync(string refreshToken)
@@ -436,12 +468,19 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         var account = principal.FindFirst(ClaimTypes.Name)?.Value ?? string.Empty;
         var userType = principal.FindFirst("user_type")?.Value ?? "staff";
         var sid = principal.FindFirst(Middleware.SingleSessionMiddleware.SessionClaim)?.Value;
+        var refreshJti = principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
 
         if (!int.TryParse(rawId, out var userId) || string.IsNullOrEmpty(sid)) throw new BusinessException("登录状态已失效，请重新登录");
+        //升级前签发的续期令牌没有 jti，无法参与轮换：要求重新登录一次，避免旧令牌继续可重放
+        if (string.IsNullOrEmpty(refreshJti)) throw new BusinessException("登录状态已失效，请重新登录");
 
-        //与单点登录接缝
-        var (sessionOk, revokedReason) = await _sessions.CheckAsync(userType, userId, sid);
+        //与单点登录接缝：sid 与 jti 都必须匹配登记表，且读库绕过缓存（旧令牌换出后立即失效）
+        var (sessionOk, revokedReason) = await _sessions.CheckRefreshAsync(userType, userId, sid, refreshJti);
         if (!sessionOk) throw new BusinessException(revokedReason ?? "该账号已在其他设备登录，当前登录已被下线");
+
+        //先轮换再签发：并发重放时条件更新只有一个请求能成功，另一个直接判失效
+        var newJti = Guid.NewGuid().ToString("N");
+        await _sessions.RotateRefreshAsync(userType, userId, sid, refreshJti, newJti);
 
         if (userType == UserTypeCustomer)
         {
@@ -452,7 +491,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
             {
                 //账号名以库为准
                 Token = GenerateJwt(userId, customer.LoginAccount ?? account, UserTypeCustomer, RoleCustomer, sid),
-                RefreshToken = GenerateJwt(userId, customer.LoginAccount ?? account, UserTypeCustomer, RoleCustomer, sid, TokenTypeRefresh, RefreshLifetime()),
+                RefreshToken = GenerateJwt(userId, customer.LoginAccount ?? account, UserTypeCustomer, RoleCustomer, sid, TokenTypeRefresh, RefreshLifetime(), newJti),
                 UserType = UserTypeCustomer,
                 RoleName = RoleCustomer,
                 //姓名可能为空（注册只填用户名），为空时回落到令牌里的账号名
@@ -471,7 +510,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         return new LoginResponseDto
         {
             Token = GenerateJwt(userId, user.LoginAccount, user.UserType, roleName, sid),
-            RefreshToken = GenerateJwt(userId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime()),
+            RefreshToken = GenerateJwt(userId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime(), newJti),
             UserType = user.UserType,
             RoleName = roleName,
             PermissionCodes = await LoadPermissionCodesAsync(user.Role),
@@ -485,26 +524,38 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
     private ClaimsPrincipal ValidateRefreshToken(string refreshToken)
     {
         var handler = new JwtSecurityTokenHandler();
+        //先判可读性：格式非法的串交给 ValidateToken 可能抛 ArgumentException，
+        //与「签名/有效期校验失败」混在一起，反而不利于定位。
+        if (!handler.CanReadToken(refreshToken)) throw new BusinessException("登录状态已失效，请重新登录");
+
+        //参数在 try 外构造：Jwt:Key 缺失属于部署配置错误，应让 500 暴露出来，
+        //不能被下面的「令牌无效」catch 吞成 401。
+        var validation = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = _config["Jwt:Issuer"],
+            ValidAudience = _config["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!))
+        };
+
+        ClaimsPrincipal principal;
         try
         {
-            var principal = handler.ValidateToken(refreshToken, new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                ValidateLifetime = true,
-                ValidateIssuerSigningKey = true,
-                ValidIssuer = _config["Jwt:Issuer"],
-                ValidAudience = _config["Jwt:Audience"],
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!))
-            }, out _);
-
-            //只接受 refresh 类型
-            return principal.FindFirst(TokenTypeClaim)?.Value == TokenTypeRefresh ? principal : throw new BusinessException("该令牌不能用于续期，请重新登录");
+            principal = handler.ValidateToken(refreshToken, validation, out _);
         }
-        catch (Exception ex) when (ex.Message != "该令牌不能用于续期，请重新登录")
+        catch (Exception ex) when (ex is SecurityTokenException or ArgumentException)
         {
-            //签名错误/已过期/格式非法：统一收敛为同一句人话，不向客户端暴露具体校验环节
+            //签名错误/已过期/颁发者不符/报文结构非法：统一收敛为同一句人话，不向客户端暴露具体校验环节
             throw new BusinessException("登录状态已失效，请重新登录");
         }
+
+        //只接受 refresh 类型。放在 try 之外：类型不符是业务拒绝，不是「令牌损坏」，
+        //也不该再用异常消息字符串做控制流（改文案就会把 catch 条件改坏）。
+        return principal.FindFirst(TokenTypeClaim)?.Value == TokenTypeRefresh
+            ? principal
+            : throw new BusinessException("该令牌不能用于续期，请重新登录");
     }
 }

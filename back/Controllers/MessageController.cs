@@ -12,10 +12,7 @@ namespace ERental.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class MessageController(
-    MessageService messages,
-    IEnumerable<INotificationSource> sources,
-    ILogger<MessageController> logger) : ControllerBase
+public class MessageController(MessageService messages, IEnumerable<INotificationSource> sources, ILogger<MessageController> logger) : ControllerBase
 {
     private readonly MessageService _messages = messages;
     private readonly IEnumerable<INotificationSource> _sources = sources;

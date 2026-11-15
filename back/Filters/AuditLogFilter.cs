@@ -99,17 +99,10 @@ public sealed class AuditLogFilter(IServiceScopeFactory scopeFactory, ILogger<Au
     };
 
     /// <summary>
-    /// 客户端 IP：优先取 X-Forwarded-For 首个地址（反代/隧道场景），否则用连接远端地址。
-    /// 与 PaymentController 的取法保持一致，避免同一系统里两种口径。
+    /// 客户端 IP：只取连接远端地址。
+    /// Program.cs 的 ForwardedHeaders 中间件已按「仅信任本机反代」把 X-Forwarded-For
+    /// 还原进 <c>Connection.RemoteIpAddress</c>；这里若再直接读原始头，直连客户端
+    /// 只要自带一个 X-Forwarded-For 就能伪造审计来源 IP，反而绕过了反代的信任边界。
     /// </summary>
-    private static string? ClientIp(HttpContext http)
-    {
-        var forwarded = http.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(forwarded))
-        {
-            var first = forwarded.Split(',')[0].Trim();
-            if (first.Length > 0) return first;
-        }
-        return http.Connection.RemoteIpAddress?.ToString();
-    }
+    private static string? ClientIp(HttpContext http) => Services.ClientIp.Resolve(http);
 }

@@ -526,8 +526,7 @@ public class AiImageService(ComfyUiClient comfy, ImageStorage images, IOptions<A
     }
 
     ///<summary>提交并等待执行完成，成功后返回输出图片清单</summary>
-    private async Task<List<ComfyOutputImage>> ExecuteAndCollectOutputsAsync(
-        JsonObject graph, string jobId, IProgress<ComfyProgress>? progress, CancellationToken ct)
+    private async Task<List<ComfyOutputImage>> ExecuteAndCollectOutputsAsync(JsonObject graph, string jobId, IProgress<ComfyProgress>? progress, CancellationToken ct)
     {
         try
         {

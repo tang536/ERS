@@ -17,10 +17,11 @@ public sealed record BackupResult(string FileName, long SizeBytes, int TableCoun
 public sealed record RestoreResult(string FileName, int TableCount, long Rows, string SafetyBackup, long ElapsedMs);
 
 ///<summary>数据库备份/恢复</summary>
-public class BackupService(AppDbContext db, IConfiguration config, ILogger<BackupService> logger)
+public class BackupService(AppDbContext db, IConfiguration config, IHostEnvironment env, ILogger<BackupService> logger)
 {
     private readonly AppDbContext _db = db;
     private readonly IConfiguration _cfg = config;
+    private readonly IHostEnvironment _env = env;
     private readonly ILogger<BackupService> _logger = logger;
 
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("ERBK1");
@@ -28,6 +29,9 @@ public class BackupService(AppDbContext db, IConfiguration config, ILogger<Backu
     private const int TagSize = 16;
     private const string FilePrefix = "backup_";
     private const string SafetyPrefix = "auto-before-restore_";
+
+    ///<summary>默认密钥文件名</summary>
+    private const string KeyFileName = "backup.key";
 
     ///<summary>17 张表，父表在前</summary>
     private static readonly string[] Tables =
@@ -257,8 +261,7 @@ public class BackupService(AppDbContext db, IConfiguration config, ILogger<Backu
     }
 
     ///<summary>构造单行 INSERT</summary>
-    private static (string Sql, object[] Args) BuildInsert(
-        string table, JsonElement rowEl, Dictionary<(string Table, string Column), string> columnTypes)
+    private static (string Sql, object[] Args) BuildInsert(string table, JsonElement rowEl, Dictionary<(string Table, string Column), string> columnTypes)
     {
         var cols = new List<string>();
         var placeholders = new List<string>();
@@ -329,22 +332,70 @@ public class BackupService(AppDbContext db, IConfiguration config, ILogger<Backu
     }
 
 
-    private byte[] ResolveKey()
+    /// <summary>主密钥文件路径：Backup:KeyFile，未配置时落在 App_Data/backup.key</summary>
+    private string KeyFilePath
+    {
+        get
+        {
+            var configured = _cfg["Backup:KeyFile"];
+            var path = string.IsNullOrWhiteSpace(configured)
+                ? Path.Combine(_env.ContentRootPath, "App_Data", KeyFileName)
+                : configured.Trim();
+            return Path.GetFullPath(path);
+        }
+    }
+
+    /// <summary>
+    /// 当前用于加密的 32 字节密钥：Backup:Key → Backup:KeyFile → 首次生成并落盘。
+    /// 刻意不再从 Jwt:Key 派生：换 JWT 密钥（或清理签名文件）不应让历史备份一起解不开。
+    /// internal 仅为单测直接验证密钥来源。
+    /// </summary>
+    internal byte[] ResolveKey()
     {
         var configured = _cfg["Backup:Key"];
-        if (!string.IsNullOrWhiteSpace(configured))
+        if (!string.IsNullOrWhiteSpace(configured)) return ParseKey(configured.Trim(), "Backup:Key");
+
+        var path = KeyFilePath;
+        if (File.Exists(path))
         {
-            var key = Convert.FromBase64String(configured.Trim());
-            if (key.Length != 32)
-                throw new InvalidOperationException("Backup:Key 必须是 32 字节密钥的 Base64 编码（AES-256）");
-            return key;
+            var stored = File.ReadAllText(path).Trim();
+            if (stored.Length > 0) return ParseKey(stored, path);
         }
 
-        //未单独配置时从 JWT 密钥派生：不额外引入一个新的"必须保管的明文秘密"
+        //首次运行：生成独立密钥并落盘。提醒与备份文件分开保管——密钥丢了备份等于废纸
+        var key = RandomNumberGenerator.GetBytes(32);
+        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, Convert.ToBase64String(key), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        _logger.LogWarning("已生成独立备份密钥并写入 {Path}；请将该文件与备份文件分开保管，丢失后所有加密备份都无法恢复", path);
+        return key;
+    }
+
+    ///<summary>解析 Base64 密钥并校验长度</summary>
+    internal static byte[] ParseKey(string base64, string source)
+    {
+        try
+        {
+            var key = Convert.FromBase64String(base64);
+            if (key.Length == 32) return key;
+        }
+        catch (FormatException)
+        {
+            //落到统一的错误提示
+        }
+        throw new InvalidOperationException($"{source} 必须是 32 字节密钥的 Base64 编码（AES-256）");
+    }
+
+    ///<summary>旧版备份密钥（从 Jwt:Key 派生）：只用于解密升级前的备份</summary>
+    private bool TryResolveLegacyKey(out byte[] key)
+    {
         var jwt = _cfg["Jwt:Key"];
         if (string.IsNullOrWhiteSpace(jwt))
-            throw new InvalidOperationException("缺少 Jwt:Key，且未配置 Backup:Key，无法加密备份");
-        return SHA256.HashData(Encoding.UTF8.GetBytes("erental-backup|" + jwt));
+        {
+            key = [];
+            return false;
+        }
+        key = SHA256.HashData(Encoding.UTF8.GetBytes("erental-backup|" + jwt));
+        return true;
     }
 
     private byte[] Encrypt(byte[] plain)
@@ -372,9 +423,25 @@ public class BackupService(AppDbContext db, IConfiguration config, ILogger<Backu
         var nonce = data.AsSpan(Magic.Length, NonceSize).ToArray();
         var tag = data.AsSpan(Magic.Length + NonceSize, TagSize).ToArray();
         var cipher = data.AsSpan(header).ToArray();
+
+        try
+        {
+            return DecryptWith(ResolveKey(), nonce, tag, cipher);
+        }
+        catch (CryptographicException) when (TryResolveLegacyKey(out var legacy))
+        {
+            //升级前的备份是用 Jwt:Key 派生密钥加密的：只在这一步回退，成功后再提示重新生成
+            var plain = DecryptWith(legacy, nonce, tag, cipher);
+            _logger.LogWarning("备份文件使用旧版派生密钥（Jwt:Key）解密成功；建议立即重新生成一份备份，以迁移到独立备份密钥");
+            return plain;
+        }
+    }
+
+    ///<summary>用指定密钥解密；认证失败会抛 CryptographicException</summary>
+    private static byte[] DecryptWith(byte[] key, byte[] nonce, byte[] tag, byte[] cipher)
+    {
         var plain = new byte[cipher.Length];
-        using var aes = new AesGcm(ResolveKey(), TagSize);
-        //认证失败会抛 CryptographicException
+        using var aes = new AesGcm(key, TagSize);
         aes.Decrypt(nonce, cipher, tag, plain, Magic);
         return plain;
     }
@@ -414,9 +481,7 @@ public class BackupService(AppDbContext db, IConfiguration config, ILogger<Backu
 }
 
 ///<summary>每日定时备份</summary>
-public class BackupSchedulerService(
-    IServiceScopeFactory scopeFactory, IConfiguration config, ILogger<BackupSchedulerService> logger)
-    : BackgroundService
+public class BackupSchedulerService(IServiceScopeFactory scopeFactory, IConfiguration config, ILogger<BackupSchedulerService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(10);
 
