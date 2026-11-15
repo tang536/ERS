@@ -169,7 +169,7 @@ eRentalSystem/
 
 ## 测试与构建
 
-`back.Tests` 覆盖业务编号、输入清洗、分页、定价与结算、数据库时区、SQL 脚本以及真实 MySQL 集成，共 56 例。
+`back.Tests` 覆盖业务编号、输入清洗、分页、定价与结算、数据库时区、SQL 脚本以及真实 MySQL 集成，共 95 例（其中 12 例为 MySQL 集成）。
 
 ```bash
 # 单元测试（不依赖数据库）
@@ -208,6 +208,8 @@ cd front && npm ci && npm run build
 sudo systemctl restart erental
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+健康检查：后端 `/health` 匿名返回 200（Healthy / Degraded）或 503（Unhealthy）。若需外部监控，在 Nginx 的 HTTPS server 中增加 `location = /health { proxy_pass http://127.0.0.1:5105; }`。
 
 生产环境的数据库连接串、JWT 密钥、支付凭证通过环境变量或管理员在「支付配置」页维护，仓库内不含任何可用凭据。`wwwroot/uploads/`、`App_Data/`、`backups/`、本地 `appsettings.*.json` 与前端证书目录均不入库。
 
