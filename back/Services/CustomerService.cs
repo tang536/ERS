@@ -13,10 +13,10 @@ public class CustomerService(AppDbContext db, LogService log)
     private readonly AppDbContext _db = db;
     private readonly LogService _log = log;
 
-    ///<summary>客户列表：折扣由权益表实时补齐后直接投影为响应 DTO，实体不出服务层</summary>
+    ///<summary>客户列表：折扣由权益表实时补齐后直接投影为响应 DTO，实体不出服务层；最多 <see cref="Paging.MaxUnpagedRows"/> 条</summary>
     public async Task<List<CustomerDto>> GetAll(string? keyword = null)
     {
-        var list = await BuildQuery(keyword).OrderByDescending(c => c.CreateTime).ToListAsync();
+        var list = await BuildQuery(keyword).OrderByDescending(c => c.CreateTime).Take(Paging.MaxUnpagedRows).ToListAsync();
         await MemberDiscountLookup.FillAsync(_db, list);//3NF：展示折扣按等级关联，出参字段名不变
         var dtos = list.Select(CustomerDto.From).ToList();
         await FillCreditAsync(dtos);
@@ -66,7 +66,7 @@ public class CustomerService(AppDbContext db, LogService log)
         var total = await q.CountAsync();
         var (_, _, skip, take) = Paging.Normalize(page, pageSize);
         var ordered = q.OrderByDescending(c => c.CreateTime);
-        var items = take > 0 ? await ordered.Skip(skip).Take(take).ToListAsync() : await ordered.ToListAsync();
+        var items = take > 0 ? await ordered.Skip(skip).Take(take).ToListAsync() : await ordered.Take(Paging.MaxUnpagedRows).ToListAsync();
 
         await MemberDiscountLookup.FillAsync(_db, items);
         var dtos = items.Select(CustomerDto.From).ToList();

@@ -20,13 +20,13 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
     private readonly ImageStorage _images = images;
     private readonly LogService _log = log;
 
-    ///<summary>车辆台账（不分页）：列表接口直接返回投影，避免实体与导航属性外溢</summary>
+    ///<summary>车辆台账（不分页）：列表接口直接返回投影，避免实体与导航属性外溢；最多 <see cref="Paging.MaxUnpagedRows"/> 条</summary>
     public async Task<List<VehicleDto>> GetAll(string? status = null, string? keyword = null)
     {
         var q = _db.Vehicles.AsNoTracking();
         if (!string.IsNullOrEmpty(status)) q = q.Where(v => v.VehicleStatus == status);
         if (!string.IsNullOrEmpty(keyword)) q = q.Where(v => v.VehicleNo.Contains(keyword) || v.Brand!.Contains(keyword));
-        return (await q.ToListAsync()).Select(VehicleDto.From).ToList();
+        return (await q.Take(Paging.MaxUnpagedRows).ToListAsync()).Select(VehicleDto.From).ToList();
     }
 
     ///<summary>分页查询（管理端车辆台账）：pageSize≤0 时等价于全量</summary>
@@ -53,7 +53,7 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
             //未指定排序时固定车牌升序：这是台账的天然顺序，翻页不会跳来跳去
             _ => q.OrderBy(v => v.VehicleNo),
         };
-        var items = take > 0 ? await ordered.Skip(skip).Take(take).ToListAsync() : await ordered.ToListAsync();
+        var items = take > 0 ? await ordered.Skip(skip).Take(take).ToListAsync() : await ordered.Take(Paging.MaxUnpagedRows).ToListAsync();
         return (items.Select(VehicleDto.From).ToList(), total);
     }
 
@@ -347,6 +347,8 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
     ///<summary>最近热销车辆：按近 days 天的成单量排名，供顾客线上租车页展示</summary>
     public async Task<List<PopularVehicleDto>> GetPopular(int days = 30, int limit = 6)
     {
+        days = Math.Clamp(days, 1, 365);
+        limit = Math.Clamp(limit, 1, Paging.MaxPageSize);
         var since = AppClock.Now.AddDays(-days);
         var ranked = await _db.RentalOrders.AsNoTracking().Where(o => o.CreateTime >= since && o.OrderStatus != "已取消").GroupBy(o => o.VehicleId).Select(g => new { VehicleId = g.Key, OrderCount = g.Count() }).OrderByDescending(x => x.OrderCount).Take(limit).ToListAsync();
 
@@ -376,7 +378,7 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
         .ThenBy(x=>x.VehicleNo)];
     }
 
-    ///<summary>顾客端「全部车辆」目录：返回所有车辆（含在租/维保/报废）</summary>
+    ///<summary>顾客端「全部车辆」目录：返回车辆（含在租/维保/报废），最多 <see cref="Paging.MaxUnpagedRows"/> 条</summary>
     public async Task<List<PopularVehicleDto>> GetCatalog(string? keyword = null)
     {
         var q = _db.Vehicles.AsNoTracking();
@@ -385,7 +387,7 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
             var k = keyword.Trim();
             q = q.Where(v => v.VehicleNo.Contains(k) || v.Brand!.Contains(k));
         }
-        var vehicles = await q.OrderBy(v => v.VehicleNo).ToListAsync();
+        var vehicles = await q.OrderBy(v => v.VehicleNo).Take(Paging.MaxUnpagedRows).ToListAsync();
 
         //近 30 天成单量：仅用于在「全部车辆」里展示热度，不参与排序（列表按车牌号稳定排列）
         var since = AppClock.Now.AddDays(-30);
@@ -486,7 +488,7 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
 
         if (v == null) throw new BusinessException($"未找到车辆编号「{token}」对应的车辆档案");
 
-        var orders = await _db.RentalOrders.AsNoTracking().Where(o => o.VehicleId == v.VehicleId).OrderByDescending(o => o.LeaseStart).Select(o => new VehicleOrderBriefDto
+        var orders = await _db.RentalOrders.AsNoTracking().Where(o => o.VehicleId == v.VehicleId).OrderByDescending(o => o.LeaseStart).Take(Paging.MaxUnpagedRows).Select(o => new VehicleOrderBriefDto
         {
             OrderId = o.OrderId,
             OrderNo = o.OrderNo,

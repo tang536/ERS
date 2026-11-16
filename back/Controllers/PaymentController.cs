@@ -17,7 +17,7 @@ namespace ERental.Controllers;
 [Route("api/[controller]")]
 //支付记录查询：管理员/财务（对账）
 [Authorize(Policy = Policies.AnyRole)]
-public class PaymentController(PaymentService svc, AlipayService alipay, WechatPayService wechat, BankPayService bank, PayConfigService payConfig, BalanceService balance, OrderService orders, LogService logs, MemberService member, ILogger<PaymentController> logger) : ControllerBase
+public class PaymentController(PaymentService svc, AlipayService alipay, WechatPayService wechat, BankPayService bank, PayConfigService payConfig, BalanceService balance, OrderService orders, LogService logs, MemberService member, PaymentReconcileService reconcile, ILogger<PaymentController> logger) : ControllerBase
 {
     private readonly PaymentService _svc = svc;
     private readonly AlipayService _alipay = alipay;
@@ -28,6 +28,7 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
     private readonly OrderService _orders = orders;
     private readonly LogService _logs = logs;
     private readonly MemberService _member = member;
+    private readonly PaymentReconcileService _reconcile = reconcile;
     private readonly ILogger<PaymentController> _logger = logger;
 
     ///<summary>支付渠道回调端点约定的响应类型：支付宝/微信/银行卡都只认纯文本</summary>
@@ -232,6 +233,42 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
         {
             _logger.LogError(ex, "支付流水列表查询失败（{ExType}）", ex.GetType().Name);
             return StatusCode(500, new ApiResponse<List<PaymentDto>> { Code = 500, Success = false, Message = ErrorText.Safe(ex), Data = null });
+        }
+    }
+
+    ///<summary>手动触发支付渠道对账；不传 orderNo 时按时间窗批量扫描，传单号时只查这一单</summary>
+    [HttpPost("reconcile")]
+    [Authorize(Policy = Policies.AdminOnly)]
+    public async Task<IActionResult> RunReconcile(string? orderNo = null)
+    {
+        try
+        {
+            var r = await _reconcile.RunAsync(orderNo);
+            await AuditAsync("支付渠道对账", true, r.Message);
+            return Ok(new ApiResponse<PaymentReconcileSummary> { Data = r, Message = r.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "支付渠道对账失败（{ExType}）", ex.GetType().Name);
+            await AuditAsync("支付渠道对账", false, "执行异常");
+            return BadRequest(new ApiResponse<object> { Code = 400, Success = false, Message = ErrorText.Safe(ex) });
+        }
+    }
+
+    ///<summary>支付渠道对账差异列表（不含每日巡检心跳行）</summary>
+    [HttpGet("reconcile/logs")]
+    [Authorize(Policy = Policies.FinanceOnly)]
+    public async Task<IActionResult> QueryReconcileLogs(int days = 30, int page = 1, int size = 50)
+    {
+        try
+        {
+            var data = await _reconcile.ListAsync(days, page, size);
+            return Ok(new ApiResponse<PagedResult<PayReconcileLogDto>> { Data = data });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "支付渠道对账差异查询失败（{ExType}）", ex.GetType().Name);
+            return StatusCode(500, new ApiResponse<PagedResult<PayReconcileLogDto>> { Code = 500, Success = false, Message = ErrorText.Safe(ex), Data = null });
         }
     }
 

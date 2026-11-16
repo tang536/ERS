@@ -15,6 +15,7 @@ public class RenewalService(AppDbContext db, ILogger<RenewalService> logger)
         var q = _db.RenewalRecords.AsNoTracking();
         if (orderId.HasValue) q = q.Where(r => r.OrderId == orderId);
         return await q.OrderByDescending(r => r.RenewalTime)
+            .Take(Paging.MaxUnpagedRows)
             .Select(r => new RenewalDto
             {
                 RenewalId = r.RenewalId,

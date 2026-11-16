@@ -21,7 +21,7 @@ public class MaintenanceService(AppDbContext db, ImageStorage images, LogService
         var q = _db.MaintenanceOrders.AsNoTracking().AsQueryable();
         if (!string.IsNullOrEmpty(status)) q = q.Where(m => m.Status == status);
 
-        return await q.OrderByDescending(m => m.CreateTime).Select(m => new MaintenanceOrderDto
+        return await q.OrderByDescending(m => m.CreateTime).Take(Paging.MaxUnpagedRows).Select(m => new MaintenanceOrderDto
         {
             WorkOrderId = m.WorkOrderId,
             WorkOrderNo = m.WorkOrderNo,
@@ -189,7 +189,7 @@ public class MaintenanceService(AppDbContext db, ImageStorage images, LogService
     }
 
     public async Task<List<ScrapRecordDto>> GetScraps() =>
-        await _db.ScrapRecords.AsNoTracking().OrderByDescending(s => s.ScrapTime).Select(s => new ScrapRecordDto
+        await _db.ScrapRecords.AsNoTracking().OrderByDescending(s => s.ScrapTime).Take(Paging.MaxUnpagedRows).Select(s => new ScrapRecordDto
         {
             ScrapId = s.ScrapId,
             VehicleId = s.VehicleId,

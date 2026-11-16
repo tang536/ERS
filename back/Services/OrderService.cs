@@ -229,11 +229,11 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         _ => q.OrderByDescending(o => o.CreateTime),
     };
 
-    ///<summary>按分页取当前页并投影成行 DTO（pageSize≤0 时等价于不分页，取全部）</summary>
+    ///<summary>按分页取当前页并投影成行 DTO（pageSize≤0 时不分页，但最多 <see cref="Paging.MaxUnpagedRows"/> 条）</summary>
     private static async Task<List<OrderDto>> ProjectOrderRowsAsync(IQueryable<OrderOverviewView> ordered, int page, int pageSize)
     {
         var (_, _, skip, take) = Paging.Normalize(page, pageSize);
-        var pageQuery = take > 0 ? ordered.Skip(skip).Take(take) : ordered;
+        var pageQuery = take > 0 ? ordered.Skip(skip).Take(take) : ordered.Take(Paging.MaxUnpagedRows);
 
         return await pageQuery.Select(OrderRowProjection).ToListAsync();
     }
@@ -260,10 +260,10 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     public Task<int?> GetOwnerCustomerId(int id) =>
         _db.RentalOrders.AsNoTracking().Where(o => o.OrderId == id).Select(o => (int?)o.CustomerId).FirstOrDefaultAsync();
 
-    ///<summary>顾客端可租车辆：只暴露空闲车与该车租金押金，不含购入价、车架号等经营数据</summary>
+    ///<summary>顾客端可租车辆：只暴露空闲车与该车租金押金，不含购入价、车架号等经营数据；最多 <see cref="Paging.MaxUnpagedRows"/> 条</summary>
     public async Task<List<RentableVehicleDto>> GetRentableVehicles()
     {
-        var vehicles = await _db.Vehicles.AsNoTracking().Where(v => v.VehicleStatus == "空闲").OrderBy(v => v.VehicleNo).Select(v => new { v.VehicleId, v.VehicleNo, v.Brand, v.VehicleStatus, v.DailyRent, v.Deposit }).ToListAsync();
+        var vehicles = await _db.Vehicles.AsNoTracking().Where(v => v.VehicleStatus == "空闲").OrderBy(v => v.VehicleNo).Take(Paging.MaxUnpagedRows).Select(v => new { v.VehicleId, v.VehicleNo, v.Brand, v.VehicleStatus, v.DailyRent, v.Deposit }).ToListAsync();
 
         //全局配置只读一次
         var cfgs = await _db.SystemConfigs.Where(c => c.ConfigKey == "daily_rent" || c.ConfigKey == DepositKey).ToListAsync();

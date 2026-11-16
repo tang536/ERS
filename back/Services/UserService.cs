@@ -15,7 +15,7 @@ public class UserService(AppDbContext db, SessionRegistry sessions)
 
     public async Task<List<UserDto>> GetAllStaff()
     {
-        return await _db.SystemUsers.Include(u => u.Role).Where(u => u.Role!.RoleName != "管理员").Select(u => new UserDto
+        return await _db.SystemUsers.Include(u => u.Role).Where(u => u.Role!.RoleName != "管理员").OrderBy(u => u.UserId).Take(Paging.MaxUnpagedRows).Select(u => new UserDto
         {
             UserId = u.UserId,
             LoginAccount = u.LoginAccount,

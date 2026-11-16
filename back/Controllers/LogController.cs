@@ -1,4 +1,5 @@
 ﻿using System.Security.Claims;
+using ERental.Data;
 using ERental.Models;
 using ERental.Services;
 using ERental.Authorization;
@@ -10,10 +11,11 @@ namespace ERental.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize(Policy = Policies.AdminOnly)]
-public class LogController(LogService svc, BackupService backup) : ControllerBase
+public class LogController(LogService svc, BackupService backup, LogArchiveService archive) : ControllerBase
 {
     private readonly LogService _svc = svc;
     private readonly BackupService _backup = backup;
+    private readonly LogArchiveService _archive = archive;
 
     private int CurrentUserId => int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
     private string? ClientIp => Services.ClientIp.Resolve(HttpContext);
@@ -67,6 +69,53 @@ public class LogController(LogService svc, BackupService backup) : ControllerBas
     [HttpGet("backups")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public IActionResult GetBackupFiles() => Ok(new ApiResponse<object> { Data = _backup.ListFiles() });
+
+    ///<summary>手动触发日志归档：先写 JSONL 落盘，成功后才删除库内到期记录</summary>
+    [HttpPost("archive")]
+    public async Task<IActionResult> ArchiveLogs(int? retentionDays = null)
+    {
+        try
+        {
+            var r = await _archive.ArchiveAsync(retentionDays);
+            var message = r.Archived == 0
+                ? $"没有超过 {_archive.RetentionDays} 天的日志需要归档"
+                : $"已归档 {r.Archived} 条日志到 {r.FileName}（{r.SizeBytes / 1024}KB），清理库内 {r.Deleted} 条";
+
+            await _svc.WriteLog(CurrentUserId, $"手动归档操作日志：{message}", "系统管理", "成功", ClientIp);
+            return Ok(new ApiResponse<object> { Message = message, Data = r });
+        }
+        catch (Exception ex)
+        {
+            await _svc.WriteLog(CurrentUserId, $"手动归档操作日志失败（{ex.GetType().Name}）", "系统管理", "失败", ClientIp);
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = $"日志归档失败：{ErrorText.Safe(ex)}", Success = false });
+        }
+    }
+
+    ///<summary>最近一次备份可恢复性校验结果；没有校验过时 Data 为 null</summary>
+    [HttpGet("backups/verify-state")]
+    public IActionResult GetBackupVerifyState() => Ok(new ApiResponse<object> { Data = _backup.ReadVerifyState() });
+
+    ///<summary>手动校验指定备份：解密 + 解析 + 核对表清单与行数，不导入当前库</summary>
+    [HttpPost("backups/{fileName}/verify")]
+    public async Task<IActionResult> VerifyBackup(string fileName)
+    {
+        try
+        {
+            var r = await _backup.VerifyAsync(fileName);
+            _backup.SaveVerifyState(new BackupVerifyState(r.FileName, AppClock.Now, true, r.TableCount, r.RowCount, null));
+
+            var message = $"备份 {r.FileName} 校验通过（{r.TableCount} 张表 / {r.RowCount} 行，耗时 {Elapsed(r.ElapsedMs)}）";
+            await _svc.WriteLog(CurrentUserId, message, "系统管理", "成功", ClientIp);
+            return Ok(new ApiResponse<object> { Message = message, Data = r });
+        }
+        catch (Exception ex)
+        {
+            // 校验失败也落快照：/health 需要知道「最新一次校验没通过」，而不是继续沿用上一次的成功结果
+            _backup.SaveVerifyState(new BackupVerifyState(Path.GetFileName(fileName), AppClock.Now, false, 0, 0, ex.GetType().Name));
+            await _svc.WriteLog(CurrentUserId, $"备份 {Path.GetFileName(fileName)} 校验失败（{ex.GetType().Name}）", "系统管理", "失败", ClientIp);
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = $"备份校验失败：{ErrorText.Safe(ex)}", Success = false });
+        }
+    }
 
     ///<summary>下载备份文件</summary>
     [HttpGet("backups/{fileName}/download")]

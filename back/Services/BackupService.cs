@@ -16,6 +16,12 @@ public sealed record BackupResult(string FileName, long SizeBytes, int TableCoun
 ///<summary>恢复结果</summary>
 public sealed record RestoreResult(string FileName, int TableCount, long Rows, string SafetyBackup, long ElapsedMs);
 
+///<summary>备份可恢复性校验结果（只读文件并解密解析，不碰当前库）</summary>
+public sealed record BackupVerifyResult(string FileName, int TableCount, long RowCount, long ElapsedMs);
+
+///<summary>最近一次校验的快照：供 /health 判断备份是否“真的能打开”</summary>
+public sealed record BackupVerifyState(string FileName, DateTime VerifiedAt, bool Ok, int TableCount, long RowCount, string? Error);
+
 ///<summary>数据库备份/恢复</summary>
 public class BackupService(AppDbContext db, IConfiguration config, IHostEnvironment env, ILogger<BackupService> logger)
 {
@@ -32,6 +38,9 @@ public class BackupService(AppDbContext db, IConfiguration config, IHostEnvironm
 
     ///<summary>默认密钥文件名</summary>
     private const string KeyFileName = "backup.key";
+
+    /// <summary>最近一次可恢复性校验的快照文件名</summary>
+    private const string VerifyStateFileName = "backup-verify.json";
 
     ///<summary>17 张表，父表在前</summary>
     private static readonly string[] Tables =
@@ -177,10 +186,93 @@ public class BackupService(AppDbContext db, IConfiguration config, IHostEnvironm
         return new RestoreResult(fileName, Tables.Length, rows, safety.FileName, sw.ElapsedMilliseconds);
     }
 
-    ///<summary>读取并解密备份文件，返回解析好的 JSON 文档（由调用方释放）</summary>
-    private async Task<JsonDocument> ReadBackupDocumentAsync(string fileName)
+    /// <summary>
+    /// 备份可恢复性校验：解密 → 解析 → 核对表清单与行数，**不导入当前库**。
+    /// 为什么不做「导入临时库」：那会额外要求建库权限，还会在磁盘上留一份临时数据；
+    /// 而备份损坏最典型的两种形态（密钥不匹配、JSON 截断/行数对不上）在解密与解析阶段就能暴露。
+    /// 真正恢复前仍会先做安全快照，见 <see cref="RestoreAsync"/>。
+    /// </summary>
+    public async Task<BackupVerifyResult> VerifyAsync(string fileName, CancellationToken ct = default)
     {
-        var cipher = await File.ReadAllBytesAsync(ResolvePath(fileName));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var doc = await ReadBackupDocumentAsync(fileName, ct);
+        var root = doc.RootElement;
+
+        if (!root.TryGetProperty("format", out var fmt) || fmt.GetString() != "erental-backup")
+            throw new InvalidOperationException("备份文件格式标识不匹配，无法确认可恢复性");
+
+        var tablesEl = ReadTablesNode(root);
+        long rows = 0;
+        var tableCount = 0;
+        foreach (var table in Tables)
+        {
+            if (!tablesEl.TryGetProperty(table, out var rowsEl) || rowsEl.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException($"备份缺少表 {table}，文件不完整");
+
+            tableCount++;
+            foreach (var row in rowsEl.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object)
+                    throw new InvalidOperationException($"备份表 {table} 含非对象行，文件已损坏");
+                rows++;
+            }
+        }
+
+        if (root.TryGetProperty("tableCount", out var tableCountEl) && tableCountEl.GetInt32() != tableCount)
+            throw new InvalidOperationException($"备份表数量对不上：元数据 {tableCountEl.GetInt32()}，实际 {tableCount}");
+        if (root.TryGetProperty("rowCount", out var rowCountEl) && rowCountEl.GetInt64() != rows)
+            throw new InvalidOperationException($"备份行数对不上：元数据 {rowCountEl.GetInt64()}，实际 {rows}");
+
+        sw.Stop();
+        _logger.LogInformation("备份校验通过：{File}（{Tables} 张表 / {Rows} 行，耗时 {Elapsed} ms）",
+            fileName, tableCount, rows, sw.ElapsedMilliseconds);
+        return new BackupVerifyResult(Path.GetFileName(fileName), tableCount, rows, sw.ElapsedMilliseconds);
+    }
+
+    /// <summary>最近一次校验快照的文件路径：默认 App_Data/backup-verify.json</summary>
+    private string VerifyStatePath
+    {
+        get
+        {
+            var configured = _cfg["Backup:VerifyStateFile"];
+            var path = string.IsNullOrWhiteSpace(configured)
+                ? Path.Combine(_env.ContentRootPath, "App_Data", VerifyStateFileName)
+                : configured.Trim();
+            return Path.GetFullPath(path);
+        }
+    }
+
+    /// <summary>读取最近一次校验结果；文件缺失或损坏都返回 null（由调用方按“尚未校验”处理）</summary>
+    public BackupVerifyState? ReadVerifyState()
+    {
+        try
+        {
+            var path = VerifyStatePath;
+            if (!File.Exists(path)) return null;
+            return JsonSerializer.Deserialize<BackupVerifyState>(File.ReadAllText(path), JsonOpts);
+        }
+        catch (Exception ex)
+        {
+            // 快照只是健康检查的旁路信息，读不出来不影响备份本身
+            _logger.LogWarning(ex, "读取备份校验快照失败，按“尚未校验”处理");
+            return null;
+        }
+    }
+
+    /// <summary>保存最近一次校验结果：先写临时文件再改名，避免半截 JSON</summary>
+    public void SaveVerifyState(BackupVerifyState state)
+    {
+        var path = VerifyStatePath;
+        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(state, JsonOpts), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    ///<summary>读取并解密备份文件，返回解析好的 JSON 文档（由调用方释放）</summary>
+    private async Task<JsonDocument> ReadBackupDocumentAsync(string fileName, CancellationToken ct = default)
+    {
+        var cipher = await File.ReadAllBytesAsync(ResolvePath(fileName), ct);
         return JsonDocument.Parse(Decrypt(cipher));
     }
 
@@ -538,13 +630,98 @@ public class BackupSchedulerService(IServiceScopeFactory scopeFactory, IConfigur
     }
 
     ///<summary>计算下一个执行时刻</summary>
-    private DateTime NextRun(DateTime now)
-    {
-        var raw = config["Backup:DailyAt"];
-        if (!TimeOnly.TryParse(raw, CultureInfo.InvariantCulture, out var at))
-            at = new TimeOnly(2, 30);
+    private DateTime NextRun(DateTime now) =>
+        DailySchedule.NextRun(now, config["Backup:DailyAt"], new TimeOnly(2, 30));
+}
 
-        var today = now.Date.Add(at.ToTimeSpan());
-        return today > now ? today : today.AddDays(1);
+/// <summary>
+/// 每日备份可恢复性校验：解密最新一份备份、核对表清单与行数，结果写到
+/// App_Data/backup-verify.json 供 /health 读取。只读文件，不导入当前库。
+/// </summary>
+public class BackupVerifySchedulerService(IServiceScopeFactory scopeFactory, IConfiguration config, ILogger<BackupVerifySchedulerService> logger) : BackgroundService
+{
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(10);
+
+    /// <summary>同一份备份在 24 小时内只校验一次，避免每次启动都重复解密大文件</summary>
+    private static readonly TimeSpan FreshWindow = TimeSpan.FromHours(24);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // 启动 2 分钟后先补一次：部署当天 /health 不必等到次日凌晨才转为 Healthy
+        try { await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken); }
+        catch (OperationCanceledException) { return; }
+
+        try { await VerifyIfNeededAsyncSafelyAsync(stoppingToken); }
+        catch (OperationCanceledException) { return; }
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                var next = DailySchedule.NextRun(AppClock.Now, config["Backup:VerifyAt"], new TimeOnly(3, 30));
+                logger.LogInformation("下次备份校验时间：{Next:yyyy-MM-dd HH:mm}", next);
+                await Task.Delay(next - AppClock.Now, stoppingToken);
+
+                await VerifyIfNeededAsyncSafelyAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    /// <summary>校验失败只记日志并等下一轮：后台任务不能因为一次 IO 异常就整体退出</summary>
+    private async Task VerifyIfNeededAsyncSafelyAsync(CancellationToken ct)
+    {
+        try
+        {
+            await VerifyIfNeededAsync(ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "备份校验失败，{Delay} 分钟后重试", RetryDelay.TotalMinutes);
+            try { await Task.Delay(RetryDelay, ct); }
+            catch (OperationCanceledException) { throw; }
+        }
+    }
+
+    /// <summary>校验最新备份；多实例部署时只有抢到命名锁的那台执行</summary>
+    private async Task VerifyIfNeededAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+
+        var locks = scope.ServiceProvider.GetRequiredService<DbLockService>();
+        await using var handle = await locks.TryAcquireAsync("erental_backup_verify", TimeSpan.Zero, ct);
+        if (handle is null)
+        {
+            logger.LogInformation("备份校验已由其他实例执行，本实例跳过");
+            return;
+        }
+
+        var backup = scope.ServiceProvider.GetRequiredService<BackupService>();
+        var latest = backup.ListFiles().FirstOrDefault(f => f.FileName.StartsWith("backup_", StringComparison.Ordinal));
+        if (latest is null)
+        {
+            logger.LogInformation("尚无备份文件，跳过校验");
+            return;
+        }
+
+        // 同一份文件已经校验成功且未超过 24 小时，不重复解密
+        var state = backup.ReadVerifyState();
+        if (state is { Ok: true } && state.FileName == latest.FileName && AppClock.Now - state.VerifiedAt < FreshWindow)
+            return;
+
+        try
+        {
+            var result = await backup.VerifyAsync(latest.FileName, ct);
+            backup.SaveVerifyState(new BackupVerifyState(result.FileName, AppClock.Now, true, result.TableCount, result.RowCount, null));
+            logger.LogInformation("备份校验完成：{File}（{Rows} 行，耗时 {Elapsed} ms）", result.FileName, result.RowCount, result.ElapsedMs);
+        }
+        catch (Exception ex)
+        {
+            // 快照只落异常类型：文件可能被运维/监控读取，不写路径、连接串或密钥片段
+            backup.SaveVerifyState(new BackupVerifyState(latest.FileName, AppClock.Now, false, 0, 0, ex.GetType().Name));
+            logger.LogError(ex, "备份校验失败：{File}（{ExType}）", latest.FileName, ex.GetType().Name);
+            throw;
+        }
     }
 }

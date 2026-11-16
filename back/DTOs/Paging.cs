@@ -18,12 +18,19 @@ public static class Paging
     /// <summary>单页最大条数</summary>
     public const int MaxPageSize = 200;
 
+    /// <summary>
+    /// 不分页接口的硬上限。顾客选车、下拉框、看板等场景确实需要一次取全量，
+    /// 但「一次全量」必须有一条明确的天花板：数据涨到几万条时，既不拖垮数据库，
+    /// 也不让服务端把整表塞进内存。超过上限由调用方改走分页参数，而不是静默截断。
+    /// </summary>
+    public const int MaxUnpagedRows = 2000;
+
     /// <summary>按默认 10 条/页归一化（前端不传时用）</summary>
     public const int DefaultPageSize = 10;
 
     /// <summary>
     /// 归一化 (page, pageSize)：page≤0 → 1；pageSize 超限 → 200。
-    /// 返回的 Take=0 表示"不分页"（调用方应返回全量）。
+    /// 返回的 Take=0 表示"不分页"（调用方应返回全量，但最多 <see cref="MaxUnpagedRows"/> 条）。
     /// </summary>
     public static (int Page, int Size, int Skip, int Take) Normalize(int page, int pageSize)
     {

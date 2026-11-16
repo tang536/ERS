@@ -16,6 +16,7 @@ public class CheckService(AppDbContext db)
         if (date.HasValue) q = q.Where(c => c.CheckDate.Date == date.Value.Date);
 
         return await q.OrderByDescending(c => c.CheckDate)
+            .Take(Paging.MaxUnpagedRows)
             .Select(c => new CarCheckListDto
             {
                 CheckId = c.CheckId,
@@ -98,10 +99,11 @@ public class CheckService(AppDbContext db)
         }
     }
 
-    ///<summary>盘点报告列表：报表字段直接投影，不再 Include 操作员与明细</summary>
+    ///<summary>盘点报告列表：报表字段直接投影，不再 Include 操作员与明细；最多 <see cref="Paging.MaxUnpagedRows"/> 条</summary>
     public Task<List<CheckReportDto>> GetReports() =>
         _db.CheckReports.AsNoTracking()
             .OrderByDescending(r => r.GenerateTime)
+            .Take(Paging.MaxUnpagedRows)
             .Select(r => new CheckReportDto
             {
                 ReportId = r.ReportId,

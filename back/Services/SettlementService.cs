@@ -54,7 +54,7 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         var (pageNo, size, skip, take) = Paging.Normalize(page, pageSize);
         //取 0 表示「不分页」（Paging.Normalize 的既有约定），对账导出类调用才用得到
         var ordered = q.OrderByDescending(b => b.SettleTime).ThenByDescending(b => b.SettleId);
-        var rows = take > 0 ? await ordered.Skip(skip).Take(take).ToListAsync() : await ordered.ToListAsync();
+        var rows = take > 0 ? await ordered.Skip(skip).Take(take).ToListAsync() : await ordered.Take(Paging.MaxUnpagedRows).ToListAsync();
 
         return new SettlePageDto
         {
@@ -167,6 +167,7 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
             .AsNoTracking()
             .Where(b => b.CustomerId == customerId)
             .OrderByDescending(b => b.SettleTime)
+            .Take(Paging.MaxUnpagedRows)
             .Select(b => new MySettleDto
             {
                 SettleId = b.SettleId,

@@ -15,7 +15,8 @@ public class LogService(AppDbContext db)
     {
         //用值元组承载筛选条件
         var page = filter.Page > 0 ? filter.Page : 1;
-        var size = filter.Size > 0 ? filter.Size : 20;
+        //size 直接来自 query string：和列表分页共用同一上限，避免一次拉全表
+        var size = Math.Clamp(filter.Size <= 0 ? 20 : filter.Size, 1, Paging.MaxPageSize);
 
         var q = ApplyLogFilters(_db.SystemLogs.AsQueryable(), filter);
 

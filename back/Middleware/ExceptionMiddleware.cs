@@ -27,6 +27,13 @@ public class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddlewa
 
     public async Task InvokeAsync(HttpContext context)
     {
+        // 请求追踪号：一次请求一个，写进响应头与错误响应体，同时包进日志作用域。
+        // 只用于「把用户看到的报错与服务端堆栈对上」，不含任何业务或身份信息，
+        // 因此可以安全地回给前端（这与不回 stackTrace / innerException 的脱敏原则并不冲突）。
+        var traceId = context.TraceIdentifier;
+        context.Response.Headers["X-Request-Id"] = traceId;
+
+        using var scope = _logger.BeginScope(new Dictionary<string, object> { ["TraceId"] = traceId });
         try
         {
             await _next(context);
@@ -37,14 +44,14 @@ public class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddlewa
             // 它们是预期内的用户/并发问题，不该污染 Error 级别。
             var isBusiness = ErrorText.IsBusiness(ex) || ex is ConcurrentOperationException;
             if (isBusiness) _logger.LogInformation("请求 {Method} {Path} 业务校验未通过：{Message}", context.Request.Method, context.Request.Path, ex.Message);
-            else _logger.LogError(ex, "请求 {Method} {Path} 处理失败（{ExType}）", context.Request.Method, context.Request.Path, ex.GetType().Name);
+            else _logger.LogError(ex, "请求 {Method} {Path} 处理失败（{ExType}，TraceId={TraceId}）", context.Request.Method, context.Request.Path, ex.GetType().Name, traceId);
 
             // 需求 4.2.1 / 8.3「所有故障、异常、报错信息均自动记录至系统日志」：
             // 只记**非业务异常**——业务校验失败是预期内的用户输入问题（前端已即时提示），
             // 全量入库会把日志表灌满「密码错误」「余额不足」这类噪音，掩盖真正的故障。
             // 写方法不在这里记：它们已由 AuditLogFilter 以「（处理异常）」标注入库，避免同一请求两条。
             if (!isBusiness && !AuditModules.IsWriteMethod(context.Request.Method))
-                await WriteFaultLogAsync(context, ex);
+                await WriteFaultLogAsync(context, ex, traceId);
 
             // 文案统一交给 ErrorText：业务中文原样、数据库异常分类翻译、其余走通用文案。
             // 控制器层那 68 处 catch 现在调用的是同一个方法，两条出口口径一致。
@@ -58,9 +65,9 @@ public class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddlewa
             {
                 code = status,
                 message = safeMessage,
-                success = false
-                // 注意：不返回 stackTrace / innerException / traceId 等排查线索给前端。
-                // 需要定位时请查服务端日志（那里有完整堆栈）。
+                success = false,
+                // 只回请求追踪号，不回堆栈/内部异常/连接串；服务端日志里用同一个 TraceId 定位完整异常。
+                traceId
             }), context.RequestAborted);
         }
     }
@@ -71,7 +78,7 @@ public class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddlewa
     /// Message 可能含连接串、绝对路径、网关原始响应等敏感片段，而 system_log 是可在界面上查看的表。
     /// 记录本身失败时静默降级——审计是旁路，不能把「原始故障」覆盖成「记录故障时又出错」。
     /// </summary>
-    private async Task WriteFaultLogAsync(HttpContext context, Exception ex)
+    private async Task WriteFaultLogAsync(HttpContext context, Exception ex, string traceId)
     {
         try
         {
@@ -79,8 +86,12 @@ public class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddlewa
             var rawId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             int? userId = int.TryParse(rawId, out var id) ? id : null;
 
-            var content = $"{module}接口异常：{context.Request.Method} {context.Request.Path}（{ex.GetType().Name}）";
-            if (content.Length > 200) content = content[..200];
+            // 追踪号放在末尾固定保留：路径很长时只截断前缀，不能让最关键的 TraceId 被截掉
+            var suffix = $"（{ex.GetType().Name}，TraceId={traceId}）";
+            var head = $"{module}接口异常：{context.Request.Method} {context.Request.Path}";
+            var maxHead = Math.Max(0, 200 - suffix.Length);
+            if (head.Length > maxHead) head = head[..maxHead];
+            var content = head + suffix;
 
             using var scope = _scopeFactory.CreateScope();
             var logs = scope.ServiceProvider.GetRequiredService<LogService>();

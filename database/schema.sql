@@ -434,17 +434,38 @@ CREATE TABLE IF NOT EXISTS `message` (
 -- 事务隔离级别统一用 READ COMMITTED，只锁命中的行，不额外加间隙锁。
 
 
--- ֧���ص�ȥ�صǼǱ���pay_notify_log��
--- ֧���� / ΢�� / ���п���ͨ�����ã�replay_key Ψһ����ԭ�ӵǼǣ���ʵ������ͬһ���ж���
--- ���ڼ�¼�� PayNotifyDeduplicator �������������ڹ���ͬһ���Ŀ����µǼǣ������ݵ���ҵ��״̬�ж϶��ס�
+-- 支付回调去重登记表（pay_notify_log）
+-- 支付宝 / 微信 / 银行卡三通道共用：replay_key 唯一键做原子登记，多实例共享同一份判定。
+-- 过期记录由 PayNotifyDeduplicator 定期清理；窗口过后同一报文可重新登记，入账幂等由业务状态判断兜底。
 CREATE TABLE IF NOT EXISTS `pay_notify_log` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
-  `replay_key` CHAR(64) NOT NULL COMMENT '����ָ�ƣ�ͨ��+�ؼ��ֶε� SHA-256��',
-  `channel` VARCHAR(20) NOT NULL COMMENT '֧��ͨ����alipay/wechat/bank��',
-  `order_no` VARCHAR(40) DEFAULT NULL COMMENT 'ҵ�񵥺ţ��������ϣ�',
-  `created_at` DATETIME NOT NULL COMMENT '�Ǽ�ʱ��',
-  `expires_at` DATETIME NOT NULL COMMENT 'ȥ�ش��ڽ�ֹʱ��',
+  `replay_key` CHAR(64) NOT NULL COMMENT '报文指纹（通道+关键字段的 SHA-256）',
+  `channel` VARCHAR(20) NOT NULL COMMENT '支付通道（alipay/wechat/bank）',
+  `order_no` VARCHAR(40) DEFAULT NULL COMMENT '业务单号（便于排障）',
+  `created_at` DATETIME NOT NULL COMMENT '登记时间',
+  `expires_at` DATETIME NOT NULL COMMENT '去重窗口截止时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_pay_replay` (`replay_key`),
   KEY `idx_pay_expires` (`expires_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='֧���ص�ȥ�صǼǱ�';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付回调去重登记表';
+--
+-- 支付渠道对账流水（pay_reconcile_log）
+-- 每日任务扫描电子渠道的待支付/已到账记录，调用渠道查单补账；
+-- 补账结果与「到账但缺交易号」等差异写在这里，供管理员事后核对。
+-- 与 pay_notify_log 一样属于运维表，不纳入业务备份清单。
+CREATE TABLE IF NOT EXISTS `pay_reconcile_log` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `channel` VARCHAR(10) NOT NULL COMMENT '渠道：支付宝/微信/银行卡/系统',
+  `order_no` VARCHAR(64) DEFAULT NULL COMMENT '通道侧商户订单号（巡检行为空）',
+  `pay_id` INT DEFAULT NULL COMMENT '本地支付流水ID（巡检行为空）',
+  `local_status` VARCHAR(20) DEFAULT NULL COMMENT '处理前的本地状态',
+  `channel_status` VARCHAR(20) DEFAULT NULL COMMENT '渠道返回状态',
+  `local_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '本地金额',
+  `channel_amount` DECIMAL(10,2) DEFAULT NULL COMMENT '渠道确认金额',
+  `action` VARCHAR(20) NOT NULL COMMENT '动作：已补账/待人工核对/巡检',
+  `detail` VARCHAR(200) DEFAULT NULL COMMENT '差异说明',
+  `created_at` DATETIME NOT NULL COMMENT '记录时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_reconcile_action_time` (`action`, `created_at`),
+  KEY `idx_reconcile_order` (`order_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付渠道对账流水表';

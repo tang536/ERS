@@ -19,6 +19,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ScrapRecord> ScrapRecords => Set<ScrapRecord>();
     public DbSet<SystemConfig> SystemConfigs => Set<SystemConfig>();
     public DbSet<SystemLog> SystemLogs => Set<SystemLog>();
+    public DbSet<PayReconcileLog> PayReconcileLogs => Set<PayReconcileLog>();
     public DbSet<RenewalRecord> RenewalRecords => Set<RenewalRecord>();
     public DbSet<CarCheckList> CarCheckLists => Set<CarCheckList>();
     public DbSet<CheckReport> CheckReports => Set<CheckReport>();

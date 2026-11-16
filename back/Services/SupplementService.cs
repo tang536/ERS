@@ -162,6 +162,7 @@ public class SupplementService(AppDbContext db, MessageService messages, AlipayS
             .Include(s => s.RentalOrder).ThenInclude(o => o!.Customer)
             .Include(s => s.RentalOrder).ThenInclude(o => o!.Vehicle)
             .OrderByDescending(s => s.SettleTime)
+            .Take(Paging.MaxUnpagedRows)
             .ToListAsync();
 
         if (settles.Count == 0) return new List<SupplementBillDto>();

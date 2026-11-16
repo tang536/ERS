@@ -37,7 +37,9 @@ public sealed class JsonAuthorizationResultHandler : IAuthorizationMiddlewareRes
             Success = false,
             Message = status == StatusCodes.Status401Unauthorized
                 ? "登录已失效，请重新登录"
-                : "当前角色无权执行该操作"
+                : "当前角色无权执行该操作",
+            // 401/403 也带上追踪号：排查「为什么这个账号被拒」时能和审计日志对上
+            TraceId = context.TraceIdentifier
         }, context.RequestAborted);
     }
 }

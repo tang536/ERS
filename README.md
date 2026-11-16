@@ -169,7 +169,7 @@ eRentalSystem/
 
 ## 测试与构建
 
-`back.Tests` 覆盖业务编号、输入清洗、分页、定价与结算、数据库时区、SQL 脚本以及真实 MySQL 集成，共 95 例（其中 12 例为 MySQL 集成）。
+`back.Tests` 覆盖业务编号、输入清洗、分页、定价与结算、数据库时区、SQL 脚本以及真实 MySQL 集成，共 97 例（其中 14 例为 MySQL 集成）。
 
 ```bash
 # 单元测试（不依赖数据库）
@@ -180,7 +180,7 @@ $env:ERENTAL_TEST_CONNECTION="Server=127.0.0.1;Port=3306;User=root;Password=***;
 dotnet test back.Tests/ERental.Tests.csproj
 ```
 
-不设该环境变量时，12 个 MySQL 集成用例会自动 `Skip`；设了就真跑（每个用例自建库、跑完 DROP，不碰演示库）。
+不设该环境变量时，14 个 MySQL 集成用例会自动 `Skip`；设了就真跑（每个用例自建库、跑完 DROP，不碰演示库）。
 
 前端检查：
 
@@ -209,7 +209,26 @@ sudo systemctl restart erental
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-健康检查：后端 `/health` 匿名返回 200（Healthy / Degraded）或 503（Unhealthy）。若需外部监控，在 Nginx 的 HTTPS server 中增加 `location = /health { proxy_pass http://127.0.0.1:5105; }`。
+健康检查：
+- `/health/live` 是纯存活探针，只证明进程在跑，不访问数据库；数据库抖动时不应让编排系统重启进程。
+- `/health` 是就绪检查：数据库、备份新鲜度、备份可恢复性、支付回调、支付渠道对账五项全部正常为 `Healthy`；有需要人看一眼的问题为 `Degraded`；数据库不可用为 `Unhealthy`（HTTP 503）。报告进程内缓存 10 秒，监控可放心高频轮询。
+- 两个端点均匿名可读，只回状态与一句话说明，不含连接串、文件路径、异常原文或密钥。
+
+```nginx
+location = /health      { proxy_pass http://127.0.0.1:5105; }
+location = /health/live { proxy_pass http://127.0.0.1:5105; }
+```
+
+每日运维任务（时间均为服务器本地时间，配置在 `back/appsettings.json`）：
+
+| 任务 | 配置 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| 数据库备份 | `Backup:DailyAt` | 02:30 | 加密备份到 `backups/`，按 `Backup:Keep` 清理旧文件 |
+| 备份可恢复性校验 | `Backup:VerifyAt` | 03:30 | 解密 + 解析 + 核对表清单/行数，结果写 `App_Data/backup-verify.json` |
+| 日志归档 | `Log:DailyAt` | 03:10 | 到期日志先写 JSONL 到 `App_Data/log-archive/`，落盘成功后才删库内记录；保留期 `Log:RetentionDays` 默认 365 天 |
+| 支付渠道对账 | `Payment:ReconcileAt` | 03:15 | 扫描电子渠道待支付/已到账记录，查单补账，差异写入 `pay_reconcile_log` |
+
+管理员也可手动触发：`POST /api/log/archive`、`POST /api/log/backups/{fileName}/verify`、`POST /api/payment/reconcile?orderNo=...`；差异列表 `GET /api/payment/reconcile/logs`。
 
 生产环境的数据库连接串、JWT 密钥、支付凭证通过环境变量或管理员在「支付配置」页维护，仓库内不含任何可用凭据。`wwwroot/uploads/`、`App_Data/`、`backups/`、本地 `appsettings.*.json` 与前端证书目录均不入库。
 

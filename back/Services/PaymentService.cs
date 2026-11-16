@@ -25,7 +25,7 @@ public class PaymentService(AppDbContext db, AlipayService alipay, PayConfigServ
         var rangeTo = to?.Date.AddDays(1);
         if (rangeFrom.HasValue && rangeTo.HasValue) q = q.Where(p => p.PayTime.HasValue && p.PayTime >= rangeFrom && p.PayTime < rangeTo);
 
-        return await q.OrderByDescending(p => p.PayTime).Select(p => new PaymentDto
+        return await q.OrderByDescending(p => p.PayTime).Take(Paging.MaxUnpagedRows).Select(p => new PaymentDto
         {
             PayId = p.PayId,
             OrderId = p.OrderId,

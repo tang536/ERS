@@ -36,7 +36,7 @@ public static class DbInitializer
     /// ⚠️ 改动 DbInitializer 里的 DDL（加列/加表/改约束）时必须把它 +1，
     /// 否则老库会因「版本已是最新」而跳过这次升级。
     /// </summary>
-    public const int SchemaVersion = 2;
+    public const int SchemaVersion = 3;
 
     /// <summary>幂等的结构升级：保证「老数据库」也能平滑支持新功能</summary>
     public static void EnsureSchemaUpgrades(AppDbContext db)
@@ -190,7 +190,7 @@ public static class DbInitializer
         """);
     }
 
-    /// <summary>补建历史版本遗漏的业务表（续租记录 / 车辆盘点单 / 盘点报表）</summary>
+    /// <summary>补建历史版本遗漏的表（续租 / 盘点 / 交接验车 / 回调去重 / 支付对账）</summary>
     private static void CreateMissingTables(AppDbContext db)
     {
         // 补建历史版本遗漏的三张业务表（图4-14~图4-16）：EnsureCreated() 只对「库不存在」建表，
@@ -276,6 +276,27 @@ public static class DbInitializer
         UNIQUE KEY `uk_pay_replay` (`replay_key`),
         KEY `idx_pay_expires` (`expires_at`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付回调去重登记表';
+        """);
+
+        // 支付渠道对账流水：每日任务扫描待支付/已到账记录，把渠道查单补账与差异留在这里。
+        // 与 pay_notify_log 一样属于运维表，不进业务备份清单。
+        EnsureTable(db, "pay_reconcile_log", """
+        CREATE TABLE IF NOT EXISTS `pay_reconcile_log` (
+        `id` BIGINT NOT NULL AUTO_INCREMENT,
+        `channel` VARCHAR(10) NOT NULL COMMENT '渠道：支付宝/微信/银行卡/系统',
+        `order_no` VARCHAR(64) DEFAULT NULL COMMENT '通道侧商户订单号（巡检行为空）',
+        `pay_id` INT DEFAULT NULL COMMENT '本地支付流水ID（巡检行为空）',
+        `local_status` VARCHAR(20) DEFAULT NULL COMMENT '处理前的本地状态',
+        `channel_status` VARCHAR(20) DEFAULT NULL COMMENT '渠道返回状态',
+        `local_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '本地金额',
+        `channel_amount` DECIMAL(10,2) DEFAULT NULL COMMENT '渠道确认金额',
+        `action` VARCHAR(20) NOT NULL COMMENT '动作：已补账/待人工核对/巡检',
+        `detail` VARCHAR(200) DEFAULT NULL COMMENT '差异说明',
+        `created_at` DATETIME NOT NULL COMMENT '记录时间',
+        PRIMARY KEY (`id`),
+        KEY `idx_reconcile_action_time` (`action`, `created_at`),
+        KEY `idx_reconcile_order` (`order_no`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付渠道对账流水表';
         """);
     }
 

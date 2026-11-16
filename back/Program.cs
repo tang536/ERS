@@ -328,6 +328,8 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     // 证据照片归档：超保留期的验车/维保照片移入 uploads/_archive 并回写库内路径
     services.AddScoped<EvidenceArchiveService>();
     services.AddScoped<PaymentService>();
+    // 支付渠道对账：扫描待支付/已到账记录，调用渠道查单补账并把差异落 pay_reconcile_log
+    services.AddScoped<PaymentReconcileService>();
     // 补缴（顾客自助 + 门店收银）统一服务；SettlementService 在结算生成线上补缴单时依赖它。
     services.AddScoped<SupplementService>();
     services.AddScoped<SettlementService>();
@@ -337,6 +339,8 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     services.AddScoped<INotificationSource>(sp => sp.GetRequiredService<ReportService>());
     services.AddScoped<SystemConfigService>();
     services.AddScoped<LogService>();
+    // 日志归档：先写 JSONL 落盘，成功后才删库内到期记录（见 LogArchiveService 注释）
+    services.AddScoped<LogArchiveService>();
     // 备份/恢复：17 张表 → AES-256-GCM 加密文件；恢复时先做快照再覆盖（见 BackupService 注释）。
     services.AddScoped<BackupService>();
     services.AddScoped<RenewalService>();
@@ -348,7 +352,7 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     services.AddSingleton<SecretProvider>();
     services.AddScoped<PayConfigService>();
 
-    // 健康检查：数据库 / 备份新鲜度 / 支付回调活跃度，供 /health 与监控轮询使用
+    // 健康检查：数据库 / 备份新鲜度与可恢复性 / 支付回调与渠道对账，供 /health 与监控轮询使用
     services.AddScoped<HealthService>();
 
     // 账户余额查询：支付宝/微信官方余额接口，带超时、重试、缓存与降级兜底。
@@ -387,6 +391,12 @@ static void RegisterHostedServices(IServiceCollection services)
     services.AddHostedService<PendingOrderCleanupService>();
     // 定时备份：每天 Backup:DailyAt（默认 02:30）导出加密备份并按保留数清理旧文件。
     services.AddHostedService<BackupSchedulerService>();
+    // 每日备份可恢复性校验：默认 Backup:VerifyAt（03:30），结果写 App_Data/backup-verify.json 供 /health 读取。
+    services.AddHostedService<BackupVerifySchedulerService>();
+    // 每日日志归档：默认 Log:DailyAt（03:10），先归档成 JSONL 再清理库内到期记录。
+    services.AddHostedService<LogRetentionSchedulerService>();
+    // 每日支付渠道对账：默认 Payment:ReconcileAt（03:15），补账并记录渠道差异。
+    services.AddHostedService<PaymentReconcileSchedulerService>();
 }
 
 // 只记来源、不记密钥：排查「为什么重启后令牌失效 / 备份解不开」时，这一行就够定位了
@@ -444,7 +454,15 @@ static void ConfigurePipeline(WebApplication app, string corsPolicyName)
     app.UseAuthorization();
     app.MapControllers();
 
-    // 健康检查：匿名可读，只回状态与简短说明（不含连接串、密钥或异常原文）。
+    // 存活探针：只证明进程在跑，不碰数据库。数据库抖动时编排系统不应重启一个本来健康的进程；
+    // 是否「能对外服务」交给 /health（readiness）判断。
+    app.MapGet("/health/live", () => TypedResults.Json(new
+    {
+        status = HealthService.Healthy,
+        checkedAt = AppClock.Now
+    })).AllowAnonymous();
+
+    // 健康检查（readiness）：匿名可读，只回状态与简短说明（不含连接串、密钥或异常原文）。
     // 200 = 可用（含 Degraded，便于监控区分「能用但需处理」），503 = 核心依赖不可用。
     app.MapGet("/health", async (HealthService health, CancellationToken ct) =>
     {

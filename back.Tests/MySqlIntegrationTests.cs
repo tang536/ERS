@@ -3,6 +3,7 @@ using ERental.DTOs;
 using ERental.Models;
 using ERental.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ERental.Tests;
@@ -207,5 +208,71 @@ public class MySqlIntegrationTests
         // billable_hours 按 1 小时向上取整，至少 26 小时。
         Assert.Equal(1, view.IsOverdue);
         Assert.True(view.BillableHours >= 25);
+    }
+
+    [MySqlFact]
+    public async Task PaymentReconcile_RealModeWithoutCandidates_WritesHeartbeat()
+    {
+        using var testDb = TestDatabase.Create();
+        var db = testDb.Db;
+
+        // 沙箱三件套齐全 → ResolveAsync 判定为真实模式；库里没有候选流水，所以不会发起任何 HTTP 请求。
+        db.SystemConfigs.AddRange(
+            SystemConfig.Create(PayConfigService.KeySandboxAppId, "test-app", "测试"),
+            SystemConfig.Create(PayConfigService.KeySandboxPrivateKey, "dummy-private-key", "测试"),
+            SystemConfig.Create(PayConfigService.KeySandboxAlipayPublicKey, "dummy-public-key", "测试"));
+        await db.SaveChangesAsync();
+
+        var payConfig = new PayConfigService(db, Microsoft.Extensions.Options.Options.Create(new ERental.Options.LanOptions()),
+            new SecretProvider(new ConfigurationBuilder().Build()));
+        var service = new PaymentReconcileService(db, null!, null!, null!, payConfig,
+            NullLogger<PaymentReconcileService>.Instance);
+
+        var result = await service.RunAsync();
+
+        Assert.Equal(0, result.Scanned);
+        Assert.Contains("扫描 0 笔", result.Message, StringComparison.Ordinal);
+
+        // 没有差异也要留巡检心跳，否则 /health 无法区分「没差异」与「任务没跑」
+        var heartbeat = await db.PayReconcileLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(PayReconcileActions.Run, heartbeat.Action);
+    }
+
+    [MySqlFact]
+    public async Task LogArchive_WritesJsonlThenDeletesOnlyExpiredRows()
+    {
+        using var testDb = TestDatabase.Create();
+        var db = testDb.Db;
+
+        db.SystemLogs.AddRange(
+            SystemLog.Create(null, null, "归档测试日志", "集成测试", "成功", null, AppClock.Now.AddDays(-400)),
+            SystemLog.Create(null, null, "保留中的新日志", "集成测试", "成功"));
+        await db.SaveChangesAsync();
+
+        var dir = Path.Combine(Path.GetTempPath(), "erental-log-archive-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Log:ArchiveDirectory"] = dir,
+                ["Log:RetentionDays"] = "365"
+            }).Build();
+            var service = new LogArchiveService(db, config, null!, NullLogger<LogArchiveService>.Instance);
+
+            var result = await service.ArchiveAsync();
+
+            // 归档文件必须先落盘，删除只作用于保留期外的行
+            Assert.Equal(1, result.Archived);
+            Assert.Equal(1, result.Deleted);
+            var jsonl = await File.ReadAllTextAsync(Path.Combine(dir, result.FileName));
+            Assert.Contains("归档测试日志", jsonl, StringComparison.Ordinal);
+
+            var left = await db.SystemLogs.AsNoTracking().Select(l => l.OperateContent).ToListAsync();
+            Assert.Equal("保留中的新日志", Assert.Single(left));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
     }
 }
