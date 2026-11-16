@@ -145,7 +145,7 @@ public class BankPayService(PayConfigService payConfig, AlipayService alipay, Pa
         if (!real)
         {
             _logger.LogInformation("银行卡凭证不全，订单 {OrderNo} 使用内置模拟收银台", orderNo);
-            return (WechatPayService.MockUrl(orderNo, amount, subject, "银行卡"), false);
+            return (_alipay.BuildMockUrl(orderNo, amount, subject, "银行卡"), false);
         }
 
         var parameters = new SortedDictionary<string, string>(StringComparer.Ordinal)

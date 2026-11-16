@@ -35,9 +35,13 @@ const ALL_MENUS: MenuItem[] = ([
   { key: 'customers', label: '客户管理', icon: 'customers', path: '/customers', group: '资源管理' },
   { key: 'members', label: '会员管理', icon: 'settlements', path: '/members', group: '资源管理' },
   { key: 'vehicles', label: '车辆管理', icon: 'vehicles', path: '/vehicles', group: '资源管理' },
+  { key: 'operations', label: '运营配置', icon: 'settlements', path: '/operations', group: '运营管理' },
+  { key: 'shifts', label: '交接班', icon: 'settlements', path: '/shifts', group: '运营管理' },
   // 「维保管理」不再是独立菜单：已并入「车辆管理」页的第三个页签（/vehicles）。
   // 「车辆盘点」不再是独立菜单：已并入「车辆管理」页的「车辆盘点」页签（/vehicles）。
   { key: 'reports', label: '统计报表', icon: 'reports', path: '/reports', group: '数据分析' },
+  // 优惠券核销：顾客出示二维码，前台扫码核对持券人后核销
+  { key: 'coupon-verify', label: '优惠券核销', icon: 'scan', path: '/coupon-verify', group: '运营管理' },
   { key: 'users', label: '账号管理', icon: 'users', path: '/users', group: '系统管理' },
   { key: 'config', label: '系统配置', icon: 'config', path: '/config', group: '系统管理' },
   { key: 'dict', label: '数据字典', icon: 'dict', path: '/dict', group: '系统管理' },
@@ -50,18 +54,20 @@ const ALL_MENUS: MenuItem[] = ([
   { key: 'profile', label: '个人中心', icon: 'profile', path: '/profile', group: '我的服务' },
 ] as Omit<MenuItem, 'roles'>[]).map(m => ({ ...m, roles: ROUTE_ROLES[m.path] || [] }))
 
-const GROUP_ORDER = ['工作台', '租赁业务', '资源管理', '数据分析', '系统管理', '我的服务']
+const GROUP_ORDER = ['工作台', '租赁业务', '资源管理', '运营管理', '数据分析', '系统管理', '我的服务']
 
 /**
  * 顾客端（C 端）主导航。
  * 顾客不使用员工式侧边栏：侧边栏是「后台工作台」的语言，放在消费端会让用户
- * 以为自己进了管理后台。这里只保留四个顾客真正会用的入口，桌面放顶栏、
- * 手机放底部标签栏，两边共用同一份定义，避免导航与权限各写一套。
+ * 以为自己进了管理后台。
+ *
+ * 只保留两个入口：线上租车 + 个人中心。
+ * 「我的订单 / 会员中心 / 我的优惠券」不再是同级导航——它们是个人中心的
+ * 子入口，统一收进个人中心页的一组小按钮里（底部标签栏只有两格时，
+ * 每个标签才有足够大的点击区，手机上不会互相挤成一条细缝）。
  */
 const CUSTOMER_NAV: Array<{ key: string; label: string; path: string; icon: IconName }> = [
   { key: 'rent', label: '线上租车', path: '/rent', icon: 'rent' },
-  { key: 'my-orders', label: '我的订单', path: '/my-orders', icon: 'my-orders' },
-  { key: 'membership', label: '会员中心', path: '/membership', icon: 'settlements' },
   { key: 'profile', label: '个人中心', path: '/profile', icon: 'profile' },
 ]
 
@@ -73,7 +79,8 @@ const CUSTOMER_NAV: Array<{ key: string; label: string; path: string; icon: Icon
  * 顾客明明在「全部车辆」页，顶栏却写着「工作台」，像是走错了页面。
  */
 const MENU_ALIAS: Record<string, string> = {
-  '/vehicle-catalog': '/rent',   // 全部车辆：入口在「线上租车」页右上角
+  '/vehicle-catalog': '/rent',   // 全部车辆：入口在「线上租车」页
+  '/coupons': '/profile',        // 我的优惠券：个人中心的小按钮进入
 }
 
 /**
@@ -86,6 +93,7 @@ const MENU_ALIAS: Record<string, string> = {
 const MENU_PREFIX_ALIAS: Array<[string, string]> = [
   ['/pay/', '/my-orders'],
   ['/supplement-pay/', '/my-orders'],
+  ['/rent/', '/rent'],   // 车辆详情（/rent/:vehicleId）仍归属「线上租车」
 ]
 
 interface SearchHit {
@@ -871,7 +879,8 @@ export default function Layout() {
         </main>
 
         {/* 顾客端手机底部标签栏：桌面隐藏，≤860px 显示。
-            侧边栏在顾客端整体移除，触屏用户靠这条栏在「租车 / 订单 / 会员 / 我的」之间切换。 */}
+            顾客端整体移除侧边栏，触屏用户靠这条栏在「线上租车 / 个人中心」之间切换；
+            我的订单、会员中心、我的优惠券都收在个人中心里，不再单独占一格。 */}
         {isCustomer && (
           <nav className="customer-tabbar" aria-label="顾客底部导航">
             {CUSTOMER_NAV.map(item => (
@@ -881,7 +890,7 @@ export default function Layout() {
                 aria-current={activeMenu?.key === item.key ? 'page' : undefined}
                 onClick={() => navigate(item.path)}
               >
-                <Icon name={item.icon} size={21} />
+                <Icon name={item.icon} size={18} />
                 <span>{item.label}</span>
               </button>
             ))}

@@ -38,6 +38,7 @@ export default function MockPay() {
   const amount = params.get('amount') || '0.00'
   const subject = params.get('subject') || '电动车租赁订单'
   const payType = params.get('payType') || '支付宝'
+  const token = params.get('token') || ''
   const ch = payChannelMeta(payType)
 
   const [processing, setProcessing] = useState(false)
@@ -65,6 +66,8 @@ export default function MockPay() {
         // MOCK 标记：后端据此确认这是模拟收银台的通知，而非伪造的真实回调
         trade_type: 'MOCK',
         _mock_pay_type: payType,
+        // 服务端按订单号+金额+支付方式生成，证明本页确实由下单接口打开
+        mock_token: token,
       })
       const resp = await fetch(`${base}/payment/mock/notify`, {
         method: 'POST',

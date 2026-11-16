@@ -6,7 +6,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ERental.Services;
 
-public class SettlementService(AppDbContext db, PaymentService payment, MessageService messages, SupplementService supplement, ImageStorage images, LogService logs, ILogger<SettlementService> logger)
+public class SettlementService(AppDbContext db, PaymentService payment, MessageService messages, SupplementService supplement,
+    ImageStorage images, PointService points, LogService logs, ILogger<SettlementService> logger)
 {
     ///<summary>支付记录的业务类型：补缴</summary>
     private const string BizTypeSupplement = "supplement";
@@ -19,6 +20,7 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
     private readonly MessageService _messages = messages;
     private readonly SupplementService _supplement = supplement;
     private readonly ImageStorage _images = images;
+    private readonly PointService _points = points;
     private readonly LogService _logs = logs;
     private readonly ILogger<SettlementService> _logger = logger;
 
@@ -212,8 +214,9 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
     ///<summary>结算核算结果</summary>
     private sealed record SettleCalc(decimal HourlyRent, decimal Multiplier, int ActualHours, decimal ActualRent, int OverdueHours, decimal OverdueFee, decimal RentTotal, decimal RentDiff, decimal Refund, decimal Supplement);
 
-    ///<summary>结算所需的订单快照：试算从视图取，正式结算从锁内实体取，核算逻辑只认这几列</summary>
-    private readonly record struct SettleSnapshot(int VehicleId, DateTime LeaseStart, DateTime LeaseEnd, decimal TotalRent, decimal Deposit);
+    ///<summary>结算所需的订单快照：试算从订单实体取，正式结算从锁内实体取，核算逻辑只认这几列</summary>
+    private readonly record struct SettleSnapshot(int VehicleId, DateTime LeaseStart, DateTime LeaseEnd,
+        decimal TotalRent, decimal Deposit, decimal RentDiscount, decimal AddonFee, decimal DiscountAmount);
 
     ///<summary>损坏理赔工单号：WB+时间戳，撞号重试（与 MaintenanceService 同一套规则，轮换同一个号段）</summary>
     private async Task<string> NextDamageWorkOrderNoAsync()
@@ -244,7 +247,18 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         //正常租金只算到约定还车时间（leaseEnd）为止
         var normalEnd = order.LeaseEnd < now ? order.LeaseEnd : now;
         var actualHours = PricingResolver.CalcHours(order.LeaseStart, normalEnd);
-        var actualRent = Math.Round(actualHours * hourlyRent, 2);
+        //按订单固化的会员折扣率计费：顾客之后升降级不改写已成立订单的单价
+        var grossRent = Math.Round(actualHours * hourlyRent * order.RentDiscount, 2);
+
+        /*
+         * 券/积分必须按原租金占比分摊到实际租金：
+         * 提前还车时租金变少，优惠也同步缩减，否则会出现「租金 ¥30 却抵了 ¥20 券」的负租金。
+         * 增值服务已实际提供，按全额计入实际消费，不参与优惠分摊。
+         */
+        var originalRent = Math.Round(order.TotalRent - order.AddonFee, 2);
+        var discountRatio = originalRent > 0 ? Math.Min(1m, order.DiscountAmount / originalRent) : 0m;
+        var actualDiscount = Math.Round(grossRent * discountRatio, 2);
+        var actualRent = Math.Round(grossRent - actualDiscount + order.AddonFee, 2);
 
         //未逾期时这里就是 0：「不收」也必须有金额，不能只靠一句规则说明带过
         var overdueHours = order.LeaseEnd < now ? PricingResolver.CalcHours(order.LeaseEnd, now) : 0;
@@ -252,33 +266,50 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         var multiplier = ConfigValue.Decimal(multiplierCfgs, "overdue_multiplier", 1.5m);
         var overdueFee = Math.Round(overdueHours * hourlyRent * multiplier, 2);
 
+        //预付租金取下单时的「总额 - 优惠」，与实际消费（含增值服务）同口径比较
+        var prepaidRent = Math.Round(order.TotalRent - order.DiscountAmount, 2);
         //落库仍拆成 actual_rent/overdue_fee 两列，是为了保留可审计的构成
-        var (rentTotal, rentDiff, refund, supplementFee) = SettlementMath.Settle(order.TotalRent, order.Deposit, damageFee, actualRent, overdueFee);
+        var (rentTotal, rentDiff, refund, supplementFee) = SettlementMath.Settle(prepaidRent, order.Deposit, damageFee, actualRent, overdueFee);
 
         return new SettleCalc(hourlyRent, multiplier, actualHours, actualRent, overdueHours, overdueFee, rentTotal, rentDiff, refund, supplementFee);
     }
 
-    ///<summary>结算试算：订单摘要从视图窄取一列，不加载客户/车辆整实体</summary>
+    ///<summary>结算试算：只读订单与客户/车辆名，不加载整实体</summary>
     public async Task<SettlePreviewDto> Preview(int orderId)
     {
-        var order = await _db.OrderOverviews.AsNoTracking()
+        var order = await _db.RentalOrders.AsNoTracking()
             .Where(o => o.OrderId == orderId)
-            .Select(o => new { o.OrderId, o.OrderNo, o.CustomerName, o.VehicleNo, o.VehicleId, o.LeaseStart, o.LeaseEnd, o.TotalRent, o.Deposit })
+            .Select(o => new
+            {
+                o.OrderId,
+                o.OrderNo,
+                o.Customer!.FullName,
+                o.Vehicle!.VehicleNo,
+                o.VehicleId,
+                o.LeaseStart,
+                o.LeaseEnd,
+                o.TotalRent,
+                o.Deposit,
+                o.RentDiscount,
+                o.AddonFee,
+                o.DiscountAmount,
+            })
             .FirstOrDefaultAsync()
             ?? throw new BusinessException("订单不存在");
 
         var c = await CalculateAsync(
-            new SettleSnapshot(order.VehicleId, order.LeaseStart, order.LeaseEnd, order.TotalRent, order.Deposit),
+            new SettleSnapshot(order.VehicleId, order.LeaseStart, order.LeaseEnd, order.TotalRent, order.Deposit,
+                order.RentDiscount, order.AddonFee, order.DiscountAmount),
             0m);
         return new SettlePreviewDto
         {
             OrderId = order.OrderId,
             OrderNo = order.OrderNo,
-            CustomerName = order.CustomerName ?? "",
+            CustomerName = order.FullName ?? "",
             VehicleNo = order.VehicleNo ?? "",
             LeaseStart = order.LeaseStart,
             LeaseEnd = order.LeaseEnd,
-            PrepaidRent = order.TotalRent,
+            PrepaidRent = Math.Round(order.TotalRent - order.DiscountAmount, 2),
             Deposit = order.Deposit,
             HourlyRent = c.HourlyRent,
             Multiplier = c.Multiplier,
@@ -334,7 +365,8 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
                                                                                "（可能已被其他同事结算或取消，请刷新后查看）");
 
             var c = await CalculateAsync(
-                new SettleSnapshot(order.VehicleId, order.LeaseStart, order.LeaseEnd, order.TotalRent, order.Deposit),
+                new SettleSnapshot(order.VehicleId, order.LeaseStart, order.LeaseEnd, order.TotalRent, order.Deposit,
+                    order.RentDiscount, order.AddonFee, order.DiscountAmount),
                 dto.DamageFee);
             var now = AppClock.Now;
 
@@ -420,6 +452,9 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
                     + $"退款 ¥{c.Refund:0.00}、补缴 ¥{c.Supplement:0.00}",
                     "结算审计", "成功");
 
+                //结算奖励积分：实付租金 1 元得 1 分，并按累计完成单数尝试自动升级会员
+                await _points.AwardAsync(order.CustomerId, c.RentTotal, order.OrderId);
+
                 //赔付/逾期明细主动告知顾客：钱被扣了却没人解释，是差评的最大来源。
                 //消息里点明「可调取验车照片核对」，把争执从柜台拉到证据上。
                 if (dto.DamageFee > 0 || c.OverdueFee > 0)
@@ -481,14 +516,16 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
 
         var r = await _payment.Refund(paid.PayId, c.Refund, $"订单 {order.OrderNo} 归还结算");
 
-        //向顾客说明退款去向：真实通道=原路退回
-        var dest = r.RealMoney ? $"将按原支付渠道（{paid.PayType}）原路退回，预计到账 1-3 个工作日，请注意查收。" : $"当前为模拟收银台，退款 ¥{c.Refund:0.00} 已作账面登记，请到门店领取现金并留存凭证。";
+        //向顾客说明退款去向：真实通道=原路退回；模拟收银台=直接登记为线下现金退还。
+        //模拟支付从未发生真实划款，退款也就不需要前台再「确认是否退回」——登记即生效，
+        //前台只需按登记金额把现金交给顾客，不必回系统做二次确认。
+        var dest = r.RealMoney ? $"将按原支付渠道（{paid.PayType}）原路退回，预计到账 1-3 个工作日，请注意查收。" : $"该单为模拟收银台支付、未发生真实划款，退款 ¥{c.Refund:0.00} 已直接登记为「线下现金退还」，到店领取即可，无需再次确认。";
         await _messages.SendAsync(
             ("customer", order.CustomerId),
             ("refund", order.OrderNo),
             ("结算退款通知", $"订单 {order.OrderNo} 已结算，应退 ¥{c.Refund:0.00}。{dest}"));
 
-        return r.RealMoney ? $"结算完成 · 已退 ¥{c.Refund:0.00} 至原支付渠道（{paid.PayType}）" : $"结算完成 · 未真实划款，请线下退现金 ¥{c.Refund:0.00}";
+        return r.RealMoney ? $"结算完成 · 已退 ¥{c.Refund:0.00} 至原支付渠道（{paid.PayType}）" : $"结算完成 · ¥{c.Refund:0.00} 已登记为线下现金退还（模拟支付未发生真实划款，无需再确认）";
     }
 
     ///<summary>

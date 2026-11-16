@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useUI } from '@/components/UIProvider'
-import { customerApi, vehicleApi, orderApi, printApi } from '@/api'
+import { customerApi, vehicleApi, orderApi, printApi, couponApi, addonApi, pointApi } from '@/api'
 import Icon from '@/components/Icon'
 import ReceiptModal from '@/components/ReceiptModal'
 import VehicleQrLookup from './VehicleQrLookup'
-import type { VehicleQrDetail, CreateOrderPayload } from '@/types'
+import type { VehicleQrDetail, CreateOrderPayload, MyCoupon, AddonItem, PointSummary } from '@/types'
 import { nowDatetimeInput, afterDaysDatetimeInput, isBeforeNow, clampLeaseStart } from '@/utils/datetime'
 
 const PAY_TYPES = ['微信', '支付宝', '现金', '银行卡']
@@ -41,6 +41,18 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
   /** 扫码选车弹窗（前台用扫码枪扫车身二维码直接选中车辆） */
   const [showScan, setShowScan] = useState(false)
 
+  /**
+   * 柜台权益：该顾客的券、积分与门店增值服务。
+   * 之前线下开单只算租金与押金，顾客拿着券来柜台却用不上，只能让顾客线上下单，
+   * 前台反而多一道「教顾客用手机」的活。这里把三样都补齐，金额与服务端同口径复核。
+   */
+  const [coupons, setCoupons] = useState<MyCoupon[]>([])
+  const [addons, setAddons] = useState<AddonItem[]>([])
+  const [points, setPoints] = useState<PointSummary | null>(null)
+  const [couponId, setCouponId] = useState(0)
+  const [usePoints, setUsePoints] = useState(false)
+  const [addonIds, setAddonIds] = useState<number[]>([])
+
   const loadBase = () => {
     Promise.all([customerApi.list(), vehicleApi.list('空闲')])
       .then(([c, v]: any[]) => {
@@ -50,6 +62,11 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
       .catch(() => toast('基础数据加载失败，请确认后端服务是否已启动', 'error'))
   }
   useEffect(loadBase, [])
+
+  // 增值服务与客户无关，进页面就拉一次
+  useEffect(() => {
+    addonApi.list(true).then((r: any) => setAddons(r.data || [])).catch(() => setAddons([]))
+  }, [])
 
   const selectedCustomer = useMemo(
     () => customers.find(c => c.customerId === form.customerId),
@@ -107,7 +124,53 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
   }, [form.vehicleId, form.leaseStart, form.leaseEnd, form.customerId, mode])
 
   /**
-   * 起租时间早于当前（**「早于」不含等于**，选到当前这一分钟即合法）时**自动改成当前时间**，
+   * 权益随客户与租金变化刷新：
+   *   · 券/积分只对「已有客户」有意义（线下新客户还没建档，服务端无从按人核销）；
+   *   · 积分上限依赖本单租金（最多抵租金 10%），所以试算金额变化时要重拉。
+   */
+  useEffect(() => {
+    if (mode !== 'existing' || !form.customerId) {
+      setCoupons([])
+      setPoints(null)
+      setCouponId(0)
+      setUsePoints(false)
+      return
+    }
+    let alive = true
+    couponApi.byCustomer(form.customerId)
+      .then((r: any) => { if (alive) setCoupons(r.data || []) })
+      .catch(() => { if (alive) setCoupons([]) })
+    pointApi.summary(form.customerId, preview?.rent || 0)
+      .then((r: any) => { if (alive) setPoints(r.data || null) })
+      .catch(() => { if (alive) setPoints(null) })
+    return () => { alive = false }
+  }, [mode, form.customerId, preview?.rent])
+
+  /**
+   * 权益金额预览：与服务端同口径（券/积分只抵租金，积分最多抵租金 10%，
+   * 增值服务按天或一次性计入），最终以开单接口核算为准。
+   */
+  const usableCoupons = useMemo(
+    () => coupons.filter(c => c.status === '未使用' && new Date(c.expireTime).getTime() > Date.now()),
+    [coupons]
+  )
+  const rentBase = preview?.rent || 0
+  const selectedCoupon = usableCoupons.find(c => c.id === couponId)
+  const couponAmount = selectedCoupon && rentBase >= selectedCoupon.minAmount
+    ? Math.min(selectedCoupon.amount, rentBase)
+    : 0
+  const rentAfterCoupon = Math.max(0, rentBase - couponAmount)
+  const maxPoints = points ? Math.min(points.balance, Math.floor(rentAfterCoupon * 0.1 * 100)) : 0
+  const pointsUsed = usePoints ? maxPoints : 0
+  const billableDays = preview ? Math.max(1, Math.ceil(preview.hours / 24)) : 1
+  const addonFee = addons
+    .filter(a => addonIds.includes(a.addonId))
+    .reduce((sum, a) => sum + a.price * (a.unit === '按天' ? billableDays : 1), 0)
+  const finalTotal = preview
+    ? Math.round((rentAfterCoupon - pointsUsed / 100 + addonFee + preview.deposit) * 100) / 100
+    : 0
+
+  /** 起租时间早于当前（**「早于」不含等于**，选到当前这一分钟即合法）时**自动改成当前时间**，
    * 并当场说明这次调整——柜台代客开单时前台要能向顾客解释「为什么时间变了」。
    */
   const applyLeaseStart = (raw: string) => {
@@ -179,6 +242,14 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
         leaseStart: form.leaseStart,
         leaseEnd: form.leaseEnd,
         payType: form.payType,
+        // 权益只对已有客户生效：线下新客户尚未建档，服务端没有可核销的券/积分归属
+        ...(mode === 'existing'
+          ? {
+              customerCouponId: couponAmount > 0 ? couponId : null,
+              pointsUsed,
+              addonIds,
+            }
+          : {}),
         ...(mode === 'new'
           ? {
               customerId: 0,
@@ -258,6 +329,9 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
     setNewCustomer({ name: '', idCard: '', phone: '' })
     setProfile({ fullName: '', idCard: '', contactPhone: '' })
     setErrors({})
+    setCouponId(0)
+    setUsePoints(false)
+    setAddonIds([])
   }
 
   return (
@@ -483,6 +557,99 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
               ? '试算服务暂时不可用，以上为最近一次结果；开单成功后以服务端核算为准。'
               : '租金 = 计费小时数 × 小时租金 × 会员折扣（不足 1 小时按 1 小时计）；最终金额以开单时服务端核算为准。'}
           </p>
+        </div>
+      )}
+
+      {/* ===== 柜台代客使用权益：券 / 积分 / 增值服务 ===== */}
+      {preview && (
+        <div className="estimate" style={{ marginTop: 12 }}>
+          <div className="estimate-head"><Icon name="coupon" size={16} chip />优惠与增值服务（柜台代选）</div>
+
+          {mode !== 'existing' ? (
+            <p className="estimate-tip">
+              线下新客户尚未建档，暂不能按人核销券与积分；可先完成建档开单，后续订单再使用。
+            </p>
+          ) : (
+            <>
+              <div className="form-row">
+                <div className="form-group">
+                  <label><Icon name="coupon" size={14} chip />该顾客的优惠券</label>
+                  <select value={couponId} onChange={e => setCouponId(parseInt(e.target.value))}>
+                    <option value={0}>不使用优惠券</option>
+                    {usableCoupons.map(c => (
+                      <option key={c.id} value={c.id} disabled={rentBase < c.minAmount}>
+                        {c.name}（抵 ¥{c.amount.toFixed(2)}{c.minAmount > 0 ? ` · 满 ¥${c.minAmount.toFixed(2)}` : ''}）
+                      </option>
+                    ))}
+                  </select>
+                  {usableCoupons.length === 0 && <div className="field-hint">该顾客暂无可用的券。</div>}
+                  {selectedCoupon && rentBase < selectedCoupon.minAmount && (
+                    <div className="field-hint" style={{ color: 'var(--warning-text, #b45309)' }}>
+                      本单租金未达到门槛 ¥{selectedCoupon.minAmount.toFixed(2)}，暂不可用。
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-group">
+                  <label><Icon name="points" size={14} chip />积分抵扣</label>
+                  <label className={`points-toggle ${maxPoints <= 0 ? 'disabled' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={usePoints && maxPoints > 0}
+                      disabled={maxPoints <= 0}
+                      onChange={e => setUsePoints(e.target.checked)}
+                    />
+                    <span>
+                      {usePoints && maxPoints > 0
+                        ? `已使用 ${maxPoints} 分，抵 ¥${(maxPoints / 100).toFixed(2)}`
+                        : '不使用积分抵扣'}
+                    </span>
+                  </label>
+                  <div className="field-hint">
+                    {points
+                      ? `顾客现有 ${points.balance} 分；本单最多抵 ${maxPoints} 分（¥${(maxPoints / 100).toFixed(2)}）。`
+                      : '积分信息加载中…'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label><Icon name="addon" size={14} chip />增值服务</label>
+                {addons.length === 0 && <div className="field-hint">门店暂未提供增值服务。</div>}
+                <div className="addon-list">
+                  {addons.map(a => {
+                    const checked = addonIds.includes(a.addonId)
+                    return (
+                      <label key={a.addonId} className={`addon-item ${checked ? 'active' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={e => setAddonIds(prev => e.target.checked ? [...prev, a.addonId] : prev.filter(x => x !== a.addonId))}
+                        />
+                        <span className="addon-item-icon"><Icon name="addon" size={16} /></span>
+                        <span className="addon-item-main">
+                          <strong>{a.name}</strong>
+                          {a.description && <small>{a.description}</small>}
+                        </span>
+                        <span className="addon-item-price">
+                          ¥{a.price.toFixed(2)}{a.unit === '按天' ? `/天 × ${billableDays} = ¥${(a.price * billableDays).toFixed(2)}` : ''}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="rent-bill">
+                <div className="rent-bill-row"><span>租金（折扣后）</span><strong>¥{rentBase.toFixed(2)}</strong></div>
+                <div className="rent-bill-row"><span>券抵扣</span><strong className="minus">-¥{couponAmount.toFixed(2)}</strong></div>
+                <div className="rent-bill-row"><span>积分抵扣{pointsUsed > 0 ? `（${pointsUsed} 分）` : ''}</span><strong className="minus">-¥{(pointsUsed / 100).toFixed(2)}</strong></div>
+                <div className="rent-bill-row"><span>增值服务</span><strong>+¥{addonFee.toFixed(2)}</strong></div>
+                <div className="rent-bill-row"><span>押金（可退）</span><strong>+¥{preview.deposit.toFixed(2)}</strong></div>
+                <div className="rent-bill-total">应收合计 <strong>¥{finalTotal.toFixed(2)}</strong></div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

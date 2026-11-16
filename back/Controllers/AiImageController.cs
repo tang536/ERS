@@ -79,6 +79,8 @@ public class AiImageController(AiImageService svc, AiProgressTracker tracker, IL
 
     ///<summary>图生图：参考图以 multipart/form-data 上传（字段名 file）</summary>
     [HttpPost("img2img")]
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 6 * 1024 * 1024)]
     public async Task<IActionResult> GenerateImageByImage([FromForm] AiImageRequest req, IFormFile? file, [FromForm] string? inputsJson, CancellationToken ct)
     {
         try

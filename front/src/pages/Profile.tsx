@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type CSSProperties } from 'react'
-import { authApi, customerApi } from '@/api'
+import { authApi, customerApi, pointApi } from '@/api'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useUI } from '@/components/UIProvider'
@@ -7,6 +7,7 @@ import { logoutEverywhere } from '@/utils/session'
 import Icon from '@/components/Icon'
 import Avatar from '@/components/Avatar'
 import ImageLightbox from '@/components/ImageLightbox'
+import type { PointSummary } from '@/types'
 
 export default function Profile() {
   const { user, login } = useAuth()
@@ -18,6 +19,8 @@ export default function Profile() {
   const [form, setForm] = useState({ fullName: '', idCard: '', contactPhone: '' })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  /** 积分概要：个人资料卡展示余额，明细跳会员中心 */
+  const [points, setPoints] = useState<PointSummary | null>(null)
 
   const load = () => {
     if (!user?.userId) return
@@ -36,6 +39,11 @@ export default function Profile() {
   }
 
   useEffect(load, [user?.userId])
+  useEffect(() => {
+    pointApi.summary()
+      .then((res: any) => setPoints(res.data || null))
+      .catch(() => setPoints(null))
+  }, [])
 
   const validate = () => {
     const e: Record<string, string> = {}
@@ -212,6 +220,28 @@ export default function Profile() {
         </div>
       </div>
 
+      {/* ===== 我的服务：订单 / 会员 / 优惠券 =====
+          这三项原来是顶部导航与底部标签栏的一级入口，占掉顾客端一半的导航格，
+          但日常使用频率全部低于「租车」本身。收成个人中心里的一排小按钮后，
+          导航只留租车与个人中心，功能一个不少，入口更集中。 */}
+      <div className="profile-services">
+        <button className="profile-service-btn" onClick={() => navigate('/my-orders')}>
+          <span className="profile-service-icon"><Icon name="my-orders" size={20} /></span>
+          <span className="profile-service-text"><strong>我的订单</strong><small>查看租车与支付</small></span>
+          <Icon name="chevron-right" size={14} />
+        </button>
+        <button className="profile-service-btn" onClick={() => navigate('/membership')}>
+          <span className="profile-service-icon"><Icon name="points" size={20} /></span>
+          <span className="profile-service-text"><strong>会员中心</strong><small>{info.memberLevel} · {points ? `${points.balance} 积分` : '积分'}</small></span>
+          <Icon name="chevron-right" size={14} />
+        </button>
+        <button className="profile-service-btn" onClick={() => navigate('/coupons')}>
+          <span className="profile-service-icon"><Icon name="coupon" size={20} /></span>
+          <span className="profile-service-text"><strong>我的优惠券</strong><small>兑换码领券 · 出示核销码</small></span>
+          <Icon name="chevron-right" size={14} />
+        </button>
+      </div>
+
       <div className="card">
         <div className="card-title">
           <Icon name="profile" size={18} chip />个人资料
@@ -235,6 +265,13 @@ export default function Profile() {
           <div className="detail-item"><span className="detail-label">手机号</span><span className="detail-value">{info.contactPhone || '待完善'}</span></div>
           <div className="detail-item"><span className="detail-label">会员等级</span><span className="detail-value">{info.memberLevel}</span></div>
           <div className="detail-item"><span className="detail-label">会员折扣</span><span className="detail-value">{(info.memberDiscount * 10).toFixed(1)} 折</span></div>
+          <div className="detail-item">
+            <span className="detail-label">积分余额</span>
+            <span className="detail-value">
+              {points ? `${points.balance} 分` : '—'}
+              <button className="btn-sm btn-sm-default" style={{ marginLeft: 8 }} onClick={() => navigate('/membership')}>查看明细</button>
+            </span>
+          </div>
         </div>
       </div>
 

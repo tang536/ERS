@@ -10,8 +10,7 @@ namespace ERental.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-//订单查询：工作人员查全店
-[Authorize(Policy = Policies.AdminOrReceptionOrCustomer)]
+//本控制器按动作分别授权：读接口允许财务只读，写接口仅前台（构造/修改订单是柜台职责）
 public class OrderController(OrderService svc, SettlementService settlement) : ControllerBase
 {
     private readonly OrderService _svc = svc;
@@ -20,8 +19,9 @@ public class OrderController(OrderService svc, SettlementService settlement) : C
     private bool IsCustomer => User.IsInRole(AuthService.RoleCustomer);
     private int CurrentUserId => int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
-    ///<summary>订单列表</summary>
+    ///<summary>订单列表（管理员/前台/财务可查全店；顾客仅返回本人订单）</summary>
     [HttpGet]
+    [Authorize(Policy = Policies.OrderRead)]
     public async Task<IActionResult> QueryOrderInfo(string? status, string? keyword, DateTime? dateFrom = null, DateTime? dateTo = null, string? sortBy = null, bool sortDesc = true, int page = 0, int pageSize = 0) //NOSONAR S107：8 个形参是 HTTP 查询契约，前端逐个传 query 参数，合并成值元组会打断 ASP.NET Core 模型绑定
     {
         var customerId = IsCustomer ? CurrentUserId : (int?)null;
@@ -44,6 +44,7 @@ public class OrderController(OrderService svc, SettlementService settlement) : C
     public Task<IActionResult> GetWaitReturnOrder(string? keyword, DateTime? dateFrom = null, DateTime? dateTo = null, string? sortBy = null, bool sortDesc = true, int page = 0, int pageSize = 0) => QueryOrderInfo("已支付", keyword, dateFrom, dateTo, sortBy, sortDesc, page, pageSize);
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Policies.OrderRead)]
     public async Task<IActionResult> QueryOrderInfoById(int id)
     {
         try

@@ -71,6 +71,8 @@ public class SettlementController(SettlementService svc) : ControllerBase
     ///<summary>上传验车照片（multipart/form-data，字段名 file；orderId/phase 用于命名与分目录）</summary>
     [HttpPost("handover/upload")]
     [Authorize(Policy = Policies.ReceptionOnly)]
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 6 * 1024 * 1024)]
     public async Task<IActionResult> UploadHandoverPhoto(IFormFile? file, int orderId = 0, string? phase = null)
     {
         try { return Ok(new ApiResponse<object> { Data = new { url = await _svc.SaveHandoverPhoto(file, orderId, phase) }, Message = "照片上传成功" }); }

@@ -109,6 +109,11 @@ SELECT
   o.`lease_end`,
   o.`actual_return`,
   o.`total_rent`,
+  o.`discount_amount`,
+  o.`addon_fee`,
+  o.`customer_coupon_id`,
+  o.`points_used`,
+  o.`rent_discount`,
   o.`deposit`,
   o.`order_status`,
   o.`create_time`,
@@ -353,8 +358,8 @@ BEGIN
 END$$
 DELIMITER ;
 
--- 消息接收人互斥字段：receiver_type=customer 只填 receiver_customer_id，
--- receiver_type=staff 只填 receiver_staff_id；非法类型直接拒绝。
+-- 消息接收人：只允许 customer / staff，接收人 ID 必须为正；接收人仅由
+-- receiver_type + receiver_id 两列表达，不再维护派生冗余列。
 DROP TRIGGER IF EXISTS `trg_message_receiver_insert`;
 DELIMITER $$
 CREATE TRIGGER `trg_message_receiver_insert`
@@ -367,9 +372,6 @@ BEGIN
   IF NEW.`receiver_id` IS NULL OR NEW.`receiver_id` <= 0 THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERENTAL:消息接收人 ID 无效';
   END IF;
-
-  SET NEW.`receiver_customer_id` = IF(NEW.`receiver_type` = 'customer', NEW.`receiver_id`, NULL);
-  SET NEW.`receiver_staff_id`    = IF(NEW.`receiver_type` = 'staff',    NEW.`receiver_id`, NULL);
 END$$
 DELIMITER ;
 
@@ -385,9 +387,6 @@ BEGIN
   IF NEW.`receiver_id` IS NULL OR NEW.`receiver_id` <= 0 THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERENTAL:消息接收人 ID 无效';
   END IF;
-
-  SET NEW.`receiver_customer_id` = IF(NEW.`receiver_type` = 'customer', NEW.`receiver_id`, NULL);
-  SET NEW.`receiver_staff_id`    = IF(NEW.`receiver_type` = 'staff',    NEW.`receiver_id`, NULL);
 END$$
 DELIMITER ;
 

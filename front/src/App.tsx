@@ -21,6 +21,8 @@ import Landing from './pages/Landing'
  */
 const MyOrders = lazy(() => import('./pages/MyOrders'))
 const RentBike = lazy(() => import('./pages/RentBike'))
+const RentVehicle = lazy(() => import('./pages/RentVehicle'))
+const MyCoupons = lazy(() => import('./pages/MyCoupons'))
 const VehiclesCatalog = lazy(() => import('./pages/Vehicles'))
 const Profile = lazy(() => import('./pages/Profile'))
 const Membership = lazy(() => import('./pages/Membership'))
@@ -40,6 +42,9 @@ const Reports = lazy(() => import('./pages/staff/Reports'))
 const Users = lazy(() => import('./pages/staff/Users'))
 const SystemConfig = lazy(() => import('./pages/staff/SystemConfig'))
 const DataDict = lazy(() => import('./pages/staff/DataDict'))
+const Operations = lazy(() => import('./pages/staff/Operations'))
+const CouponVerify = lazy(() => import('./pages/staff/CouponVerify'))
+const Shifts = lazy(() => import('./pages/staff/Shifts'))
 
 /** 懒加载路由的占位。只在首次点进某个页面、chunk 还没下载完的瞬间出现。 */
 function PageLoading() {
@@ -153,6 +158,9 @@ export default function App() {
         {/* ===== 顾客端 ===== */}
         <Route path="my-orders" element={<CustomerGuard pathKey="/my-orders"><MyOrders /></CustomerGuard>} />
         <Route path="rent" element={<CustomerGuard pathKey="/rent"><RentBike /></CustomerGuard>} />
+        {/* 车辆详情：列表 → 详情 → 试算 → 下单，权限沿用 /rent */}
+        <Route path="rent/:vehicleId" element={<CustomerGuard pathKey="/rent"><RentVehicle /></CustomerGuard>} />
+        <Route path="coupons" element={<CustomerGuard pathKey="/coupons"><MyCoupons /></CustomerGuard>} />
         <Route path="vehicle-catalog" element={<CustomerGuard pathKey="/vehicle-catalog"><VehiclesCatalog /></CustomerGuard>} />
         <Route path="profile" element={<CustomerGuard pathKey="/profile"><Profile /></CustomerGuard>} />
         <Route path="membership" element={<CustomerGuard pathKey="/membership"><Membership /></CustomerGuard>} />
@@ -170,6 +178,9 @@ export default function App() {
         {/* 「车辆盘点」「维保管理」已并入「车辆管理」页的页签，旧链接重定向保持兼容 */}
         <Route path="vehicles" element={<Guard roles={R('/vehicles')}><StaffVehicles /></Guard>} />
         <Route path="maintenance" element={<Navigate to="/vehicles?view=maintenance" replace />} />
+        <Route path="operations" element={<Guard roles={R('/operations')}><Operations /></Guard>} />
+        <Route path="coupon-verify" element={<Guard roles={R('/coupon-verify')}><CouponVerify /></Guard>} />
+        <Route path="shifts" element={<Guard roles={R('/shifts')}><Shifts /></Guard>} />
         <Route path="reports" element={<Guard roles={R('/reports')}><Reports /></Guard>} />
         <Route path="users" element={<Guard roles={R('/users')}><Users /></Guard>} />
         {/* 「支付配置」已并入「系统配置」页的第二个页签，旧链接重定向保持兼容 */}

@@ -15,6 +15,7 @@ import { compressImage } from '@/utils/image'
 import { downloadBlob, todayStamp } from '@/utils/download'
 import CreateOrderPanel from './components/CreateOrderPanel'
 import OrderDetailModal from './components/OrderDetailModal'
+import OrderChangeModal from './components/OrderChangeModal'
 import Pagination from '@/components/Pagination'
 
 /** 默认每页条数；用户可在分页条上改（对账时一屏看更多） */
@@ -75,6 +76,8 @@ export default function Orders() {
    */
   const { hasRole } = useAuth()
   const canOperate = hasRole([ROLE.RECEPTION])
+  /** 财务：只读查看租金/押金/订单状态，不出现任何开单或改单入口 */
+  const isFinance = hasRole([ROLE.FINANCE]) && !hasRole([ROLE.ADMIN, ROLE.RECEPTION])
   const [searchParams, setSearchParams] = useSearchParams()
   const [list, setList] = useState<Order[]>([])
   /**
@@ -111,6 +114,8 @@ export default function Orders() {
   const [receipt, setReceipt] = useState<string | null>(null)
   /** 订单详情弹窗：展示订单字段与续租记录（系统操作 #105 查询续租记录） */
   const [detailOrder, setDetailOrder] = useState<Order | null>(null)
+  /** 换车 / 改期弹窗 */
+  const [changeOrder, setChangeOrder] = useState<Order | null>(null)
   const [exporting, setExporting] = useState(false)
   /** 到期/逾期预警。与列表筛选无关，独立拉取：换页换条件不该让它闪一下。 */
   const [warn, setWarn] = useState<WarningSummary | null>(null)
@@ -175,7 +180,11 @@ export default function Orders() {
   useEffect(() => { load() }, [status, keyword, dateFrom, dateTo, sortBy, sortDir, page, pageSize])
 
   // 预警只在进页面时拉一次：它不是分页数据，跟着翻页重拉纯属浪费。
-  useEffect(() => { loadWarnings() }, [])
+  // 财务只读订单（预警接口仅管理员/前台可用），因此对财务直接跳过，避免每次进页面都吃一次 403。
+  useEffect(() => {
+    if (hasRole([ROLE.ADMIN, ROLE.RECEPTION])) loadWarnings()
+    else setWarn(null)
+  }, [hasRole])
 
   /**
    * 把当前筛选/排序/页码写回地址栏（replace，不往浏览历史里堆记录）。
@@ -376,6 +385,16 @@ export default function Orders() {
         )}
       </div>
 
+      {isFinance && (
+        <div className="callout callout-info">
+          <Icon name="info" size={18} chip />
+          <div>
+            <strong>财务查看模式（只读）</strong>
+            <p>这里可核对每笔订单的租金、押金、状态与支付情况；开单、改期、取消等操作由前台办理。</p>
+          </div>
+        </div>
+      )}
+
       {/* 到期/逾期预警（系统操作 #6）：只在有单子要跟进时出现，没有就整块不渲染——
           常驻一条「0 笔逾期」会把真正要处理的单子淹掉。 */}
       {view === 'list' && warn && warn.total > 0 && (
@@ -521,6 +540,9 @@ export default function Orders() {
                           ops.push({ key: 'pickup', label: '取车', icon: 'camera', tone: 'primary', onClick: () => openPickup(o) })
                         if (canOperate && (o.orderStatus === '已支付' || o.orderStatus === '租赁中'))
                           ops.push({ key: 'renew', label: '续租', icon: 'refresh', tone: 'primary', onClick: () => handleRenewal(o.orderId) })
+                        // 换车/改期只对「待支付 / 已支付」开放（后端同口径）
+                        if (canOperate && (o.orderStatus === '待支付' || o.orderStatus === '已支付'))
+                          ops.push({ key: 'change', label: '变更', icon: 'refresh', tone: 'default', onClick: () => setChangeOrder(o) })
                         ops.push({ key: 'receipt', label: '小票', icon: 'print', tone: 'default', onClick: () => handlePrint(o.orderId) })
                         if (canOperate && (o.orderStatus === '待支付' || o.orderStatus === '已支付'))
                           ops.push({ key: 'cancel', label: '取消', icon: 'close', tone: 'danger', onClick: () => handleCancel(o) })
@@ -559,6 +581,14 @@ export default function Orders() {
           order={detailOrder}
           onClose={() => setDetailOrder(null)}
           onPrint={handlePrint}
+        />
+      )}
+
+      {changeOrder && (
+        <OrderChangeModal
+          order={changeOrder}
+          onClose={() => setChangeOrder(null)}
+          onDone={load}
         />
       )}
 

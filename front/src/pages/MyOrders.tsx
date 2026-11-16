@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import Icon from '@/components/Icon'
 import ReceiptModal from '@/components/ReceiptModal'
+import ContractModal from '@/components/ContractModal'
 import { fmtDT } from '@/utils/datetime'
 import type { SupplementPayItem } from '@/types'
 
@@ -36,6 +37,8 @@ export default function MyOrders() {
   const [supplements, setSupplements] = useState<SupplementPayItem[]>([])
   /** 门店审核还车后生成的结算单：租金构成 / 逾期费 / 损坏费 / 应退应补，顾客据此决定怎么付 */
   const [settles, setSettles] = useState<any[]>([])
+  /** 电子合同弹窗：未签署可手写签名，已签署只读 */
+  const [contractOrder, setContractOrder] = useState<{ orderId: number; orderNo: string } | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -274,6 +277,11 @@ export default function MyOrders() {
                       <button className="btn-sm btn-sm-default" onClick={() => handlePrint(o.orderId)}>
                         <Icon name="print" size={13} />打印小票
                       </button>
+                      {o.orderStatus !== '已取消' && (
+                        <button className="btn-sm btn-sm-default" onClick={() => setContractOrder({ orderId: o.orderId, orderNo: o.orderNo })}>
+                          <Icon name="orders" size={13} />电子合同
+                        </button>
+                      )}
                       {canEarlyReturn && (
                         <button className="btn-sm btn-sm-primary" onClick={() => handleEarlyReturn(o)}>
                           <Icon name="clock" size={13} color="#fff" />申请还车
@@ -306,9 +314,6 @@ export default function MyOrders() {
           <div className="card-title">
             <Icon name="orders" size={18} chip />归还结算单
             <span className="card-title-count">共 {settles.length} 条</span>
-          </div>
-          <div className="field-hint" style={{ padding: '0 16px 8px' }}>
-            <Icon name="info" size={14} />押金与多收租金按原支付渠道退回；补缴款可选择在线支付，或到门店缴纳现金。
           </div>
           <div className="table-wrap">
             <table className="data-table">
@@ -401,6 +406,14 @@ export default function MyOrders() {
           content={receipt}
           onClose={() => setReceipt(null)}
           hint="请妥善保管小票，还车时凭此办理押金退还。"
+        />
+      )}
+
+      {contractOrder && (
+        <ContractModal
+          orderId={contractOrder.orderId}
+          orderNo={contractOrder.orderNo}
+          onClose={() => setContractOrder(null)}
         />
       )}
     </div>

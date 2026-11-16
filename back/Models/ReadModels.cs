@@ -55,6 +55,21 @@ public class OrderOverviewView
     [Column("total_rent")]
     public decimal TotalRent { get; init; }
 
+    [Column("discount_amount")]
+    public decimal DiscountAmount { get; init; }
+
+    [Column("addon_fee")]
+    public decimal AddonFee { get; init; }
+
+    [Column("points_used")]
+    public int PointsUsed { get; init; }
+
+    [Column("customer_coupon_id")]
+    public int? CustomerCouponId { get; init; }
+
+    [Column("rent_discount")]
+    public decimal RentDiscount { get; init; }
+
     [Column("deposit")]
     public decimal Deposit { get; init; }
 

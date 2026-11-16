@@ -55,15 +55,15 @@ CREATE TABLE IF NOT EXISTS `customer` (
   `full_name` VARCHAR(20) NOT NULL COMMENT '姓名/昵称（注册时默认同用户名）',
   `contact_phone` VARCHAR(11) DEFAULT NULL COMMENT '手机号（租车环节采集）',
   `login_password` VARCHAR(100) DEFAULT NULL COMMENT '登录密码（BCrypt）',
-  `member_level` VARCHAR(20) DEFAULT '普通会员' COMMENT '会员等级（展示与筛选用）',
-  `member_rights_id` INT DEFAULT NULL COMMENT '会员等级权益ID（member_rights.rights_id，折扣与门槛以它为准）',
+  `member_level` VARCHAR(20) DEFAULT '普通会员' COMMENT '会员等级（引用 member_rights.member_level，折扣与门槛以权益表为准）',
+  `points` INT NOT NULL DEFAULT 0 COMMENT '积分余额（结算 1 元得 1 分，100 分抵 1 元）',
   `account_status` VARCHAR(10) NOT NULL DEFAULT '正常' COMMENT '账号状态（正常/已注销）',
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '注册时间',
   `version` INT NOT NULL DEFAULT 1 COMMENT '乐观并发版本号',
   PRIMARY KEY (`customer_id`),
   UNIQUE KEY `uk_login_account` (`login_account`),
   UNIQUE KEY `uk_id_card` (`id_card`),
-  KEY `idx_customer_rights` (`member_rights_id`)
+  KEY `idx_customer_level` (`member_level`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='客户表';
 
 -- 5. 会员权益表
@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS `member_rights` (
   `min_rent_count` INT DEFAULT NULL,
   `purchase_price` DECIMAL(10,2) DEFAULT NULL,
   `rights_desc` VARCHAR(200) DEFAULT NULL,
-  PRIMARY KEY (`rights_id`)
+  PRIMARY KEY (`rights_id`),
+  UNIQUE KEY `uk_member_level` (`member_level`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会员权益表';
 
 -- 6. 车辆表
@@ -104,7 +105,12 @@ CREATE TABLE IF NOT EXISTS `rental_order` (
   `lease_start` DATETIME NOT NULL COMMENT '起租时间',
   `lease_end` DATETIME NOT NULL COMMENT '到期时间',
   `actual_return` DATETIME DEFAULT NULL COMMENT '实际归还时间',
-  `total_rent` DECIMAL(10,2) NOT NULL COMMENT '总租金',
+  `total_rent` DECIMAL(10,2) NOT NULL COMMENT '总租金（会员折扣后租金 + 增值服务费）',
+  `discount_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '优惠抵扣合计（券 + 积分，只抵租金）',
+  `rent_discount` DECIMAL(3,2) NOT NULL DEFAULT 1.00 COMMENT '下单时固化的会员折扣率',
+  `addon_fee` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '增值服务费（已并入 total_rent）',
+  `customer_coupon_id` INT DEFAULT NULL COMMENT '本单使用的顾客券（customer_coupon.id）',
+  `points_used` INT NOT NULL DEFAULT 0 COMMENT '本单抵扣的积分数',
   `deposit` DECIMAL(10,2) NOT NULL COMMENT '押金',
   `order_status` VARCHAR(10) DEFAULT '待支付' COMMENT '状态',
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -150,7 +156,7 @@ CREATE TABLE IF NOT EXISTS `payment_record` (
   -- 支付回调按「订单 + 状态」定位本次支付记录
   KEY `idx_order_status` (`order_id`, `pay_status`),
   KEY `idx_pay_order_biz_status` (`order_id`, `biz_type`, `pay_status`),
-  KEY `idx_pay_out_trade_no` (`out_trade_no`),
+  UNIQUE KEY `uk_pay_out_trade_no` (`out_trade_no`),
   -- 退款不得超过实收：并发退款的最后一道防线（应用层用支付记录行锁先在事务内排队）
   CONSTRAINT `ck_pay_amount` CHECK (`pay_amount` >= 0) ENFORCED,
   CONSTRAINT `ck_pay_refund` CHECK (`refund_amount` >= 0 AND `refund_amount` <= `pay_amount`) ENFORCED,
@@ -302,8 +308,6 @@ CREATE TABLE IF NOT EXISTS `message` (
   `message_id` INT NOT NULL AUTO_INCREMENT,
   `receiver_type` VARCHAR(10) NOT NULL COMMENT '接收人类型（customer=顾客 / staff=工作人员）',
   `receiver_id` INT NOT NULL COMMENT '接收人ID（customer 时为 customer_id；staff 时为 system_user.user_id）',
-  `receiver_customer_id` INT DEFAULT NULL COMMENT '顾客接收人（receiver_type=customer 时等于 receiver_id）',
-  `receiver_staff_id` INT DEFAULT NULL COMMENT '员工接收人（receiver_type=staff 时为 system_user.user_id）',
   `ref_type` VARCHAR(20) NOT NULL COMMENT '业务类型（refund/supplement/supplement_paid/overdue/expiring/pending/maintenance/profile_incomplete/maintain_due）',
   `ref_id` VARCHAR(60) DEFAULT NULL COMMENT '业务实体ID（订单号/车辆ID等），用于幂等去重与跳转定位',
   `title` VARCHAR(120) NOT NULL COMMENT '消息标题',
@@ -469,3 +473,156 @@ CREATE TABLE IF NOT EXISTS `pay_reconcile_log` (
   KEY `idx_reconcile_action_time` (`action`, `created_at`),
   KEY `idx_reconcile_order` (`order_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付渠道对账流水表';
+
+-- ============================================
+-- 运营与顾客权益（v1.0.5）
+-- ============================================
+
+-- 优惠券模板：券只抵扣租金，不抵押金；一单最多用一张
+CREATE TABLE IF NOT EXISTS `coupon` (
+  `coupon_id` INT NOT NULL AUTO_INCREMENT,
+  `name` VARCHAR(40) NOT NULL COMMENT '券名称',
+  `amount` DECIMAL(10,2) NOT NULL COMMENT '抵扣金额（元）',
+  `min_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '使用门槛：订单租金达到该金额才可用，0 表示无门槛',
+  `valid_from` DATETIME NOT NULL COMMENT '生效时间',
+  `valid_to` DATETIME NOT NULL COMMENT '失效时间',
+  `total_qty` INT NOT NULL DEFAULT 0 COMMENT '发放总量，0 表示不限量',
+  `issued_qty` INT NOT NULL DEFAULT 0 COMMENT '已发放数量',
+  `per_limit` INT NOT NULL DEFAULT 1 COMMENT '同一顾客最多可领张数',
+  `status` VARCHAR(10) NOT NULL DEFAULT '启用' COMMENT '状态（启用/停用）',
+  `redeem_code` VARCHAR(20) NULL COMMENT '兑换码（口令领券，留空表示不开放）',
+  `redeem_open` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否开放兑换（0否 1是）',
+  `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`coupon_id`),
+  UNIQUE KEY `uk_coupon_redeem_code` (`redeem_code`),
+  KEY `idx_coupon_status` (`status`),
+  CONSTRAINT `ck_coupon_amount` CHECK (`amount` > 0 AND `min_amount` >= 0 AND `total_qty` >= 0 AND `per_limit` >= 1) ENFORCED
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='优惠券模板表';
+
+-- 顾客持有的券：模板改价不影响已发出的券
+CREATE TABLE IF NOT EXISTS `customer_coupon` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `coupon_id` INT NOT NULL COMMENT '券模板ID',
+  `customer_id` INT NOT NULL COMMENT '持有人',
+  `status` VARCHAR(10) NOT NULL DEFAULT '未使用' COMMENT '状态（未使用/已使用/已过期）',
+  `receive_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '领取时间',
+  `expire_time` DATETIME NOT NULL COMMENT '过期时间',
+  `use_time` DATETIME DEFAULT NULL COMMENT '使用时间',
+  `order_id` INT DEFAULT NULL COMMENT '核销订单',
+  `code` VARCHAR(24) NULL COMMENT '券码（顾客端二维码 / 前台扫码核销）',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_customer_coupon_code` (`code`),
+  KEY `idx_coupon_customer_status` (`customer_id`, `status`),
+  KEY `idx_coupon_order` (`order_id`),
+  KEY `idx_coupon_template` (`coupon_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='顾客优惠券表';
+
+-- 增值服务：骑行保险、头盔、送车上门等
+CREATE TABLE IF NOT EXISTS `addon_item` (
+  `addon_id` INT NOT NULL AUTO_INCREMENT,
+  `name` VARCHAR(30) NOT NULL COMMENT '服务名称',
+  `price` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '价格（元）',
+  `unit` VARCHAR(10) NOT NULL DEFAULT '一次性' COMMENT '计价方式（一次性/按天）',
+  `description` VARCHAR(200) DEFAULT NULL COMMENT '说明',
+  `status` VARCHAR(10) NOT NULL DEFAULT '启用' COMMENT '状态（启用/停用）',
+  `sort_no` INT NOT NULL DEFAULT 0 COMMENT '排序号',
+  `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`addon_id`),
+  KEY `idx_addon_status_sort` (`status`, `sort_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='增值服务项表';
+
+-- 订单增值服务快照：名称与单价在下单时固化
+CREATE TABLE IF NOT EXISTS `order_addon` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `order_id` INT NOT NULL,
+  `addon_id` INT NOT NULL COMMENT '服务项ID',
+  `name` VARCHAR(30) NOT NULL COMMENT '下单时的名称快照',
+  `unit` VARCHAR(10) NOT NULL COMMENT '下单时的计价方式',
+  `price` DECIMAL(10,2) NOT NULL COMMENT '下单时的单价快照',
+  `qty` INT NOT NULL DEFAULT 1 COMMENT '计费数量（按天项为天数，一次性项为 1）',
+  `amount` DECIMAL(10,2) NOT NULL COMMENT '金额',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_order_addon` (`order_id`, `addon_id`),
+  KEY `idx_addon_order` (`order_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单增值服务明细表';
+
+-- 积分流水：只增不改，余额随每次变动落快照
+CREATE TABLE IF NOT EXISTS `point_log` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `customer_id` INT NOT NULL,
+  `change_amount` INT NOT NULL COMMENT '本次变动（正数获得、负数消耗）',
+  `balance` INT NOT NULL COMMENT '变动后余额',
+  `source` VARCHAR(20) NOT NULL COMMENT '来源（结算奖励/下单抵扣/取消退回/人工调整）',
+  `order_id` INT DEFAULT NULL COMMENT '关联订单',
+  `remark` VARCHAR(200) DEFAULT NULL COMMENT '说明',
+  `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '发生时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_point_customer_time` (`customer_id`, `create_time`),
+  KEY `idx_point_order` (`order_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='顾客积分流水表';
+
+-- 交接班：开班备用金、交班汇总与现金差额
+CREATE TABLE IF NOT EXISTS `shift` (
+  `shift_id` INT NOT NULL AUTO_INCREMENT,
+  `shift_no` VARCHAR(30) NOT NULL COMMENT '班次号',
+  `operator_id` INT DEFAULT NULL COMMENT '操作人',
+  `operator_name` VARCHAR(20) NOT NULL COMMENT '操作人姓名快照',
+  `open_time` DATETIME NOT NULL COMMENT '开班时间',
+  `close_time` DATETIME DEFAULT NULL COMMENT '交班时间',
+  `opening_cash` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '开班备用金',
+  `cash_collected` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '本班现金净收入（收款减退款）',
+  `cash_actual` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '交班时实点现金',
+  `difference` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '实收 - (备用金 + 现金净收入)，正数长款、负数短款',
+  `alipay_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '支付宝净收款',
+  `wechat_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '微信净收款',
+  `bank_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '银行卡净收款',
+  `order_count` INT NOT NULL DEFAULT 0 COMMENT '本班新单数',
+  `settle_count` INT NOT NULL DEFAULT 0 COMMENT '本班结算单数',
+  `status` VARCHAR(10) NOT NULL DEFAULT '进行中' COMMENT '状态（进行中/已交班）',
+  `note` VARCHAR(200) DEFAULT NULL COMMENT '差额说明',
+  PRIMARY KEY (`shift_id`),
+  UNIQUE KEY `uk_shift_no` (`shift_no`),
+  KEY `idx_shift_operator` (`operator_id`),
+  KEY `idx_shift_open_time` (`open_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='交接班表';
+
+-- 订单变更：换车 / 改期的前后快照与差价
+CREATE TABLE IF NOT EXISTS `order_change` (
+  `change_id` INT NOT NULL AUTO_INCREMENT,
+  `order_id` INT NOT NULL,
+  `change_type` VARCHAR(10) NOT NULL COMMENT '变更类型（换车/改期）',
+  `old_vehicle_id` INT DEFAULT NULL,
+  `new_vehicle_id` INT DEFAULT NULL,
+  `old_start` DATETIME DEFAULT NULL,
+  `old_end` DATETIME DEFAULT NULL,
+  `new_start` DATETIME DEFAULT NULL,
+  `new_end` DATETIME DEFAULT NULL,
+  `old_rent` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '变更前租金',
+  `new_rent` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '变更后租金',
+  `diff_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '差价（正数补缴、负数退款）',
+  `reason` VARCHAR(200) DEFAULT NULL COMMENT '变更原因',
+  `operator_id` INT DEFAULT NULL COMMENT '经办人',
+  `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '变更时间',
+  PRIMARY KEY (`change_id`),
+  KEY `idx_order_change_order` (`order_id`),
+  KEY `idx_order_change_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单变更记录表';
+
+-- 电子合同：正文快照 + SHA-256 哈希 + 手写签名图
+CREATE TABLE IF NOT EXISTS `contract` (
+  `contract_id` INT NOT NULL AUTO_INCREMENT,
+  `contract_no` VARCHAR(40) NOT NULL COMMENT '合同编号',
+  `order_id` INT NOT NULL COMMENT '关联订单',
+  `customer_id` INT NOT NULL COMMENT '签署人',
+  `version` VARCHAR(20) NOT NULL DEFAULT 'v1' COMMENT '合同版本',
+  `content` TEXT NOT NULL COMMENT '签署时的合同正文快照',
+  `content_hash` VARCHAR(64) NOT NULL COMMENT '正文 SHA-256（十六进制）',
+  `signature_url` VARCHAR(255) DEFAULT NULL COMMENT '手写签名图相对路径',
+  `sign_time` DATETIME NOT NULL COMMENT '签署时间',
+  `sign_ip` VARCHAR(45) DEFAULT NULL COMMENT '签署 IP',
+  `status` VARCHAR(10) NOT NULL DEFAULT '已签署' COMMENT '状态',
+  PRIMARY KEY (`contract_id`),
+  UNIQUE KEY `uk_contract_order` (`order_id`),
+  UNIQUE KEY `uk_contract_no` (`contract_no`),
+  KEY `idx_contract_customer` (`customer_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='电子合同表';

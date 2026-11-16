@@ -88,7 +88,7 @@ public class WechatPayService(AppDbContext db, PayConfigService payConfig, Alipa
         if (!real)
         {
             _logger.LogInformation("微信支付凭证不全，订单 {OrderNo} 使用内置模拟收银台", orderNo);
-            return new WechatPayResult(MockUrl(orderNo, amount, subject), "", false, rt.PayMode);
+            return new WechatPayResult(_alipay.BuildMockUrl(orderNo, amount, subject, "微信"), "", false, rt.PayMode);
         }
 
         //金额单位：微信用分（整数），支付宝用元
@@ -578,7 +578,4 @@ public class WechatPayService(AppDbContext db, PayConfigService payConfig, Alipa
 
     ///<summary>发起支付请求的客户端 IP</summary>
     private static string ClientIp() => System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName()).AddressList.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?.ToString() ?? "127.0.0.1";
-
-    ///<summary>内置模拟收银台地址（与支付宝模拟口径一致，带 _mock_pay_type 标记渠道）</summary>
-    public static string MockUrl(string orderNo, decimal amount, string subject, string payType = "微信") => $"/mock-pay?orderNo={Uri.EscapeDataString(orderNo)}&amount={amount:0.00}" + $"&payType={Uri.EscapeDataString(payType)}&subject={Uri.EscapeDataString(subject)}";
 }

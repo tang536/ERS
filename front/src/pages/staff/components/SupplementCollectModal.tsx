@@ -7,6 +7,7 @@ import { supplementApi } from '@/api'
 import { PAY_CHANNEL_META } from '@/utils/payChannels'
 import type { PayChannelMeta } from '@/utils/payChannels'
 import { qrSvg } from '@/utils/qrcode'
+import { openCashier } from '@/utils/payWindow'
 
 /**
  * 补缴收款弹窗（前台收银台）。
@@ -166,7 +167,7 @@ export default function SupplementCollectModal({ settleId, preview, onClose, onC
       if (d?.qrCode) setQrHtml(await qrSvg(d.qrCode, { size: 220 }))
       else setQrHtml('')
       // 跳转型通道（支付宝/银行卡/微信 H5）：新开窗口，本页继续轮询到账
-      if (!d?.qrCode && d?.payUrl) window.open(d.payUrl, '_blank', 'width=520,height=720')
+      if (!d?.qrCode && d?.payUrl) openCashier(d.payUrl)
       startPolling()
     } catch (e: any) {
       toast(e?.message || '发起收款失败', 'error')
@@ -249,7 +250,7 @@ export default function SupplementCollectModal({ settleId, preview, onClose, onC
                     <div className="collect-link">
                       <span>收银台地址</span>
                       <CopyText text={pay.payUrl} label="复制收银台链接" />
-                      <button className="btn-sm btn-sm-default" onClick={() => window.open(pay.payUrl, '_blank', 'width=520,height=720')}>
+                      <button className="btn-sm btn-sm-default" onClick={() => openCashier(pay.payUrl)}>
                         <Icon name="rent" size={13} />打开收银台
                       </button>
                     </div>

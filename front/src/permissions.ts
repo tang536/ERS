@@ -28,7 +28,8 @@ import { ROLE } from './hooks/useAuth'
  */
 export const ROUTE_ROLES: Record<string, string[]> = {
   '/dashboard': [ROLE.ADMIN, ROLE.RECEPTION, ROLE.FINANCE],
-  '/orders': [ROLE.ADMIN, ROLE.RECEPTION],
+  // 租赁订单：管理员/前台可查可办；财务**只读**（看租金、押金与订单状态，不建单不改单）
+  '/orders': [ROLE.ADMIN, ROLE.RECEPTION, ROLE.FINANCE],
   // 旧路径：创建订单已并入「租赁订单」页（/orders?view=create），仅保留登记以兼容旧链接跳转
   '/orders/create': [ROLE.RECEPTION],
   // 归还结算：前台可办理，管理员与财务**只读**查看。
@@ -39,6 +40,12 @@ export const ROUTE_ROLES: Record<string, string[]> = {
   '/settlements': [ROLE.ADMIN, ROLE.RECEPTION, ROLE.FINANCE],
   '/customers': [ROLE.ADMIN, ROLE.RECEPTION],
   '/members': [ROLE.ADMIN],
+  // 运营配置（优惠券 / 增值服务）：仅管理员维护
+  '/operations': [ROLE.ADMIN],
+  // 优惠券核销：前台执行扫码核销，管理员可查可办
+  '/coupon-verify': [ROLE.ADMIN, ROLE.RECEPTION],
+  // 交接班：前台开班/交班，管理员可查历史与核对
+  '/shifts': [ROLE.ADMIN, ROLE.RECEPTION],
   // 车辆管理页含「车辆档案 / 车辆盘点 / 维保管理」三页签：
   //   管理员进得来全部；前台仅进得来「维保管理」（用况4 允许其上报故障），页内再按角色收紧页签
   '/vehicles': [ROLE.ADMIN, ROLE.RECEPTION],
@@ -55,6 +62,8 @@ export const ROUTE_ROLES: Record<string, string[]> = {
   // 线上补缴支付页：顾客为逾期 / 损坏费用在线缴款（独立于首付款通道）
   '/supplement-pay': [ROLE.CUSTOMER],
   '/rent': [ROLE.CUSTOMER],
+  // 我的优惠券（含兑换码领券、出示核销二维码）：顾客端收进个人中心的入口，不再占底部导航
+  '/coupons': [ROLE.CUSTOMER],
   '/vehicle-catalog': [ROLE.CUSTOMER],
   '/profile': [ROLE.CUSTOMER],
   '/membership': [ROLE.CUSTOMER],

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useUI } from '@/components/UIProvider'
 import { useSearchParams } from 'react-router-dom'
-import { customerApi, memberApi } from '@/api'
-import type { Customer, MemberRights } from '@/types'
+import { customerApi, memberApi, pointApi } from '@/api'
+import type { Customer, MemberRights, PointSummary } from '@/types'
 import Icon from '@/components/Icon'
 import DictThFilter from '@/components/DictThFilter'
 import Pagination from '@/components/Pagination'
@@ -41,13 +41,16 @@ export default function Customers() {
   // 会员类型（折扣唯一真源，取自会员管理页维护的权益表）
   const [rights, setRights] = useState<MemberRights[]>([])
   // 客户记录弹窗：一个入口两个页签（消费记录 / 会员记录），避免操作列按钮过密
-  const [recordOf, setRecordOf] = useState<{ customer: Customer; tab: 'consume' | 'member' } | null>(null)
+  const [recordOf, setRecordOf] = useState<{ customer: Customer; tab: 'consume' | 'member' | 'points' } | null>(null)
   // 消费记录（需求 4.2.3）：draft 是正在输入的筛选，applied 是已生效的筛选（回车/点查询才发请求）
   const [recordsData, setRecordsData] = useState<any | null>(null)
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [recordsError, setRecordsError] = useState('')
   const [recordDraft, setRecordDraft] = useState({ from: '', to: '', status: '' })
   const [recordFilter, setRecordFilter] = useState({ from: '', to: '', status: '' })
+  /** 积分概要（工作台客户记录弹窗「积分」页签） */
+  const [pointsData, setPointsData] = useState<PointSummary | null>(null)
+  const [pointsLoading, setPointsLoading] = useState(false)
   /**
    * 消费记录默认筛选：**近 30 天**（含今天），与报表页、操作日志、结算记录同一口径。
    * 打开弹窗时刷新一次并固定，「重置」回的也是用户打开时看到的区间（跨午夜不漂移）。
@@ -221,6 +224,19 @@ export default function Customers() {
     }
   }
 
+  const fetchPoints = async (c: Customer) => {
+    setPointsLoading(true)
+    try {
+      const res: any = await pointApi.summary(c.customerId)
+      setPointsData(res.data || null)
+    } catch (e: any) {
+      toast(e?.message || '积分加载失败', 'error')
+      setPointsData(null)
+    } finally {
+      setPointsLoading(false)
+    }
+  }
+
   /**
    * 删除客户档案（系统操作 #81 删除客户档案）。
    *
@@ -248,7 +264,7 @@ export default function Customers() {
   }
 
   /** 打开客户记录弹窗；默认停在「消费记录」，切页签按需懒加载 */
-  const openRecord = (c: Customer, tab: 'consume' | 'member' = 'consume') => {
+  const openRecord = (c: Customer, tab: 'consume' | 'member' | 'points' = 'consume') => {
     defaultRecordRangeRef.current = recentDateRange(30)
     const initial = makeRecordFilter()
     setRecordDraft(initial)
@@ -256,18 +272,22 @@ export default function Customers() {
     setRecordsData(null)
     setRecordsError('')
     setMemberRows([])
+    setPointsData(null)
     setRecordOf({ customer: c, tab })
     if (tab === 'consume') fetchRecords(c, initial)
-    else fetchMemberHistory(c)
+    else if (tab === 'member') fetchMemberHistory(c)
+    else fetchPoints(c)
   }
 
-  const switchRecordTab = (tab: 'consume' | 'member') => {
+  const switchRecordTab = (tab: 'consume' | 'member' | 'points') => {
     if (!recordOf || recordOf.tab === tab) return
     setRecordOf({ ...recordOf, tab })
     if (tab === 'consume') {
       if (recordsData === null && !recordsLoading) fetchRecords(recordOf.customer, recordFilter)
-    } else if (memberRows.length === 0 && !memberLoading) {
-      fetchMemberHistory(recordOf.customer)
+    } else if (tab === 'member') {
+      if (memberRows.length === 0 && !memberLoading) fetchMemberHistory(recordOf.customer)
+    } else if (!pointsData && !pointsLoading) {
+      fetchPoints(recordOf.customer)
     }
   }
 
@@ -535,6 +555,12 @@ export default function Customers() {
                 >
                   会员记录
                 </button>
+                <button
+                  className={`tab-btn ${recordOf.tab === 'points' ? 'active' : ''}`}
+                  onClick={() => switchRecordTab('points')}
+                >
+                  积分
+                </button>
               </div>
 
               {recordOf.tab === 'consume' ? (
@@ -636,29 +662,79 @@ export default function Customers() {
                     </>
                   )}
                 </>
-              ) : memberLoading ? (
-                <div className="loading-line"><Icon name="refresh" size={18} />会员记录加载中…</div>
-              ) : memberRows.length === 0 ? (
+              ) : recordOf.tab === 'member' ? (
+                memberLoading ? (
+                  <div className="loading-line"><Icon name="refresh" size={18} />会员记录加载中…</div>
+                ) : memberRows.length === 0 ? (
+                  <div className="empty">
+                    <Icon name="empty" size={36} chip />
+                    <div>该客户暂无会员购买或调整记录</div>
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr><th>时间</th><th>内容</th></tr>
+                      </thead>
+                      <tbody>
+                        {memberRows.map((r, i) => (
+                          <tr key={i}>
+                            <td className="mono cell-time">{fmtDT(r.logTime)}</td>
+                            <td>{r.action}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              ) : pointsLoading ? (
+                <div className="loading-line"><Icon name="refresh" size={18} />积分加载中…</div>
+              ) : !pointsData ? (
                 <div className="empty">
                   <Icon name="empty" size={36} chip />
-                  <div>该客户暂无会员购买或调整记录</div>
+                  <div>该客户暂无积分数据</div>
                 </div>
               ) : (
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr><th>时间</th><th>内容</th></tr>
-                    </thead>
-                    <tbody>
-                      {memberRows.map((r, i) => (
-                        <tr key={i}>
-                          <td className="mono cell-time">{fmtDT(r.logTime)}</td>
-                          <td>{r.action}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  <div className="stats-grid" style={{ marginBottom: 12 }}>
+                    <div className="stat-card tone-emerald">
+                      <div className="label">积分余额</div>
+                      <div className="value">{pointsData.balance}</div>
+                    </div>
+                    <div className="stat-card tone-sky">
+                      <div className="label">单笔最多可抵</div>
+                      <div className="value">{pointsData.maxRedeem} 分</div>
+                    </div>
+                  </div>
+                  <p className="field-hint">{pointsData.rule}</p>
+                  {pointsData.logs.length === 0 ? (
+                    <div className="empty">
+                      <Icon name="empty" size={36} chip />
+                      <div>该客户暂无积分流水</div>
+                    </div>
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr><th>时间</th><th>来源</th><th className="num">变动</th><th className="num">余额</th><th>说明</th></tr>
+                        </thead>
+                        <tbody>
+                          {pointsData.logs.map((l, i) => (
+                            <tr key={i}>
+                              <td className="mono cell-time">{fmtDT(l.createTime)}</td>
+                              <td>{l.source}</td>
+                              <td className="num" style={{ color: l.changeAmount < 0 ? 'var(--danger-text, #C0392B)' : 'var(--success-text, #15803d)' }}>
+                                {l.changeAmount > 0 ? '+' : ''}{l.changeAmount}
+                              </td>
+                              <td className="num">{l.balance}</td>
+                              <td>{l.remark || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
               )}
             </div>
             <div className="modal-footer">

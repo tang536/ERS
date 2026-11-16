@@ -56,8 +56,7 @@ public class MemberController(MemberService svc, AlipayService alipay, PayConfig
             else
             {
                 //微信/银行卡：课设环境无真实通道，与租车订单一致走内置模拟收银台
-                payUrl = $"/mock-pay?orderNo={Uri.EscapeDataString(tradeNo)}&amount={price:0.00}" +
-                         $"&payType={Uri.EscapeDataString(payType)}&subject={Uri.EscapeDataString("会员购买 " + dto.MemberLevel)}";
+                payUrl = _alipay.BuildMockUrl(tradeNo, price, "会员购买 " + dto.MemberLevel, payType);
             }
 
             return Ok(new ApiResponse<CreatePayResultDto>

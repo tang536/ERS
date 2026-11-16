@@ -45,10 +45,6 @@ public class SystemUser
     [NotMapped]
     public virtual string UserType => "staff";
 
-    //该员工收到的站内消息
-    private readonly List<AppMessage> _messages = [];
-    [JsonIgnore]
-    public IReadOnlyCollection<AppMessage> Messages => _messages;
     ///<summary>新建员工账号</summary>
     public static T CreateStaff<T>(string loginAccount, string passwordHash, int roleId, string? userName = null)
         where T : SystemUser, new()

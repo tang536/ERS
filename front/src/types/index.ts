@@ -113,6 +113,16 @@ export interface Order {
   leaseStart: string
   leaseEnd: string
   totalRent: number
+  /** 优惠抵扣合计（券 + 积分），只抵租金 */
+  discountAmount?: number
+  /** 增值服务费（已含在 totalRent 内） */
+  addonFee?: number
+  /** 本单抵扣的积分数 */
+  pointsUsed?: number
+  /** 本单使用的顾客券（customer_coupon.id） */
+  customerCouponId?: number | null
+  /** 下单时固化的会员折扣率 */
+  rentDiscount?: number
   /** 结算后的实际租金；未结算为 null（下单时的 totalRent 只是预收预估） */
   actualRent?: number | null
   deposit: number
@@ -239,6 +249,12 @@ export interface RentableVehicle {
   deposit: number
   /** 是否单独定价（false = 用的系统默认价） */
   customPriced: boolean
+  /** 车辆图片相对路径；无图时前端显示默认车图 */
+  imageUrl?: string | null
+  /** 购入时间（顾客端「新车优先」排序依据） */
+  buyTime?: string | null
+  /** 近 90 天成单量（顾客端「人气优先」排序依据） */
+  orderCount?: number
 }
 
 /** 线上租车费用试算结果 */
@@ -399,6 +415,12 @@ export interface CreateOrderPayload {
   newCustomerName?: string
   newCustomerIdCard?: string
   newCustomerPhone?: string
+  /** 本单使用的顾客券（customer_coupon.id），不传表示不用券 */
+  customerCouponId?: number | null
+  /** 本单抵扣的积分数，0 表示不抵扣 */
+  pointsUsed?: number
+  /** 勾选的增值服务（addon_item.addon_id） */
+  addonIds?: number[]
 }
 
 /** 归还结算（OrderDtos.cs → SettleOrderDto）：逾期费由后端按实际还车时间算，前端不传 */
@@ -408,4 +430,259 @@ export interface SettleOrderPayload {
   remark?: string | null
   /** 线下 / 线上（仅本次结算产生补缴金额时有意义） */
   supplementPayMethod?: string
+}
+
+/* ============================================================
+   运营与顾客权益（券 / 增值服务 / 积分 / 交接班 / 订单变更 / 合同）
+   ------------------------------------------------------------
+   字段与 back/DTOs/OperationsDtos.cs 一一对应。
+   ============================================================ */
+
+/** 优惠券模板（运营配置页） */
+export interface Coupon {
+  couponId: number
+  name: string
+  amount: number
+  /** 使用门槛：订单租金达到该金额才可用，0 表示无门槛 */
+  minAmount: number
+  validFrom: string
+  validTo: string
+  /** 发放总量，0 表示不限量 */
+  totalQty: number
+  issuedQty: number
+  /** 同一顾客最多可领张数 */
+  perLimit: number
+  status: string
+  createTime: string
+  /** 兑换码（口令领券）；未设置为空 */
+  redeemCode?: string | null
+  /** 是否开放顾客自助兑换 */
+  redeemOpen: boolean
+}
+
+export interface CouponInput {
+  name: string
+  amount: number
+  minAmount?: number
+  validFrom: string
+  validTo: string
+  /** 0 = 不限量 */
+  totalQty?: number
+  perLimit?: number
+  /** 兑换码：4~20 位字母数字，留空表示不开放口令领取 */
+  redeemCode?: string | null
+  /** 是否开放顾客自助兑换 */
+  redeemOpen?: boolean
+}
+
+export interface GrantCouponPayload {
+  couponId: number
+  /** 为空表示发给全部正常状态顾客 */
+  customerIds?: number[]
+}
+
+/** 顾客持有的券（我的券 / 下单选券） */
+export interface MyCoupon {
+  id: number
+  couponId: number
+  name: string
+  amount: number
+  minAmount: number
+  expireTime: string
+  /** 未使用 / 已使用 / 已过期 */
+  status: string
+  receiveTime: string
+  orderId?: number | null
+  /** 单张券唯一码值：顾客端据此生成核销二维码 */
+  code?: string | null
+}
+
+/** 前台扫码查券结果（券码天然绑定持券顾客） */
+export interface CouponVerifyInfo {
+  customerCouponId: number
+  couponId: number
+  code: string
+  name: string
+  amount: number
+  minAmount: number
+  status: string
+  expireTime: string
+  useTime?: string | null
+  orderId?: number | null
+  customerId: number
+  customerName: string
+  contactPhone?: string | null
+  idCardMasked?: string | null
+  memberLevel: string
+  usable: boolean
+}
+
+/** 增值服务项 */
+export interface AddonItem {
+  addonId: number
+  name: string
+  price: number
+  /** 一次性 / 按天 */
+  unit: string
+  description?: string | null
+  status: string
+  sortNo: number
+}
+
+export interface AddonInput {
+  name: string
+  price: number
+  unit: string
+  description?: string | null
+  sortNo?: number
+}
+
+/** 订单增值服务明细快照 */
+export interface OrderAddon {
+  name: string
+  unit: string
+  price: number
+  qty: number
+  amount: number
+}
+
+/** 积分概要 */
+export interface PointSummary {
+  balance: number
+  /** 本次最多可抵扣的积分数（按租金 10% 封顶） */
+  maxRedeem: number
+  maxRedeemAmount: number
+  rule: string
+  logs: PointLog[]
+}
+
+export interface PointLog {
+  changeAmount: number
+  balance: number
+  /** 结算奖励 / 下单抵扣 / 取消退回 / 人工调整 */
+  source: string
+  remark?: string | null
+  orderId?: number | null
+  createTime: string
+}
+
+export interface PointRedeemPreview {
+  points: number
+  amount: number
+  maxPoints: number
+  maxAmount: number
+}
+
+/** 交接班 */
+export interface Shift {
+  shiftId: number
+  shiftNo: string
+  operatorName: string
+  openTime: string
+  closeTime?: string | null
+  openingCash: number
+  /** 本班现金净收入（收款 − 退款） */
+  cashCollected: number
+  cashActual: number
+  /** 实点 −（备用金 + 现金净收入），正数长款、负数短款 */
+  difference: number
+  alipayAmount: number
+  wechatAmount: number
+  bankAmount: number
+  orderCount: number
+  settleCount: number
+  status: string
+  note?: string | null
+  /** 进行中的班次：系统实时汇总 */
+  isCurrent: boolean
+}
+
+export interface OpenShiftPayload {
+  openingCash: number
+}
+
+export interface CloseShiftPayload {
+  shiftId: number
+  cashActual: number
+  note?: string | null
+}
+
+/** 订单变更（换车 / 改期） */
+export interface OrderChange {
+  changeId: number
+  orderId: number
+  /** 换车 / 改期 */
+  changeType: string
+  oldVehicleId?: number | null
+  newVehicleId?: number | null
+  oldStart?: string | null
+  oldEnd?: string | null
+  newStart?: string | null
+  newEnd?: string | null
+  oldRent: number
+  newRent: number
+  /** 正数补缴、负数退款 */
+  diffAmount: number
+  reason?: string | null
+  createTime: string
+}
+
+export interface ChangeVehiclePayload {
+  orderId: number
+  newVehicleId: number
+  reason?: string | null
+}
+
+export interface ReschedulePayload {
+  orderId: number
+  leaseStart: string
+  leaseEnd: string
+  reason?: string | null
+}
+
+/** 车辆档案时间线 */
+export interface VehicleArchive {
+  vehicleId: number
+  vehicleNo: string
+  brand?: string | null
+  vehicleStatus: string
+  imageUrl?: string | null
+  frameNumber?: string | null
+  buyTime?: string | null
+  buyPrice?: number | null
+  dailyRent?: number | null
+  deposit?: number | null
+  totalRevenue: number
+  maintenanceCost: number
+  orderCount: number
+  events: VehicleArchiveEvent[]
+}
+
+export interface VehicleArchiveEvent {
+  time: string
+  /** 租赁 / 维保 / 盘点 / 报废 / 验车 */
+  type: string
+  title: string
+  detail?: string | null
+  amount?: number | null
+  status?: string | null
+}
+
+/** 电子合同 */
+export interface Contract {
+  contractId: number
+  contractNo: string
+  orderId: number
+  version: string
+  contentHash: string
+  signatureUrl?: string | null
+  signTime: string
+  status: string
+  content: string
+}
+
+export interface SignContractPayload {
+  orderId: number
+  /** 手写签名 PNG 的 data URL */
+  signatureData: string
 }

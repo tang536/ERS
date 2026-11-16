@@ -17,6 +17,7 @@ export type IconName =
   | 'download' | 'upload' | 'image' | 'print' | 'qrcode' | 'refund' | 'save'
   | 'zoom-in' | 'zoom-out' | 'replace'
   | 'menu' | 'camera'
+  | 'coupon' | 'addon' | 'points' | 'scan' | 'sort'
   | 'sun' | 'moon' | 'github' | 'trash'
 
 /** 每枚图标的主色（红白主题：以红为主，配少量暖色/青色点缀，不使用紫色系） */
@@ -68,6 +69,11 @@ const ACCENT: Record<IconName, string> = {
   replace: '#0369a1',
   menu: '#64748b',
   camera: '#0369a1',
+  coupon: '#c0272d',
+  addon: '#b45309',
+  points: '#047857',
+  scan: '#0369a1',
+  sort: '#64748b',
   sun: '#b45309',
   moon: '#64748b',
   github: '#64748b',
@@ -387,6 +393,44 @@ const GLYPHS: Record<IconName, ReactNode> = {
     <>
       <path d="M8.6 6.6 10 4.4h4l1.4 2.2h3.2a1.6 1.6 0 0 1 1.6 1.6v9a1.6 1.6 0 0 1-1.6 1.6H5.4a1.6 1.6 0 0 1-1.6-1.6v-9a1.6 1.6 0 0 1 1.6-1.6z" />
       <circle cx="12" cy="12.6" r="3.4" />
+    </>
+  ),
+  // 优惠券：带缺口的票券轮廓 + 虚线撕口
+  coupon: (
+    <>
+      <path d="M4.2 7.2h15.6v2.6a2.2 2.2 0 0 0 0 4.4v2.6H4.2v-2.6a2.2 2.2 0 0 0 0-4.4z" />
+      <path d="M15.4 7.2v9.6" strokeDasharray="1.6 1.8" />
+    </>
+  ),
+  // 增值服务：礼盒（保险 / 头盔 / 上门送车等附加服务）
+  addon: (
+    <>
+      <rect x="4.4" y="9.6" width="15.2" height="9.6" rx="2.2" />
+      <path d="M3.4 6.4h17.2v3.2H3.4z" />
+      <path d="M12 6.4V19.2" />
+      <path d="M12 6.4C10.4 3.4 6.4 3.9 6.4 5.6c0 1 2.8.8 5.6.8M12 6.4c1.6-3 5.6-2.5 5.6-.8 0 1-2.8.8-5.6.8" />
+    </>
+  ),
+  // 积分：带五角星的代币
+  points: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8.1l1.2 2.4 2.6.4-1.9 1.8.5 2.6-2.4-1.3-2.4 1.3.5-2.6-1.9-1.8 2.6-.4z" />
+    </>
+  ),
+  // 扫码：取景框 + 扫描线
+  scan: (
+    <>
+      <path d="M4 9.2V6.6A2.6 2.6 0 0 1 6.6 4H9.2M14.8 4h2.6A2.6 2.6 0 0 1 20 6.6v2.6M20 14.8v2.6A2.6 2.6 0 0 1 17.4 20h-2.6M9.2 20H6.6A2.6 2.6 0 0 1 4 17.4v-2.6" />
+      <path d="M4.2 12h15.6" />
+    </>
+  ),
+  // 排序：三横线 + 升降箭头
+  sort: (
+    <>
+      <path d="M4.2 7.2h11M4.2 12h8M4.2 16.8h5" />
+      <path d="M17.6 9.2V18" />
+      <path d="M15.2 15.6 17.6 18l2.4-2.4" />
     </>
   ),
   sun: (

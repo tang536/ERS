@@ -143,6 +143,9 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
     ///<summary>上传个人头像</summary>
     [HttpPost("avatar")]
     [Authorize(Policy = Policies.AnyAuthenticated)]
+    // 头像允许 10MB，信封留 2MB 余量；在模型绑定前就拒绝超大请求，避免整段 multipart 读进内存
+    [RequestSizeLimit(12 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 12 * 1024 * 1024)]
     public async Task<IActionResult> UploadAvatar(IFormFile file)
     {
         if (file.Length == 0) return BadRequest(new ApiResponse<object> { Code = 400, Message = "请选择图片文件", Success = false });

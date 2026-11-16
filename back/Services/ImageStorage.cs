@@ -148,9 +148,13 @@ public class ImageStorage(IWebHostEnvironment env)
         if (string.IsNullOrWhiteSpace(url)) return;
         if (!url.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase)) return;
         var rel = url["/uploads/".Length..].Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
-        var full = Path.GetFullPath(Path.Combine(RootUploadsPath, rel));
+        if (rel.Length == 0) return;
+        var root = Path.GetFullPath(RootUploadsPath);
+        // 必须以「uploads + 目录分隔符」为前缀，否则 /uploads/../uploads-evil/x.jpg 会绕过
+        if (!root.EndsWith(Path.DirectorySeparatorChar)) root += Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(Path.Combine(root, rel));
         //防路径穿越：最终路径必须在 uploads 根目录内
-        if (!full.StartsWith(RootUploadsPath, StringComparison.OrdinalIgnoreCase)) return;
+        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return;
         if (File.Exists(full))
         {
             try { File.Delete(full); } catch {/* 占用中或权限不足时忽略，下次清理再删 */}

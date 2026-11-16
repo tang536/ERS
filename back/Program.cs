@@ -347,6 +347,13 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     services.AddScoped<CheckService>();
     services.AddScoped<PrintService>();
     services.AddScoped<MemberService>();
+    // 运营与顾客权益：券、增值服务、积分、交接班、订单变更、电子合同
+    services.AddScoped<CouponService>();
+    services.AddScoped<AddonService>();
+    services.AddScoped<PointService>();
+    services.AddScoped<ShiftService>();
+    services.AddScoped<OrderChangeService>();
+    services.AddScoped<ContractService>();
 
     // 支付配置：凭证由管理员在管理员端填写，存 system_config（pay.* 前缀），支持「生产→沙箱→模拟」三级自动降级。
     services.AddSingleton<SecretProvider>();
@@ -431,6 +438,12 @@ static void ConfigurePipeline(WebApplication app, string corsPolicyName)
     app.Use(async (ctx, next) =>
     {
         ctx.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        ctx.Response.Headers.Append("X-Frame-Options", "SAMEORIGIN");
+        ctx.Response.Headers.Append("Referrer-Policy", "no-referrer");
+        ctx.Response.Headers.Append("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+        // 业务接口响应可能含顾客资料与订单金额，禁止浏览器/代理缓存
+        if (ctx.Request.Path.StartsWithSegments("/api"))
+            ctx.Response.Headers.CacheControl = "no-store";
         await next();
     });
 

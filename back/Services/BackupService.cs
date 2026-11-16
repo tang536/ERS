@@ -42,13 +42,14 @@ public class BackupService(AppDbContext db, IConfiguration config, IHostEnvironm
     /// <summary>最近一次可恢复性校验的快照文件名</summary>
     private const string VerifyStateFileName = "backup-verify.json";
 
-    ///<summary>17 张表，父表在前</summary>
+    ///<summary>25 张表，父表在前</summary>
     private static readonly string[] Tables =
     [
         "role","permission","system_user","customer","member_rights","vehicle",
         "rental_order","payment_record","settle_record","maintenance_order","scrap_record",
         "system_config","system_log","renewal_record","car_check_list","check_report",
-        "message"
+        "message","coupon","customer_coupon","addon_item","order_addon",
+        "point_log","shift","order_change","contract"
     ];
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -206,8 +207,10 @@ public class BackupService(AppDbContext db, IConfiguration config, IHostEnvironm
         var tableCount = 0;
         foreach (var table in Tables)
         {
+            // 旧备份可能早于某张后加的表（如 coupon）；恢复时由启动升级自动补建，
+            // 这里按「备份实际包含的表」计数，缺失新表不算损坏。
             if (!tablesEl.TryGetProperty(table, out var rowsEl) || rowsEl.ValueKind != JsonValueKind.Array)
-                throw new InvalidOperationException($"备份缺少表 {table}，文件不完整");
+                continue;
 
             tableCount++;
             foreach (var row in rowsEl.EnumerateArray())
@@ -361,8 +364,11 @@ public class BackupService(AppDbContext db, IConfiguration config, IHostEnvironm
 
         foreach (var prop in rowEl.EnumerateObject())
         {
+            // 旧备份可能带 BCNF 规范化前的冗余列（如 member_rights_id、
+            // receiver_customer_id）。这些列在当前库已删除且均可由保留列推导，
+            // 恢复时跳过，保证历史备份仍可导入新库。
             if (!columnTypes.TryGetValue((table, prop.Name), out var dataType))
-                throw new InvalidOperationException($"备份文件含未知列 {table}.{prop.Name}，已拒绝恢复");
+                continue;
             cols.Add($"`{prop.Name}`");
 
             //NULL 直接写字面量而不是传参数

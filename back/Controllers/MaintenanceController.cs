@@ -40,6 +40,8 @@ public class MaintenanceController(MaintenanceService svc) : ControllerBase
     ///<summary>上传故障现场照片（multipart/form-data，字段名 file）</summary>
     [HttpPost("upload")]
     [Authorize(Policy = Policies.AdminOrReception)]
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 6 * 1024 * 1024)]
     public async Task<IActionResult> UploadMaintainImage(IFormFile? file)
     {
         try

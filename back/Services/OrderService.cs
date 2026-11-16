@@ -8,7 +8,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ERental.Services;
 
-public class OrderService(AppDbContext db, CreditPolicy credit, MessageService messages, ILogger<OrderService> logger)
+public class OrderService(AppDbContext db, CreditPolicy credit, MessageService messages,
+    CouponService coupons, PointService points, AddonService addons, ILogger<OrderService> logger)
 {
     ///<summary>订单不存在时的统一提示</summary>
     private const string MsgOrderNotFound = "订单不存在";
@@ -16,7 +17,13 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     private readonly AppDbContext _db = db;
     private readonly CreditPolicy _credit = credit;
     private readonly MessageService _messages = messages;
+    private readonly CouponService _coupons = coupons;
+    private readonly PointService _points = points;
+    private readonly AddonService _addons = addons;
     private readonly ILogger<OrderService> _logger = logger;
+
+    ///<summary>下单时顾客选择的权益：一张券 + 抵扣积分 + 若干增值服务</summary>
+    private readonly record struct OrderBenefits(int? CouponId, int PointsUsed, IReadOnlyList<int> AddonIds);
 
     ///<summary>超时单回收的单批上限</summary>
     private const int CleanupBatchSize = 200;
@@ -78,7 +85,16 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
             total += released;
             if (released < CleanupBatchSize) break;
         }
+        //超时单用的券与积分随订单一起退回：券不能因为顾客没付款就永久失效
+        if (total > 0) await ReleaseCancelledBenefitsAsync();
         return total;
+    }
+
+    ///<summary>把已取消订单占用的券退回未使用、积分退回余额（取消/超时回收共用）</summary>
+    private async Task ReleaseCancelledBenefitsAsync()
+    {
+        await _coupons.ReleaseOrphanedAsync();
+        await _points.RefundCancelledAsync();
     }
 
     ///<summary>
@@ -113,6 +129,9 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
 
         //订单作废、支付记录作废、车辆释放与归属校验都在存储过程内同一事务完成
         await StoredProcedures.CancelPendingOrderAsync(_db, orderId, customerId);
+        //券与积分随订单一并退回（存储过程只处理订单/车辆）
+        await _coupons.ReleaseByOrderAsync(orderId);
+        await _points.RefundByOrderAsync(orderId);
     }
 
     ///<summary>订单查询形参合并成值元组</summary>
@@ -162,6 +181,11 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         LeaseStart = o.LeaseStart,
         LeaseEnd = o.LeaseEnd,
         TotalRent = o.TotalRent,
+        DiscountAmount = o.DiscountAmount,
+        AddonFee = o.AddonFee,
+        PointsUsed = o.PointsUsed,
+        CustomerCouponId = o.CustomerCouponId,
+        RentDiscount = o.RentDiscount,
         //结算视图里带出的实际租金：下单时那条只是预估，结算后才是真实消费
         ActualRent = o.ActualRent,
         Deposit = o.Deposit,
@@ -263,7 +287,21 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     ///<summary>顾客端可租车辆：只暴露空闲车与该车租金押金，不含购入价、车架号等经营数据；最多 <see cref="Paging.MaxUnpagedRows"/> 条</summary>
     public async Task<List<RentableVehicleDto>> GetRentableVehicles()
     {
-        var vehicles = await _db.Vehicles.AsNoTracking().Where(v => v.VehicleStatus == "空闲").OrderBy(v => v.VehicleNo).Take(Paging.MaxUnpagedRows).Select(v => new { v.VehicleId, v.VehicleNo, v.Brand, v.VehicleStatus, v.DailyRent, v.Deposit }).ToListAsync();
+        var vehicles = await _db.Vehicles.AsNoTracking()
+            .Where(v => v.VehicleStatus == "空闲")
+            .OrderBy(v => v.VehicleNo)
+            .Take(Paging.MaxUnpagedRows)
+            .Select(v => new { v.VehicleId, v.VehicleNo, v.Brand, v.VehicleStatus, v.DailyRent, v.Deposit, v.ImageUrl, v.BuyTime })
+            .ToListAsync();
+
+        //近期成单量：顾客端「人气优先」排序的依据，也让「大家都在租哪台车」有据可查。
+        //只统计未取消的订单，避免被反复下单又取消的车刷成热门。
+        var since = AppClock.Now.AddDays(-90);
+        var orders = await _db.RentalOrders.AsNoTracking()
+            .Where(o => o.CreateTime >= since && o.OrderStatus != "已取消")
+            .GroupBy(o => o.VehicleId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
 
         //全局配置只读一次
         var cfgs = await _db.SystemConfigs.Where(c => c.ConfigKey == "daily_rent" || c.ConfigKey == DepositKey).ToListAsync();
@@ -279,7 +317,10 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
             DailyRent=v.DailyRent??globalRent,
             HourlyRent=PricingResolver.HourlyRent(v.DailyRent??globalRent),
             Deposit=v.Deposit??globalDeposit,
-            CustomPriced=v.DailyRent.HasValue||v.Deposit.HasValue
+            CustomPriced=v.DailyRent.HasValue||v.Deposit.HasValue,
+            ImageUrl=v.ImageUrl,
+            BuyTime=v.BuyTime,
+            OrderCount=orders.GetValueOrDefault(v.VehicleId),
         })];
     }
 
@@ -326,7 +367,8 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         if (!customer.ProfileCompleted) throw new BusinessException(RealNameRequiredMessage);
 
         //柜台开单：前台当场当面收款（现金/扫码枪），订单直接置「已支付」，维持原有线下体验
-        return await PlaceOrder(customer, vehicle, dto.LeaseStart, dto.LeaseEnd, dto.PayType, operatorId, paidImmediately: true);
+        return await PlaceOrder(customer, vehicle, dto.LeaseStart, dto.LeaseEnd, dto.PayType, operatorId, paidImmediately: true,
+            new OrderBenefits(dto.CustomerCouponId, dto.PointsUsed, dto.AddonIds));
     }
 
     ///<summary>线上下单</summary>
@@ -341,7 +383,8 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         if (vehicle.VehicleStatus != "空闲") throw new BusinessException($"车辆 {vehicle.VehicleNo} 已被他人租走，请重新选择");
 
         //线上下单：先落「待支付」单并锁车，待支付宝回调验签通过后再置「已支付」
-        return await PlaceOrder(customer, vehicle, dto.LeaseStart, dto.LeaseEnd, dto.PayType, null, paidImmediately: false);
+        return await PlaceOrder(customer, vehicle, dto.LeaseStart, dto.LeaseEnd, dto.PayType, null, paidImmediately: false,
+            new OrderBenefits(dto.CustomerCouponId, dto.PointsUsed, dto.AddonIds));
     }
 
     ///<summary>线下新客户按身份证号查重：命中复用，未命中则新建</summary>
@@ -370,7 +413,7 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     }
 
     ///<summary>开单主流程（线下/线上共用）：计费、生成订单、占用车辆、登记收款true=柜台当场收款</summary>
-    private async Task<OrderCreatedDto> PlaceOrder(Customer customer, Vehicle vehicle, DateTime leaseStart, DateTime leaseEnd, string payType, int? operatorId, bool paidImmediately)
+    private async Task<OrderCreatedDto> PlaceOrder(Customer customer, Vehicle vehicle, DateTime leaseStart, DateTime leaseEnd, string payType, int? operatorId, bool paidImmediately, OrderBenefits benefits)
     {
         //时间口径统一到本地
         if (leaseStart.Kind == DateTimeKind.Utc) leaseStart = leaseStart.ToLocalTime();
@@ -387,7 +430,28 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         //计价按车辆取：每辆车有自己的日租金与押金，留空才回退全局配置
         var (_, hourlyRent, depositBase) = await PricingResolver.ResolveHourlyAsync(_db, vehicle.VehicleId);
         var discount = await MemberDiscountLookup.OfLevelAsync(_db, customer.MemberLevel);
-        var totalRent = Math.Round(hours * hourlyRent * discount, 2);
+        var rentAfterDiscount = Math.Round(hours * hourlyRent * discount, 2);
+
+        /*
+         * 优惠与增值服务全部在事务外先算清楚：
+         *   ① 增值服务按天/一次性报价，费用并入订单总额；
+         *   ② 券与积分只能抵「租金」，不抵押金、不抵增值服务；
+         *   ③ 报价阶段就校验券归属/门槛与积分上限，非法请求不必先占车再回滚。
+         */
+        var billableDays = Math.Max(1, (int)Math.Ceiling(hours / 24m));
+        var (addonQuotes, addonFee) = await _addons.QuoteAsync(benefits.AddonIds, billableDays);
+
+        var couponAmount = 0m;
+        if (benefits.CouponId is int couponId)
+        {
+            var (_, amount) = await _coupons.ValidateAsync(customer.CustomerId, couponId, rentAfterDiscount);
+            couponAmount = amount;
+        }
+        //积分抵扣按「用券后剩余租金」的 10% 封顶，避免券+积分把租金抵成负数
+        var pointsRentBase = Math.Max(0m, rentAfterDiscount - couponAmount);
+        var (pointsUsed, pointsAmount) = await _points.ValidateAsync(customer.CustomerId, benefits.PointsUsed, pointsRentBase);
+        var discountAmount = Math.Round(couponAmount + pointsAmount, 2);
+        var totalRent = Math.Round(rentAfterDiscount + addonFee, 2);
 
         /*
          * 信用体检放在「报价之前」：押金倍数与租期上限都要落进订单金额，
@@ -423,11 +487,21 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
                 (leaseStart, leaseEnd),
                 (totalRent, deposit),
                 paidImmediately ? "已支付" : "待支付");
+            //金额构成固化在订单上：结算时按本单当时的折扣率与优惠重算，不受会员之后升降级影响
+            order.ApplyBenefits(discountAmount, discount, addonFee, benefits.CouponId, pointsUsed);
             _db.RentalOrders.Add(order);
             await _db.SaveChangesAsync();
 
-            //支付渠道已在事务外归一（见上方 channel），这里只负责落库
-            var pay = PaymentRecord.Create(order.OrderId, totalRent + deposit, channel, "order", null, paidImmediately ? "已支付" : "待支付");
+            //核销券与积分：条件更新保证同一张券/同一笔积分不会被两个订单同时用掉，失败即整体回滚
+            if (benefits.CouponId is int usedCouponId) await _coupons.ConsumeAsync(usedCouponId, order.OrderId);
+            if (pointsUsed > 0) await _points.DeductAsync(customer.CustomerId, pointsUsed, order.OrderId);
+
+            //增值服务快照：名称与单价固定在此刻，后台改价不影响历史订单
+            foreach (var addon in _addons.Snapshot(order.OrderId, addonQuotes)) _db.OrderAddons.Add(addon);
+
+            //支付渠道已在事务外归一（见上方 channel），这里只负责落库；金额按「优惠后租金+押金」收
+            var payAmount = Math.Round(order.PrepaidRent + deposit, 2);
+            var pay = PaymentRecord.Create(order.OrderId, payAmount, channel, "order", null, paidImmediately ? "已支付" : "待支付");
             //真实支付流水号在支付宝/微信回调时写入；柜台现结用订单号生成唯一凭据，避免同一秒多单撞号
             if (paidImmediately) pay.MarkPaid(channel, AppClock.Now, "TX" + order.OrderNo);
             _db.PaymentRecords.Add(pay);
@@ -454,7 +528,9 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         TotalRent = o.TotalRent,
         Deposit = o.Deposit,
         OrderStatus = o.OrderStatus,
-        Payable = o.TotalRent + o.Deposit
+        DiscountAmount = o.DiscountAmount,
+        AddonFee = o.AddonFee,
+        Payable = Math.Round(o.PrepaidRent + o.Deposit, 2)
     };
 
     ///<summary>租期折算成计费小时数（向上取整，最少 1 小时）</summary>
@@ -484,6 +560,9 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     {
         //取消+作废待支付流水+释放车辆由 sp_cancel_order 在库内同一事务完成
         await StoredProcedures.CancelOrderAsync(_db, id, reason);
+        //券与积分随订单一并退回（存储过程只处理订单/车辆）
+        await _coupons.ReleaseByOrderAsync(id);
+        await _points.RefundByOrderAsync(id);
     }
 
     ///<summary>顾客申请还车（无论是否到期都可线上申请，到期后的超时费由结算时按倍数自动计）</summary>

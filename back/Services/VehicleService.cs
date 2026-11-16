@@ -531,6 +531,102 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
         return (await GetByQrCode(BuildQrCode(v.VehicleId))).Orders;
     }
 
+    ///<summary>
+    /// 车辆档案时间线：把租用、维保、盘点、验车、报废聚合成一条时间轴，
+    /// 并给出累计营收/维保成本/净收益——数据都在库里，缺的只是一个能读懂的视图。
+    /// </summary>
+    public async Task<VehicleArchiveDto> GetArchiveAsync(int vehicleId)
+    {
+        var v = await _db.Vehicles.AsNoTracking().FirstOrDefaultAsync(x => x.VehicleId == vehicleId) ?? throw new BusinessException(MsgVehicleNotFound);
+
+        var orders = await _db.RentalOrders.AsNoTracking().Where(o => o.VehicleId == vehicleId)
+            .OrderByDescending(o => o.LeaseStart).Take(Paging.MaxUnpagedRows)
+            .Select(o => new { o.OrderId, o.OrderNo, o.CustomerId, CustomerName = o.Customer!.FullName, o.LeaseStart, o.LeaseEnd, o.TotalRent, o.OrderStatus })
+            .ToListAsync();
+
+        var maints = await _db.MaintenanceOrders.AsNoTracking().Where(m => m.VehicleId == vehicleId)
+            .OrderByDescending(m => m.CreateTime).Take(Paging.MaxUnpagedRows)
+            .Select(m => new { m.WorkOrderNo, m.FaultType, m.FaultDescription, m.MaintainFee, m.Status, m.CreateTime, m.FinishTime })
+            .ToListAsync();
+
+        var checks = await _db.CarCheckLists.AsNoTracking().Where(c => c.VehicleId == vehicleId)
+            .OrderByDescending(c => c.CheckDate).Take(Paging.MaxUnpagedRows)
+            .Select(c => new { c.CheckNo, c.CheckDate, c.SystemStatus, c.ActualStatus, c.IsMatch, c.DifferenceDesc })
+            .ToListAsync();
+
+        var scraps = await _db.ScrapRecords.AsNoTracking().Where(s => s.VehicleId == vehicleId)
+            .OrderByDescending(s => s.ScrapTime).Take(20)
+            .Select(s => new { s.ScrapReason, s.ScrapTime }).ToListAsync();
+
+        var handovers = await _db.OrderHandovers.AsNoTracking()
+            .Where(h => _db.RentalOrders.Any(o => o.OrderId == h.OrderId && o.VehicleId == vehicleId))
+            .OrderByDescending(h => h.CreateTime).Take(Paging.MaxUnpagedRows)
+            .Select(h => new { h.Phase, h.BatteryLevel, h.ConditionNote, h.CreateTime, h.PhotoPaths, h.OrderId })
+            .ToListAsync();
+
+        var events = new List<VehicleArchiveEventDto>();
+        events.AddRange(orders.Select(o => new VehicleArchiveEventDto
+        {
+            Time = o.LeaseStart,
+            Type = "租赁",
+            Title = $"{o.OrderNo} · {o.CustomerName}",
+            Detail = $"{o.LeaseStart:yyyy-MM-dd HH:mm} → {o.LeaseEnd:yyyy-MM-dd HH:mm}",
+            Amount = o.TotalRent,
+            Status = o.OrderStatus,
+        }));
+        events.AddRange(maints.Select(m => new VehicleArchiveEventDto
+        {
+            Time = m.FinishTime ?? m.CreateTime,
+            Type = "维保",
+            Title = $"{m.WorkOrderNo} · {m.FaultType ?? "维修"}",
+            Detail = m.FaultDescription,
+            Amount = m.MaintainFee,
+            Status = m.Status,
+        }));
+        events.AddRange(checks.Select(c => new VehicleArchiveEventDto
+        {
+            Time = c.CheckDate,
+            Type = "盘点",
+            Title = $"{c.CheckNo} · {(c.IsMatch ? "账实一致" : "账实不符")}",
+            Detail = c.IsMatch ? $"系统/实际均为 {c.SystemStatus}" : $"系统 {c.SystemStatus} → 实际 {c.ActualStatus}；{c.DifferenceDesc}",
+            Status = c.IsMatch ? "一致" : "差异",
+        }));
+        events.AddRange(handovers.Select(h => new VehicleArchiveEventDto
+        {
+            Time = h.CreateTime,
+            Type = "验车",
+            Title = $"{h.Phase}验车 · 订单 #{h.OrderId}",
+            Detail = $"电量 {h.BatteryLevel?.ToString() ?? "—"}%{ (string.IsNullOrWhiteSpace(h.ConditionNote) ? "" : "；" + h.ConditionNote) }{ (string.IsNullOrWhiteSpace(h.PhotoPaths) ? "" : "；照片 " + h.PhotoPaths.Split(',', StringSplitOptions.RemoveEmptyEntries).Length + " 张") }",
+            Status = h.Phase,
+        }));
+        events.AddRange(scraps.Select(s => new VehicleArchiveEventDto
+        {
+            Time = s.ScrapTime,
+            Type = "报废",
+            Title = "车辆报废",
+            Detail = s.ScrapReason,
+            Status = "报废",
+        }));
+
+        return new VehicleArchiveDto
+        {
+            VehicleId = v.VehicleId,
+            VehicleNo = v.VehicleNo,
+            Brand = v.Brand,
+            VehicleStatus = v.VehicleStatus,
+            ImageUrl = v.ImageUrl,
+            FrameNumber = v.FrameNumber,
+            BuyTime = v.BuyTime,
+            BuyPrice = v.BuyPrice,
+            DailyRent = v.DailyRent,
+            Deposit = v.Deposit,
+            OrderCount = orders.Count,
+            TotalRevenue = Math.Round(orders.Where(o => o.OrderStatus is "已完结" or "租赁中" or "已支付").Sum(o => o.TotalRent), 2),
+            MaintenanceCost = Math.Round(maints.Sum(m => m.MaintainFee), 2),
+            Events = [.. events.OrderByDescending(e => e.Time).Take(Paging.MaxUnpagedRows)],
+        };
+    }
+
     ///<summary>订单是否已结束（与 OrderService 的状态口径保持一致）</summary>
     private static bool IsClosed(string status) => status is "已完成" or "已完结" or "已取消";
 

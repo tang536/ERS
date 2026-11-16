@@ -8,6 +8,7 @@ import ReceiptModal from '@/components/ReceiptModal'
 // 渠道的图标/配色/说明集中在 utils/payChannels.ts（支付页、模拟收银台、结果页共用一份）
 import { PAY_CHANNEL_META, PAY_CHANNELS, DEFAULT_PAY_TYPE } from '../utils/payChannels'
 import { qrSvg } from '../utils/qrcode'
+import { openCashier } from '../utils/payWindow'
 
 /** 轮询间隔与上限：30 次 × 3s ≈ 90s，超时提示用户手动刷新，避免无限轮询 */
 const POLL_INTERVAL = 3000
@@ -210,10 +211,15 @@ export default function PayPage() {
         startPolling()
         window.location.href = payUrl
       } else {
-        // 内置模拟收银台：新窗口打开，当前页轮询
+        // 内置模拟收银台：未配置真实支付渠道时就是这条路径。
+        // payUrl 缺失是服务端异常，必须明确报出来——不能悄悄当作「已付款」放过去。
+        if (!payUrl) {
+          toast('未获取到收银台地址，请稍后重试；若持续失败请联系管理员检查支付配置', 'error')
+          return
+        }
         startPolling()
-        window.open(payUrl, '_blank', 'width=480,height=680')
-        toast('已打开模拟收银台，请在弹出窗口完成支付', 'info')
+        const opened = openCashier(payUrl)
+        toast(opened ? '已打开模拟收银台，请在弹出窗口完成支付' : '已进入模拟收银台，请完成支付', 'info')
       }
     } catch (e: any) {
       toast(e?.message || '发起支付失败', 'error')
@@ -340,8 +346,7 @@ export default function PayPage() {
               <button className="btn-sm btn-sm-default" onClick={handleCancel}>稍后支付</button>
             </div>
             <p className="field-hint">
-              支付方式在付款时选择，支付成功前可随时更换后重新发起。
-              支付成功后订单才会生效；若已完成付款但状态未更新，请稍候或回到「我的订单」刷新。
+              支付成功后订单生效；付款后状态未更新可刷新「我的订单」。
             </p>
           </>
         )}

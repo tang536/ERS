@@ -28,6 +28,13 @@ public class CreateOrderDto
     public string? NewCustomerName { get; init; }
     public string? NewCustomerIdCard { get; init; }
     public string? NewCustomerPhone { get; init; }
+
+    /// <summary>本单使用的顾客券（customer_coupon.id），不传表示不用券</summary>
+    public int? CustomerCouponId { get; init; }
+    /// <summary>本单抵扣的积分数，0 表示不抵扣</summary>
+    public int PointsUsed { get; init; }
+    /// <summary>勾选的增值服务（addon_item.addon_id）</summary>
+    public List<int> AddonIds { get; init; } = [];
 }
 
 /// <summary>线上下单入参（顾客自助）。客户身份取自 Token，前端不得传客户 ID。</summary>
@@ -41,6 +48,13 @@ public class OnlineOrderDto
     public DateTime LeaseEnd { get; init; }
     /// <summary>线上单不在下单时选择支付方式（付款时在支付页再选），留空即可；保留字段兼容旧客户端</summary>
     public string PayType { get; init; } = "";
+
+    /// <summary>本单使用的顾客券（customer_coupon.id），不传表示不用券</summary>
+    public int? CustomerCouponId { get; init; }
+    /// <summary>本单抵扣的积分数，0 表示不抵扣</summary>
+    public int PointsUsed { get; init; }
+    /// <summary>勾选的增值服务（addon_item.addon_id）</summary>
+    public List<int> AddonIds { get; init; } = [];
 }
 
 public class SettleOrderDto
@@ -134,6 +148,17 @@ public class OrderDto
     public DateTime LeaseEnd { get; init; }
     public decimal TotalRent { get; init; }
 
+    /// <summary>优惠抵扣合计（券 + 积分），只抵租金</summary>
+    public decimal DiscountAmount { get; init; }
+    /// <summary>增值服务费（已含在 TotalRent 内）</summary>
+    public decimal AddonFee { get; init; }
+    /// <summary>本单抵扣的积分数</summary>
+    public int PointsUsed { get; init; }
+    /// <summary>本单使用的顾客券 ID（customer_coupon.id）</summary>
+    public int? CustomerCouponId { get; init; }
+    /// <summary>下单时固化的会员折扣率</summary>
+    public decimal RentDiscount { get; init; }
+
     /// <summary>
     /// 结算后的**实际租金**（按实际归还时长重算）；未结算为 null。
     /// 下单页的 TotalRent 是「预收租金（预估）」，两者必须在界面上区分开，
@@ -182,6 +207,15 @@ public class RentableVehicleDto
     public decimal Deposit { get; init; }
     /// <summary>false 表示用的是系统默认价，供前端标注「默认价」</summary>
     public bool CustomPriced { get; init; }
+
+    /// <summary>车辆图片（相对路径，前端拼 API 根）；无图时前端显示默认车图</summary>
+    public string? ImageUrl { get; init; }
+
+    /// <summary>购入时间：顾客端「新车优先」排序依据（不暴露购入价）</summary>
+    public DateTime? BuyTime { get; init; }
+
+    /// <summary>近 90 天成单量：顾客端「人气优先」排序依据</summary>
+    public int OrderCount { get; init; }
 }
 
 /// <summary>线上租车费用试算（下单前展示，最终以服务端核算为准）</summary>
@@ -291,7 +325,11 @@ public class OrderCreatedDto
     public decimal TotalRent { get; init; }
     public decimal Deposit { get; init; }
     public string OrderStatus { get; init; } = string.Empty;
-    /// <summary>本次应付合计 = 租金 + 押金</summary>
+    /// <summary>优惠抵扣合计（券 + 积分）</summary>
+    public decimal DiscountAmount { get; init; }
+    /// <summary>增值服务费（已含在 TotalRent 内）</summary>
+    public decimal AddonFee { get; init; }
+    /// <summary>本次应付合计 = 优惠后租金 + 押金</summary>
     public decimal Payable { get; init; }
 }
 

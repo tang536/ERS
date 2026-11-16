@@ -11,6 +11,7 @@ import RowActions from '@/components/RowActions'
 import Pagination from '@/components/Pagination'
 import SortTh, { type SortDir } from '@/components/SortTh'
 import VehicleQrModal from './components/VehicleQrModal'
+import VehicleArchiveModal from './components/VehicleArchiveModal'
 import VehicleQrLookup from './components/VehicleQrLookup'
 import VehicleCheckPanel from './components/VehicleCheckPanel'
 import MaintenancePanel from './components/MaintenancePanel'
@@ -103,7 +104,8 @@ export default function Vehicles() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   /** 当前查看二维码的车辆（null = 关闭） */
   const [qrVehicle, setQrVehicle] = useState<Vehicle | null>(null)
-  /** 扫码查询弹窗开关 */
+  /** 车辆档案时间线弹窗 */
+  const [archiveVehicle, setArchiveVehicle] = useState<Vehicle | null>(null)  /** 扫码查询弹窗开关 */
   const [showLookup, setShowLookup] = useState(false)
   /** 批量操作：勾选的车辆主键集合（仅在车辆档案页签、管理员可见） */
   const [selected, setSelected] = useState<number[]>([])
@@ -656,6 +658,7 @@ export default function Vehicles() {
                 <td>
                   {/* 三个操作收进「…」菜单：单操作直显、多操作省略号（全站表格改造统一规则） */}
                   <RowActions items={[
+                    { key: 'archive', label: '档案', icon: 'orders', tone: 'default', onClick: () => setArchiveVehicle(v) },
                     { key: 'qr', label: '二维码', icon: 'qrcode', tone: 'default', onClick: () => setQrVehicle(v) },
                     { key: 'edit', label: '编辑', icon: 'replace', tone: 'default', onClick: () => handleEdit(v) },
                     { key: 'delete', label: '删除', icon: 'trash', tone: 'danger', onClick: () => handleDelete(v) },
@@ -881,6 +884,13 @@ export default function Vehicles() {
 
       {/* 车辆专属二维码：查看 / 打印 / 下载（用况4、需求 4.2.2） */}
       {qrVehicle && <VehicleQrModal vehicle={qrVehicle} onClose={() => setQrVehicle(null)} />}
+      {archiveVehicle && (
+        <VehicleArchiveModal
+          vehicleId={archiveVehicle.vehicleId}
+          vehicleNo={archiveVehicle.vehicleNo}
+          onClose={() => setArchiveVehicle(null)}
+        />
+      )}
 
       {/* 扫码查询：扫码枪直接扫，或手工输入车辆编号 */}
       {showLookup && <VehicleQrLookup onClose={() => setShowLookup(false)} />}

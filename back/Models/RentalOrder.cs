@@ -53,6 +53,30 @@ public class RentalOrder
     [Column("deposit", TypeName = "decimal(10,2)")]
     public decimal Deposit { get; private set; }
 
+    ///<summary>优惠券 + 积分抵扣合计（券只抵租金，不抵押金）</summary>
+    [Column("discount_amount", TypeName = "decimal(10,2)")]
+    public decimal DiscountAmount { get; private set; }
+
+    ///<summary>下单时的会员折扣率（固定下来，避免结算时按当前等级重算导致多退少补）</summary>
+    [Column("rent_discount", TypeName = "decimal(3,2)")]
+    public decimal RentDiscount { get; private set; } = 1.00m;
+
+    ///<summary>增值服务费（保险/头盔/送车等），已并入 TotalRent</summary>
+    [Column("addon_fee", TypeName = "decimal(10,2)")]
+    public decimal AddonFee { get; private set; }
+
+    ///<summary>本单使用的顾客券（customer_coupon.id）</summary>
+    [Column("customer_coupon_id")]
+    public int? CustomerCouponId { get; private set; }
+
+    ///<summary>本单抵扣的积分数</summary>
+    [Column("points_used")]
+    public int PointsUsed { get; private set; }
+
+    ///<summary>实付租金 = 租金 + 增值服务 - 优惠抵扣，结算多退少补以它为基准</summary>
+    [NotMapped]
+    public decimal PrepaidRent => Math.Round(TotalRent - DiscountAmount, 2);
+
     ///<summary>订单状态</summary>
     [ConcurrencyCheck]
     [MaxLength(10)]
@@ -110,6 +134,50 @@ public class RentalOrder
             OperatorId = operatorId,
             OrderStatus = orderStatus,
         };
+    }
+
+    ///<summary>写入下单时的优惠与增值服务构成（券+积分只能抵租金，不能超过租金）</summary>
+    public void ApplyBenefits(decimal discountAmount, decimal rentDiscount, decimal addonFee, int? customerCouponId, int pointsUsed)
+    {
+        if (discountAmount < 0 || addonFee < 0) throw new BusinessException("优惠与增值服务金额不能为负数");
+        if (rentDiscount is < 0.5m or > 1m) throw new BusinessException("会员折扣需在 0.5 ~ 1 之间");
+        if (pointsUsed < 0) throw new BusinessException("抵扣积分不能为负数");
+
+        var rentOnly = Math.Round(TotalRent - addonFee, 2);
+        if (rentOnly < 0) throw new BusinessException("增值服务费不能超过订单总额");
+        if (discountAmount > rentOnly + 0.01m) throw new BusinessException("优惠抵扣不能超过租金");
+
+        DiscountAmount = Math.Round(discountAmount, 2);
+        RentDiscount = rentDiscount;
+        AddonFee = Math.Round(addonFee, 2);
+        CustomerCouponId = customerCouponId;
+        PointsUsed = pointsUsed;
+    }
+
+    ///<summary>改期：重算租金，增值服务费保持不变</summary>
+    public void Reschedule(DateTime start, DateTime end, decimal rentBeforeAddon)
+    {
+        if (end <= start) throw new BusinessException("还车时间必须晚于起租时间");
+        LeaseStart = start;
+        LeaseEnd = end;
+        ApplyRent(rentBeforeAddon);
+    }
+
+    ///<summary>换车：只换车辆与重算租金，租期与优惠构成不动</summary>
+    public void SwapVehicle(int vehicleId, decimal rentBeforeAddon)
+    {
+        if (vehicleId <= 0) throw new BusinessException("换车必须指定有效车辆");
+        VehicleId = vehicleId;
+        ApplyRent(rentBeforeAddon);
+    }
+
+    ///<summary>按「不含增值服务的租金」重建总额；优惠超过新租金时自动收敛到租金上限</summary>
+    private void ApplyRent(decimal rentBeforeAddon)
+    {
+        if (rentBeforeAddon < 0) throw new BusinessException("租金不能为负数");
+        TotalRent = Math.Round(rentBeforeAddon + AddonFee, 2);
+        var rentOnly = Math.Round(TotalRent - AddonFee, 2);
+        if (DiscountAmount > rentOnly) DiscountAmount = rentOnly;
     }
 
     ///<summary>状态迁移（待支付 → 已支付 → 租赁中 → 已完结/已取消），只接受白名单内的状态值</summary>

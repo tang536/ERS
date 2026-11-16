@@ -6,6 +6,9 @@ import type {
   CreateCustomerPayload, UpdateCustomerPayload,
   SaveVehiclePayload, BatchVehicleUpdatePayload,
   CreateOrderPayload, SettleOrderPayload,
+  CouponInput, GrantCouponPayload, AddonInput,
+  OpenShiftPayload, CloseShiftPayload,
+  ChangeVehiclePayload, ReschedulePayload, SignContractPayload,
 } from '../types'
 import { clearAuth, setAuth } from '../hooks/useAuth'
 
@@ -264,6 +267,8 @@ export const vehicleApi = {
   byQrCode: (code: string) => api.get('/vehicle/qr', { params: { code } }),
   /** 最近热销车辆（线上租车页推荐位） */
   popular: (days = 30, limit = 6) => api.get('/vehicle/popular', { params: { days, limit } }),
+  /** 车辆档案时间线：租用、维保、盘点、验车、报废与累计成本收益 */
+  archive: (id: number) => api.get(`/vehicle/${id}/archive`),
   /** 顾客端「全部车辆」目录（热销板块「查看全部车辆」入口） */
   catalog: (keyword?: string) => api.get('/vehicle/catalog', { params: { keyword } }),
   uploadImage: (id: number, file: File) => {
@@ -376,8 +381,10 @@ export const orderApi = {
   }) => api.get('/order/wait-return', { params }),
   /** 后端强制校验实名认证 */
   // 线上下单不选支付方式（付款时在支付页再选）；payType 字段保留兼容旧调用
-  createOnline: (data: { vehicleId: number; leaseStart: string; leaseEnd: string; payType?: string }) =>
-    api.post('/order/online', data),
+  createOnline: (data: {
+    vehicleId: number; leaseStart: string; leaseEnd: string; payType?: string
+    customerCouponId?: number | null; pointsUsed?: number; addonIds?: number[]
+  }) => api.post('/order/online', data),
   availableVehicles: () => api.get('/order/available-vehicles'),
   estimate: (leaseStart: string, leaseEnd: string, vehicleId?: number) =>
     api.get('/order/estimate', { params: { leaseStart, leaseEnd, vehicleId } }),
@@ -678,6 +685,63 @@ export const printApi = {
    */
   reportView: (from?: string, to?: string) =>
     api.get('/print/report-view', { params: { from, to }, responseType: 'text', transformResponse: [(d: unknown) => d] })
+}
+
+// ===== 运营与顾客权益 =====
+
+/** 优惠券：运营配置（管理员）+ 顾客「我的券」 */
+export const couponApi = {
+  list: () => api.get('/coupon'),
+  create: (data: CouponInput) => api.post('/coupon', data),
+  update: (id: number, data: CouponInput) => api.put(`/coupon/${id}`, data),
+  setStatus: (id: number, status: string) => api.put(`/coupon/${id}/status`, { status }),
+  /** 发券：customerIds 为空表示发给全部正常账号，返回 { count } */
+  grant: (data: GrantCouponPayload) => api.post('/coupon/grant', data),
+  /** 顾客端「我的券」 */
+  mine: () => api.get('/coupon/mine'),
+  /** 柜台开单：查指定顾客持有的券 */
+  byCustomer: (customerId: number) => api.get(`/coupon/customer/${customerId}`),
+  /** 顾客输入兑换码领券（管理员在运营配置里为该券设码并开放） */
+  redeem: (code: string) => api.post('/coupon/redeem', { code }),
+  /** 前台扫码查券：券码定位到具体顾客的那张券 */
+  verify: (code: string) => api.get('/coupon/verify', { params: { code } }),
+  /** 前台核销（置为已使用，不可撤销） */
+  consume: (code: string) => api.post('/coupon/consume', { code })
+}
+
+/** 增值服务：下单页取启用项，运营页取全部 */
+export const addonApi = {
+  list: (onlyEnabled = false) => api.get('/addon', { params: { onlyEnabled } }),
+  create: (data: AddonInput) => api.post('/addon', data),
+  update: (id: number, data: AddonInput) => api.put(`/addon/${id}`, data),
+  setStatus: (id: number, status: string) => api.put(`/addon/${id}/status`, { status })
+}
+
+/** 积分：顾客看自己，工作人员可指定 customerId */
+export const pointApi = {
+  summary: (customerId?: number, rent?: number) => api.get('/point', { params: { customerId, rent } }),
+  preview: (rent: number) => api.get('/point/preview', { params: { rent } })
+}
+
+/** 交接班：开班 / 交班 / 历史 */
+export const shiftApi = {
+  current: () => api.get('/shift/current'),
+  open: (data: OpenShiftPayload) => api.post('/shift/open', data),
+  close: (data: CloseShiftPayload) => api.post('/shift/close', data),
+  history: (page = 1, pageSize = 20) => api.get('/shift/history', { params: { page, pageSize } })
+}
+
+/** 订单变更：换车 / 改期与变更历史 */
+export const orderChangeApi = {
+  changeVehicle: (data: ChangeVehiclePayload) => api.post('/orderchange/vehicle', data),
+  reschedule: (data: ReschedulePayload) => api.post('/orderchange/reschedule', data),
+  byOrder: (orderId: number) => api.get(`/orderchange/order/${orderId}`)
+}
+
+/** 电子合同：查看与签署 */
+export const contractApi = {
+  get: (orderId: number) => api.get(`/contract/order/${orderId}`),
+  sign: (data: SignContractPayload) => api.post('/contract/sign', data)
 }
 
 export default api

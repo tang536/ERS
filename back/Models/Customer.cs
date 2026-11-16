@@ -43,12 +43,8 @@ public class Customer
     [Column("member_level")]
     public string MemberLevel { get; private set; } = "普通会员";
 
-    ///<summary>会员等级权益外键：等级名用于展示与筛选，权益以本外键为准</summary>
-    [Column("member_rights_id")]
-    public int? MemberRightsId { get; private set; }
-
-    ///<summary>等级权益导航：折扣、最低租赁数、自助购买价都从这条记录取，不在客户表冗余</summary>
-    [ForeignKey(nameof(MemberRightsId))]
+    ///<summary>等级权益导航：等级名即外键（member_rights.member_level 唯一），折扣、门槛、购买价都从权益表取，客户表不再冗余权益 ID</summary>
+    [ForeignKey(nameof(MemberLevel))]
     public MemberRights? MemberRights { get; private init; }
 
     ///<summary>会员折扣</summary>
@@ -63,6 +59,10 @@ public class Customer
     [Column("create_time")]
     public DateTime CreateTime { get; init; } = AppClock.Now;
 
+    ///<summary>积分余额（1 元消费 = 1 分，100 分抵 1 元）</summary>
+    [Column("points")]
+    public int Points { get; private set; }
+
     ///<summary>乐观并发版本号：客户档案同时暴露给前台（客户管理）与管理员（会员调整/注销）</summary>
     [Column("version")]
     [ConcurrencyCheck]
@@ -71,9 +71,6 @@ public class Customer
     //导航集合只给 EF 用
     private readonly List<RentalOrder> _rentalOrders = [];
     [JsonIgnore] public IReadOnlyCollection<RentalOrder> RentalOrders => _rentalOrders;
-    //该顾客收到的站内消息
-    private readonly List<AppMessage> _messages = [];
-    [JsonIgnore] public IReadOnlyCollection<AppMessage> Messages => _messages;
     ///<summary>租车资料是否已完善（身份证号+手机号），下单前置校验用</summary>
     [NotMapped]
     public bool ProfileCompleted => !string.IsNullOrWhiteSpace(IdCard) && !string.IsNullOrWhiteSpace(ContactPhone);
@@ -118,28 +115,27 @@ public class Customer
     public void SetPasswordHash(string? hash) =>
         LoginPassword = string.IsNullOrWhiteSpace(hash) ? null : hash;
 
-    ///<summary>调整会员等级（折扣不落档案，等级名以权益表为准，由调用方先校验存在性）</summary>
+    ///<summary>调整会员等级（等级名即权益外键，由调用方先校验权益行存在）</summary>
     public void ChangeMemberLevel(string level)
     {
         if (string.IsNullOrWhiteSpace(level)) return;
-        var normalized = level.Trim();
-        //只改了名字、没重新绑定权益行时，旧外键会指向已不匹配的等级，先松开
-        if (!string.Equals(MemberLevel, normalized, StringComparison.Ordinal)) MemberRightsId = null;
-        MemberLevel = normalized;
+        MemberLevel = level.Trim();
     }
 
-    ///<summary>调整会员等级并绑定权益行</summary>
+    ///<summary>调整会员等级并回填展示折扣</summary>
     public void ChangeMemberLevel(MemberRights rights)
     {
         ArgumentNullException.ThrowIfNull(rights);
         MemberLevel = rights.MemberLevel;
-        MemberRightsId = rights.RightsId;
         SetMemberDiscount(rights.Discount);
     }
 
     ///<summary>按等级权益回填展示折扣</summary>
     public void SetMemberDiscount(decimal discount) =>
         MemberDiscount = discount is >= 0.5m and <= 1m ? discount : 1.00m;
+
+    ///<summary>积分变动（大于 0 奖励、小于 0 抵扣；余额不会变成负数）</summary>
+    public void AddPoints(int delta) => Points = Math.Max(0, Points + delta);
 
     ///<summary>乐观并发自增（在自身当前版本上前进一格）</summary>
     public void BumpVersion() => Version++;

@@ -72,6 +72,15 @@ public class VehicleController(VehicleService svc, AuthService auth) : Controlle
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
+    ///<summary>车辆档案时间线：租用、维保、盘点、验车、报废与累计成本收益</summary>
+    [HttpGet("{id:int}/archive")]
+    [Authorize(Policy = Policies.AdminOrReception)]
+    public async Task<IActionResult> GetVehicleArchive(int id)
+    {
+        try { return Ok(new ApiResponse<VehicleArchiveDto> { Data = await _svc.GetArchiveAsync(id) }); }
+        catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
+    }
+
     ///<summary>最近热销车辆：顾客线上租车页的推荐位，故对顾客一并开放</summary>
     [HttpGet("popular")]
     [Authorize(Policy = Policies.AdminOrReceptionOrCustomer)]
@@ -85,6 +94,8 @@ public class VehicleController(VehicleService svc, AuthService auth) : Controlle
     ///<summary>上传车辆图片（multipart/form-data，字段名 file），返回{url}</summary>
     [HttpPost("{id:int}/image")]
     [Authorize(Policy = Policies.AdminOnly)]
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 6 * 1024 * 1024)]
     public async Task<IActionResult> UploadCarImage(int id, IFormFile? file)
     {
         try

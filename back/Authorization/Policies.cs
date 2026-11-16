@@ -61,6 +61,13 @@ public static class Policies
     /// <summary>仅前台：线下开单、归还、结算办理</summary>
     public const string ReceptionOnly = "ReceptionOnly";
 
+    /// <summary>
+    /// 订单只读（管理员 + 前台 + 财务 + 顾客）：订单列表与详情。
+    /// 财务要核对租金与押金，但**不改单**——创建/取消/取车/审核等写操作仍是
+    /// <see cref="ReceptionOnly"/>；顾客只能看自己的单（控制器内按 token 归属过滤）。
+    /// </summary>
+    public const string OrderRead = "OrderRead";
+
     /// <summary>前台或财务：小票与结算单打印</summary>
     public const string ReceptionOrFinance = "ReceptionOrFinance";
 
@@ -98,6 +105,7 @@ public static class AuthorizationSetup
         options.AddPolicy(Policies.AnyStaff, p => p.RequireRole(RoleNames.Admin, RoleNames.Reception, RoleNames.Finance));
         options.AddPolicy(Policies.AdminOrCustomer, p => p.RequireRole(RoleNames.Admin, RoleNames.Customer));
         options.AddPolicy(Policies.ReceptionOnly, p => p.RequireRole(RoleNames.Reception));
+        options.AddPolicy(Policies.OrderRead, p => p.RequireRole(RoleNames.Admin, RoleNames.Reception, RoleNames.Finance, RoleNames.Customer));
         options.AddPolicy(Policies.ReceptionOrFinance, p => p.RequireRole(RoleNames.Reception, RoleNames.Finance));
         options.AddPolicy(Policies.FinanceOnly, p => p.RequireRole(RoleNames.Finance));
         options.AddPolicy(Policies.CustomerOnly, p => p.RequireRole(RoleNames.Customer));

@@ -7,6 +7,7 @@ import PayBrandIcon from '@/components/PayBrandIcon'
 import ReceiptModal from '@/components/ReceiptModal'
 import { PAY_CHANNEL_META, PAY_CHANNELS, DEFAULT_PAY_TYPE } from '../utils/payChannels'
 import { qrSvg } from '../utils/qrcode'
+import { openCashier } from '../utils/payWindow'
 
 /** 轮询间隔与上限：30 次 × 3s ≈ 90s，超时提示用户手动刷新，避免无限轮询 */
 const POLL_INTERVAL = 3000
@@ -127,9 +128,14 @@ export default function SupplementPayPage() {
         startPolling()
         window.location.href = payUrl
       } else {
+        // 内置模拟收银台：缺 payUrl 直接报错，不能当作「已缴清」蒙混过去
+        if (!payUrl) {
+          toast('未获取到收银台地址，请稍后重试；若持续失败请联系管理员检查支付配置', 'error')
+          return
+        }
         startPolling()
-        window.open(payUrl, '_blank', 'width=480,height=680')
-        toast('已打开模拟收银台，请在弹出窗口完成支付', 'info')
+        const opened = openCashier(payUrl)
+        toast(opened ? '已打开模拟收银台，请在弹出窗口完成支付' : '已进入模拟收银台，请完成支付', 'info')
       }
     } catch (e: any) {
       toast(e?.message || '发起支付失败', 'error')

@@ -36,7 +36,7 @@ public static class DbInitializer
     /// ⚠️ 改动 DbInitializer 里的 DDL（加列/加表/改约束）时必须把它 +1，
     /// 否则老库会因「版本已是最新」而跳过这次升级。
     /// </summary>
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 6;
 
     /// <summary>幂等的结构升级：保证「老数据库」也能平滑支持新功能</summary>
     public static void EnsureSchemaUpgrades(AppDbContext db)
@@ -87,9 +87,10 @@ public static class DbInitializer
         UpgradeMessageTable(db);
         DropLegacyRolePermission(db);
         UpgradeCheckReportColumns(db);
-        UpgradeMessageReceiverColumns(db);
         UpgradeCustomerRightsColumns(db);
         UpgradeLogColumns(db);
+        UpgradeCouponCodeColumns(db);
+        NormalizeToBcnf(db);
 
         // 安全网：用 EF 模型反查数据库，补上任何遗漏的**可空列**（非空列只打印 ALTER 建议）。
         // 必须在第二阶段之前执行，否则回填查询又会撞上缺列
@@ -298,6 +299,162 @@ public static class DbInitializer
         KEY `idx_reconcile_order` (`order_no`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付渠道对账流水表';
         """);
+
+        CreateOperationsTables(db);
+    }
+
+    ///<summary>运营与顾客权益的 8 张表：券、持券、增值服务、订单服务、积分、交接班、订单变更、电子合同</summary>
+    private static void CreateOperationsTables(AppDbContext db)
+    {
+        EnsureTable(db, "coupon", """
+        CREATE TABLE IF NOT EXISTS `coupon` (
+        `coupon_id` INT NOT NULL AUTO_INCREMENT,
+        `name` VARCHAR(40) NOT NULL COMMENT '券名称',
+        `amount` DECIMAL(10,2) NOT NULL COMMENT '抵扣金额（元）',
+        `min_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '使用门槛（0 表示无门槛）',
+        `valid_from` DATETIME NOT NULL COMMENT '生效时间',
+        `valid_to` DATETIME NOT NULL COMMENT '失效时间',
+        `total_qty` INT NOT NULL DEFAULT 0 COMMENT '发放总量，0 表示不限量',
+        `issued_qty` INT NOT NULL DEFAULT 0 COMMENT '已发放数量',
+        `per_limit` INT NOT NULL DEFAULT 1 COMMENT '同一顾客最多可领张数',
+        `status` VARCHAR(10) NOT NULL DEFAULT '启用' COMMENT '状态（启用/停用）',
+        `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        PRIMARY KEY (`coupon_id`),
+        KEY `idx_coupon_status` (`status`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='优惠券模板表';
+        """);
+
+        EnsureTable(db, "customer_coupon", """
+        CREATE TABLE IF NOT EXISTS `customer_coupon` (
+        `id` INT NOT NULL AUTO_INCREMENT,
+        `coupon_id` INT NOT NULL COMMENT '券模板ID',
+        `customer_id` INT NOT NULL COMMENT '持有人',
+        `status` VARCHAR(10) NOT NULL DEFAULT '未使用' COMMENT '状态（未使用/已使用/已过期）',
+        `receive_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '领取时间',
+        `expire_time` DATETIME NOT NULL COMMENT '过期时间',
+        `use_time` DATETIME DEFAULT NULL COMMENT '使用时间',
+        `order_id` INT DEFAULT NULL COMMENT '核销订单',
+        PRIMARY KEY (`id`),
+        KEY `idx_coupon_customer_status` (`customer_id`, `status`),
+        KEY `idx_coupon_order` (`order_id`),
+        KEY `idx_coupon_template` (`coupon_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='顾客优惠券表';
+        """);
+
+        EnsureTable(db, "addon_item", """
+        CREATE TABLE IF NOT EXISTS `addon_item` (
+        `addon_id` INT NOT NULL AUTO_INCREMENT,
+        `name` VARCHAR(30) NOT NULL COMMENT '服务名称',
+        `price` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '价格（元）',
+        `unit` VARCHAR(10) NOT NULL DEFAULT '一次性' COMMENT '计价方式（一次性/按天）',
+        `description` VARCHAR(200) DEFAULT NULL COMMENT '说明',
+        `status` VARCHAR(10) NOT NULL DEFAULT '启用' COMMENT '状态（启用/停用）',
+        `sort_no` INT NOT NULL DEFAULT 0 COMMENT '排序号',
+        `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        PRIMARY KEY (`addon_id`),
+        KEY `idx_addon_status_sort` (`status`, `sort_no`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='增值服务项表';
+        """);
+
+        EnsureTable(db, "order_addon", """
+        CREATE TABLE IF NOT EXISTS `order_addon` (
+        `id` INT NOT NULL AUTO_INCREMENT,
+        `order_id` INT NOT NULL,
+        `addon_id` INT NOT NULL COMMENT '服务项ID',
+        `name` VARCHAR(30) NOT NULL COMMENT '下单时的名称快照',
+        `unit` VARCHAR(10) NOT NULL COMMENT '下单时的计价方式',
+        `price` DECIMAL(10,2) NOT NULL COMMENT '下单时的单价快照',
+        `qty` INT NOT NULL DEFAULT 1 COMMENT '计费数量',
+        `amount` DECIMAL(10,2) NOT NULL COMMENT '金额',
+        PRIMARY KEY (`id`),
+        KEY `idx_addon_order` (`order_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单增值服务明细表';
+        """);
+
+        EnsureTable(db, "point_log", """
+        CREATE TABLE IF NOT EXISTS `point_log` (
+        `id` INT NOT NULL AUTO_INCREMENT,
+        `customer_id` INT NOT NULL,
+        `change_amount` INT NOT NULL COMMENT '本次变动（正数获得、负数消耗）',
+        `balance` INT NOT NULL COMMENT '变动后余额',
+        `source` VARCHAR(20) NOT NULL COMMENT '来源（结算奖励/下单抵扣/取消退回/人工调整）',
+        `order_id` INT DEFAULT NULL COMMENT '关联订单',
+        `remark` VARCHAR(200) DEFAULT NULL COMMENT '说明',
+        `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '发生时间',
+        PRIMARY KEY (`id`),
+        KEY `idx_point_customer_time` (`customer_id`, `create_time`),
+        KEY `idx_point_order` (`order_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='顾客积分流水表';
+        """);
+
+        EnsureTable(db, "shift", """
+        CREATE TABLE IF NOT EXISTS `shift` (
+        `shift_id` INT NOT NULL AUTO_INCREMENT,
+        `shift_no` VARCHAR(30) NOT NULL COMMENT '班次号',
+        `operator_id` INT DEFAULT NULL COMMENT '操作人',
+        `operator_name` VARCHAR(20) NOT NULL COMMENT '操作人姓名快照',
+        `open_time` DATETIME NOT NULL COMMENT '开班时间',
+        `close_time` DATETIME DEFAULT NULL COMMENT '交班时间',
+        `opening_cash` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '开班备用金',
+        `cash_collected` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '本班现金净收入',
+        `cash_actual` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '交班时实点现金',
+        `difference` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '长款/短款差额',
+        `alipay_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '支付宝净收款',
+        `wechat_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '微信净收款',
+        `bank_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '银行卡净收款',
+        `order_count` INT NOT NULL DEFAULT 0 COMMENT '本班新单数',
+        `settle_count` INT NOT NULL DEFAULT 0 COMMENT '本班结算单数',
+        `status` VARCHAR(10) NOT NULL DEFAULT '进行中' COMMENT '状态（进行中/已交班）',
+        `note` VARCHAR(200) DEFAULT NULL COMMENT '差额说明',
+        PRIMARY KEY (`shift_id`),
+        UNIQUE KEY `uk_shift_no` (`shift_no`),
+        KEY `idx_shift_operator` (`operator_id`),
+        KEY `idx_shift_open_time` (`open_time`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='交接班表';
+        """);
+
+        EnsureTable(db, "order_change", """
+        CREATE TABLE IF NOT EXISTS `order_change` (
+        `change_id` INT NOT NULL AUTO_INCREMENT,
+        `order_id` INT NOT NULL,
+        `change_type` VARCHAR(10) NOT NULL COMMENT '变更类型（换车/改期）',
+        `old_vehicle_id` INT DEFAULT NULL,
+        `new_vehicle_id` INT DEFAULT NULL,
+        `old_start` DATETIME DEFAULT NULL,
+        `old_end` DATETIME DEFAULT NULL,
+        `new_start` DATETIME DEFAULT NULL,
+        `new_end` DATETIME DEFAULT NULL,
+        `old_rent` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '变更前租金',
+        `new_rent` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '变更后租金',
+        `diff_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '差价（正数补缴、负数退款）',
+        `reason` VARCHAR(200) DEFAULT NULL COMMENT '变更原因',
+        `operator_id` INT DEFAULT NULL COMMENT '经办人',
+        `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '变更时间',
+        PRIMARY KEY (`change_id`),
+        KEY `idx_order_change_order` (`order_id`),
+        KEY `idx_order_change_time` (`create_time`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单变更记录表';
+        """);
+
+        EnsureTable(db, "contract", """
+        CREATE TABLE IF NOT EXISTS `contract` (
+        `contract_id` INT NOT NULL AUTO_INCREMENT,
+        `contract_no` VARCHAR(40) NOT NULL COMMENT '合同编号',
+        `order_id` INT NOT NULL COMMENT '关联订单',
+        `customer_id` INT NOT NULL COMMENT '签署人',
+        `version` VARCHAR(20) NOT NULL DEFAULT 'v1' COMMENT '合同版本',
+        `content` TEXT NOT NULL COMMENT '签署时的合同正文快照',
+        `content_hash` VARCHAR(64) NOT NULL COMMENT '正文 SHA-256（十六进制）',
+        `signature_url` VARCHAR(255) DEFAULT NULL COMMENT '手写签名图相对路径',
+        `sign_time` DATETIME NOT NULL COMMENT '签署时间',
+        `sign_ip` VARCHAR(45) DEFAULT NULL COMMENT '签署 IP',
+        `status` VARCHAR(10) NOT NULL DEFAULT '已签署' COMMENT '状态',
+        PRIMARY KEY (`contract_id`),
+        UNIQUE KEY `uk_contract_order` (`order_id`),
+        UNIQUE KEY `uk_contract_no` (`contract_no`),
+        KEY `idx_contract_customer` (`customer_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='电子合同表';
+        """);
     }
 
     /// <summary>历史续租记录由「小时」折算为「天」</summary>
@@ -355,6 +512,28 @@ public static class DbInitializer
             UPDATE `rental_order` SET `early_return_status` = ''
             WHERE `order_status` IN ('已完结', '已取消') AND `early_return_status` = '待审核';
             """);
+
+        // 金额构成：老订单默认「无优惠、无增值服务、折扣率 1」，结算口径与升级前完全一致
+        if (!ColumnExists(db, TableRentalOrder, "discount_amount"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `rental_order` ADD COLUMN `discount_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '优惠抵扣合计（券 + 积分）' AFTER `total_rent`;");
+        }
+        if (!ColumnExists(db, TableRentalOrder, "rent_discount"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `rental_order` ADD COLUMN `rent_discount` DECIMAL(3,2) NOT NULL DEFAULT 1.00 COMMENT '下单时固化的会员折扣率' AFTER `discount_amount`;");
+        }
+        if (!ColumnExists(db, TableRentalOrder, "addon_fee"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `rental_order` ADD COLUMN `addon_fee` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '增值服务费（已并入 total_rent）' AFTER `rent_discount`;");
+        }
+        if (!ColumnExists(db, TableRentalOrder, "customer_coupon_id"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `rental_order` ADD COLUMN `customer_coupon_id` INT NULL COMMENT '本单使用的顾客券（customer_coupon.id）' AFTER `addon_fee`;");
+        }
+        if (!ColumnExists(db, TableRentalOrder, "points_used"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `rental_order` ADD COLUMN `points_used` INT NOT NULL DEFAULT 0 COMMENT '本单抵扣的积分数' AFTER `customer_coupon_id`;");
+        }
     }
 
     /// <summary>车辆图片路径，以及存量车辆的二维码码值回填</summary>
@@ -453,53 +632,19 @@ public static class DbInitializer
         }
     }
 
-    /// <summary>消息接收人的两个互斥外键（exclusive arc）与存量回填</summary>
-    private static void UpgradeMessageReceiverColumns(AppDbContext db)
-    {
-        // 消息接收人的两个互斥外键（exclusive arc）：多态字段 receiver_type + receiver_id 无法建外键，
-        // 补出 receiver_customer_id / receiver_staff_id 后「消息 → 顾客 / 员工」才是真实引用。
-        if (!ColumnExists(db, TableMessage, "receiver_customer_id"))
-        {
-            db.Database.ExecuteSqlRaw("ALTER TABLE `message` ADD COLUMN `receiver_customer_id` INT NULL COMMENT '顾客接收人（receiver_type=customer 时等于 receiver_id）' AFTER `receiver_id`;");
-        }
-        if (!ColumnExists(db, TableMessage, "receiver_staff_id"))
-        {
-            db.Database.ExecuteSqlRaw("ALTER TABLE `message` ADD COLUMN `receiver_staff_id` INT NULL COMMENT '员工接收人（receiver_type=staff 时为 system_user.user_id）' AFTER `receiver_customer_id`;");
-        }
-        // 存量回填：只补空值，重复执行无副作用
-        db.Database.ExecuteSqlRaw("UPDATE `message` SET `receiver_customer_id` = `receiver_id` WHERE `receiver_type` = 'customer' AND `receiver_customer_id` IS NULL;");
-        db.Database.ExecuteSqlRaw("UPDATE `message` SET `receiver_staff_id` = `receiver_id` WHERE `receiver_type` = 'staff' AND `receiver_staff_id` IS NULL;");
-        if (!IndexExists(db, TableMessage, "idx_msg_customer"))
-        {
-            db.Database.ExecuteSqlRaw("CREATE INDEX `idx_msg_customer` ON `message` (`receiver_customer_id`);");
-        }
-        if (!IndexExists(db, TableMessage, "idx_msg_staff"))
-        {
-            db.Database.ExecuteSqlRaw("CREATE INDEX `idx_msg_staff` ON `message` (`receiver_staff_id`);");
-        }
-    }
+    /// <summary>
+    /// 消息接收人的多态字段（receiver_type + receiver_id）已足够表达接收人；
+    /// 早期为建外键补出的 receiver_customer_id / receiver_staff_id 属于派生冗余，
+    /// 由 NormalizeToBcnf 统一删除，这里不再新增。
+    /// </summary>
 
-    /// <summary>客户 → 会员权益的外键列与存量按等级名回填</summary>
+    /// <summary>客户积分余额列</summary>
     private static void UpgradeCustomerRightsColumns(AppDbContext db)
     {
-        // 客户 → 会员权益（客户 0..* — 1 权益）：以前只有 member_level 这个等级名，
-        // 改权益说明/折扣全靠字符串对齐，等级改名就断链。补出 member_rights_id 后
-        // 「顾客属于哪一级权益」才是真实引用，等级名继续保留用于列表展示与筛选。
-        if (!ColumnExists(db, TableCustomer, "member_rights_id"))
+        // 积分余额：只存当前余额，明细在 point_log。老客户默认 0 分，不影响历史订单
+        if (!ColumnExists(db, TableCustomer, "points"))
         {
-            db.Database.ExecuteSqlRaw("ALTER TABLE `customer` ADD COLUMN `member_rights_id` INT NULL COMMENT '会员等级权益ID（member_rights.rights_id）' AFTER `member_level`;");
-        }
-        if (TableExists(db, TableCustomer) && !IndexExists(db, TableCustomer, "idx_customer_rights"))
-        {
-            db.Database.ExecuteSqlRaw("CREATE INDEX `idx_customer_rights` ON `customer` (`member_rights_id`);");
-        }
-        // 存量回填：按等级名把老档案挂到对应权益行；只补空值，等级未建档的留空（读取时回退默认折扣）
-        if (TableExists(db, "member_rights"))
-        {
-            db.Database.ExecuteSqlRaw("""
-                UPDATE `customer` c JOIN `member_rights` r ON c.`member_level` = r.`member_level`
-                SET c.`member_rights_id` = r.`rights_id` WHERE c.`member_rights_id` IS NULL;
-                """);
+            db.Database.ExecuteSqlRaw("ALTER TABLE `customer` ADD COLUMN `points` INT NOT NULL DEFAULT 0 COMMENT '积分余额（结算 1 元得 1 分）' AFTER `member_level`;");
         }
     }
 
@@ -526,6 +671,37 @@ public static class DbInitializer
             WHERE l.`user_id` IS NOT NULL AND u.`user_id` IS NULL
             AND EXISTS (SELECT 1 FROM `customer` c WHERE c.`customer_id` = l.`user_id`);
             """);
+    }
+
+    /// <summary>优惠券的兑换码与持券码值（二维码核销），以及存量持券补码</summary>
+    private static void UpgradeCouponCodeColumns(AppDbContext db)
+    {
+        // 模板级兑换码：管理员开放后，顾客在顾客端输入口令自助领券
+        if (!ColumnExists(db, "coupon", "redeem_code"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `coupon` ADD COLUMN `redeem_code` VARCHAR(20) NULL COMMENT '兑换码（口令领券，留空表示不开放）' AFTER `status`;");
+        }
+        if (!ColumnExists(db, "coupon", "redeem_open"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `coupon` ADD COLUMN `redeem_open` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否开放兑换（0否 1是）' AFTER `redeem_code`;");
+        }
+
+        // 单张持券的二维码码值：扫码即定位到具体顾客的那一张券
+        if (!ColumnExists(db, "customer_coupon", "code"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `customer_coupon` ADD COLUMN `code` VARCHAR(24) NULL COMMENT '券码（顾客端二维码 / 前台扫码核销）' AFTER `order_id`;");
+        }
+
+        // 存量持券补码：CP + 16 位十六进制；随机碰撞概率可忽略，失败交给唯一索引报错人工处理
+        db.Database.ExecuteSqlRaw("""
+            UPDATE `customer_coupon`
+               SET `code` = CONCAT('CP', UPPER(HEX(RANDOM_BYTES(8))))
+             WHERE `code` IS NULL OR `code` = '';
+            """);
+        if (TableExists(db, "customer_coupon") && !IndexExists(db, "customer_coupon", "uk_customer_coupon_code"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `customer_coupon` ADD UNIQUE KEY `uk_customer_coupon_code` (`code`);");
+        }
     }
 
     /// <summary>第二阶段：老库账号回填（EF 查询，依赖上面所有列已就绪）</summary>
@@ -579,6 +755,10 @@ public static class DbInitializer
         EnsureUniqueIndex(db, "system_config", "uk_config_key", "`config_key`", "配置键唯一（并发锁依赖它锁到确定的行）");
         EnsureUniqueIndex(db, TableCarCheckList, "uk_check_no", "`check_no`", "盘点单号唯一");
         EnsureUniqueIndex(db, "check_report", "uk_report_no", "`report_no`", "盘点报表号唯一");
+        EnsureUniqueIndex(db, "member_rights", "uk_member_level", "`member_level`", "会员等级名唯一（客户表自然外键）");
+        EnsureNullableUniqueIndex(db, "coupon", "uk_coupon_redeem_code", "`redeem_code`", "券兑换码唯一");
+        EnsureNullableUniqueIndex(db, TablePaymentRecord, "uk_pay_out_trade_no", "`out_trade_no`", "支付商户单号唯一");
+        EnsureUniqueIndex(db, "order_addon", "uk_order_addon", "`order_id`, `addon_id`", "同一订单同一增值服务唯一");
 
         // ② 复合索引：归还/占用的核心 SQL 都是「按车 + 按状态」二维过滤
 
@@ -605,9 +785,143 @@ public static class DbInitializer
         EnsureCompositeIndex(db, TableMaintenanceOrder, "idx_maint_vehicle_finish", "`vehicle_id`, `finish_time`", "保养到期：按车取最近完工时间");
     }
 
-    private static void EnsureMessageContentWidth(AppDbContext db)
+    /// <summary>
+    /// 推进到 BCNF：消除两处真实的非键函数依赖。
+    /// ① customer.member_rights_id 与 member_level 同时存在，前者由后者唯一决定；
+    ///    保留 member_level 作为 member_rights.member_level 的自然外键，删除冗余 ID 列。
+    /// ② message.receiver_customer_id / receiver_staff_id 完全由 receiver_type + receiver_id 派生，
+    ///    删除两列及其外键、索引，接收人只保留多态字段。
+    /// 同时补齐业务唯一键：会员等级、券兑换码、支付商户单号、订单增值服务。
+    /// </summary>
+    private static void NormalizeToBcnf(AppDbContext db)
     {
-        if (!TableExists(db, TableMessage)) return;
+        // ── ① 会员权益：先把等级名建成唯一自然键，并给未建档的等级补权益行
+        if (TableExists(db, "member_rights"))
+        {
+            if (TableExists(db, TableCustomer))
+            {
+                db.Database.ExecuteSqlRaw("""
+                    INSERT INTO `member_rights` (`member_level`, `discount`)
+                    SELECT DISTINCT c.`member_level`, 1.00
+                    FROM `customer` c
+                    LEFT JOIN `member_rights` r ON r.`member_level` = c.`member_level`
+                    WHERE r.`rights_id` IS NULL;
+                    """);
+            }
+            EnsureUniqueIndex(db, "member_rights", "uk_member_level", "`member_level`", "会员等级名唯一（客户表以此为外键）");
+        }
+
+        if (TableExists(db, TableCustomer))
+        {
+            DropForeignKeysOnColumn(db, TableCustomer, "member_rights_id");
+            if (IndexExists(db, TableCustomer, "idx_customer_rights"))
+            {
+                db.Database.ExecuteSqlRaw("ALTER TABLE `customer` DROP INDEX `idx_customer_rights`;");
+            }
+            if (ColumnExists(db, TableCustomer, "member_rights_id"))
+            {
+                db.Database.ExecuteSqlRaw("ALTER TABLE `customer` DROP COLUMN `member_rights_id`;");
+            }
+
+            EnsureIndex(db, TableCustomer, "idx_customer_level", "`member_level`");
+            if (!ConstraintExists(db, TableCustomer, "fk_customer_member_level"))
+            {
+                try
+                {
+                    db.Database.ExecuteSqlRaw("""
+                        ALTER TABLE `customer`
+                        ADD CONSTRAINT `fk_customer_member_level`
+                        FOREIGN KEY (`member_level`) REFERENCES `member_rights` (`member_level`)
+                        ON UPDATE CASCADE ON DELETE RESTRICT;
+                        """);
+                }
+                catch (Exception ex)
+                {
+                    // 等级名有重复/缺失时唯一键建不出来，外键随之失败；保留数据可继续运行，交人工清理后再补
+                    Console.WriteLine($"[BCNF] 客户等级外键建立失败，已跳过：{ex.Message}");
+                }
+            }
+        }
+
+        // ── ② 消息接收人：多态字段已完整表达接收人，删掉两列派生外键
+        if (TableExists(db, TableMessage))
+        {
+            // 旧触发器会写这两列；先卸下，objects.sql 会在升级后按新结构重建
+            db.Database.ExecuteSqlRaw("DROP TRIGGER IF EXISTS `trg_message_receiver_insert`;");
+            db.Database.ExecuteSqlRaw("DROP TRIGGER IF EXISTS `trg_message_receiver_update`;");
+            DropForeignKeysOnColumn(db, TableMessage, "receiver_customer_id");
+            DropForeignKeysOnColumn(db, TableMessage, "receiver_staff_id");
+            string[] messageReceiverIndexes = ["idx_msg_customer", "idx_msg_staff"];
+            foreach (var index in messageReceiverIndexes)
+            {
+                if (IndexExists(db, TableMessage, index))
+                    db.Database.ExecuteSqlRaw(string.Concat("ALTER TABLE `message` DROP INDEX `", index, "`;"));
+            }
+            string[] messageReceiverColumns = ["receiver_customer_id", "receiver_staff_id"];
+            foreach (var column in messageReceiverColumns)
+            {
+                if (ColumnExists(db, TableMessage, column))
+                    db.Database.ExecuteSqlRaw(string.Concat("ALTER TABLE `message` DROP COLUMN `", column, "`;"));
+            }
+        }
+
+        // ── ③ 业务唯一键：空串统一转 NULL，避免把「没有码」当成重复值
+        EnsureNullableUniqueIndex(db, "coupon", "uk_coupon_redeem_code", "`redeem_code`", "券兑换码唯一（顾客按码领券必须命中唯一模板）");
+        EnsureNullableUniqueIndex(db, TablePaymentRecord, "uk_pay_out_trade_no", "`out_trade_no`", "支付商户单号唯一（回调与对账按单号反查）");
+        EnsureUniqueIndex(db, "order_addon", "uk_order_addon", "`order_id`, `addon_id`", "同一订单的同一增值服务只能出现一次");
+    }
+
+    /// <summary>删除某列上的所有外键（外键名由 DBA/历史版本决定，不能写死）</summary>
+    private static void DropForeignKeysOnColumn(AppDbContext db, string table, string column)
+    {
+        if (!TableExists(db, table) || !ColumnExists(db, table, column)) return;
+
+        using var cmd = db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = """
+            SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @t AND COLUMN_NAME = @c
+              AND REFERENCED_TABLE_NAME IS NOT NULL
+            """;
+        var p1 = cmd.CreateParameter(); p1.ParameterName = "@t"; p1.Value = table; cmd.Parameters.Add(p1);
+        var p2 = cmd.CreateParameter(); p2.ParameterName = "@c"; p2.Value = column; cmd.Parameters.Add(p2);
+        if (cmd.Connection!.State != ConnectionState.Open) cmd.Connection.Open();
+
+        var names = new List<string>();
+        using (var reader = cmd.ExecuteReader())
+        {
+            while (reader.Read()) names.Add(reader.GetString(0));
+        }
+        foreach (var name in names)
+            db.Database.ExecuteSqlRaw(string.Concat("ALTER TABLE `", table, "` DROP FOREIGN KEY `", name, "`;"));
+    }
+
+    /// <summary>建可空列唯一索引：空串视为未填写并转 NULL，重复探测只统计非空值</summary>
+    private static void EnsureNullableUniqueIndex(AppDbContext db, string table, string index, string column, string purpose)
+    {
+        if (!TableExists(db, table) || IndexExists(db, table, index)) return;
+
+        db.Database.ExecuteSqlRaw(string.Concat("UPDATE `", table, "` SET ", column, " = NULL WHERE ", column, " = '';"));
+        var dups = ScalarLong(db,
+            $"SELECT COUNT(*) FROM (SELECT {column} FROM `{table}` WHERE {column} IS NOT NULL GROUP BY {column} HAVING COUNT(*) > 1) AS d");
+        if (dups > 0)
+        {
+            Console.WriteLine($"[BCNF] 跳过 {table}.{index}（{purpose}）：存量数据有 {dups} 组重复值，请先清理。");
+            return;
+        }
+        try
+        {
+            var sql = string.Concat("ALTER TABLE ", Q(table), " ADD UNIQUE KEY ", Q(index), " (", column, ");");
+            db.Database.ExecuteSqlRaw(sql);   // NOSONAR 标识符来自本文件常量调用点
+            Console.WriteLine($"[BCNF] 已建立唯一索引 {table}.{index}（{purpose}）");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BCNF] 建立 {table}.{index} 失败，已跳过：{ex.Message}");
+        }
+    }
+
+    private static void EnsureMessageContentWidth(AppDbContext db)
+    {        if (!TableExists(db, TableMessage)) return;
         var current = ColumnType(db, TableMessage, "content");
         // 已是目标类型就什么都不做。同类型 MODIFY 虽是空操作，但每次启动发一条 ALTER
         // 仍要拿一次元数据锁，多实例同时重启时会互相排队。
@@ -855,7 +1169,13 @@ public static class DbInitializer
                 Permission.Create("用户管理", "user:manage", "系统管理", "系统用户的新增、编辑、删除与角色设置"),
                 Permission.Create("系统配置", "config:manage", "系统管理", "租金规则、押金、超时倍数等参数配置"),
                 Permission.Create("日志查看", "log:view", "系统管理", "查询系统操作日志"),
-                Permission.Create("账号注销", "account:deactivate", "系统管理", "用户自主注销本人账号")
+                Permission.Create("账号注销", "account:deactivate", "系统管理", "用户自主注销本人账号"),
+                Permission.Create("优惠券管理", "coupon:manage", "运营管理", "配置优惠券模板、发放与停用"),
+                Permission.Create("增值服务管理", "addon:manage", "运营管理", "配置保险、头盔等增值服务项"),
+                Permission.Create("交接班管理", "shift:manage", "运营管理", "开班登记备用金、交班汇总与现金对账"),
+                Permission.Create("订单变更", "order:change", "租赁订单管理", "办理换车、改期并处理差价"),
+                Permission.Create("合同签署", "contract:sign", "租赁订单管理", "顾客手写签署电子租车合同"),
+                Permission.Create("积分查看", "point:view", "客户管理", "查看顾客积分余额与流水")
             );
             db.SaveChanges();
         }

@@ -3745,15 +3745,22 @@ a.landing-theme-btn { text-decoration: none; }
   font-size: 18px; line-height: 1.7; color: var(--text-secondary);
 }
 .hero-actions { margin-top: 20px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
-.hero-btn-primary {
-  width: auto; padding: 13px 28px; border-radius: var(--r-md); font-size: 15px;
-  display: inline-flex; align-items: center; gap: 8px;
-}
+/* 首屏两个入口按钮：一个主色、一个描边，但**尺寸必须一致**。
+   原先主按钮 padding 28 / 描边按钮 padding 24 再加 1.5px 边框，
+   并排时一宽一窄、一高一矮，看起来像两个不同层级的控件；
+   统一成同一组 height / min-width / border-width，只靠颜色区分主次。 */
+.hero-btn-primary,
 .hero-btn-ghost {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 13px 24px; border-radius: var(--r-md); font-size: 15px; font-weight: 600;
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 46px; min-width: 172px; padding: 0 26px;
+  border: 1.5px solid transparent; border-radius: var(--r-md);
+  font-size: 15px; font-weight: 600;
+}
+.hero-btn-primary { width: auto; }
+.hero-btn-ghost {
   color: var(--text); background: var(--surface, #fff);
-  border: 1.5px solid var(--border-strong);
+  border-color: var(--border-strong);
   box-shadow: var(--shadow-xs);
   transition: color .2s var(--ease), background .2s var(--ease), border-color .2s var(--ease);
 }
@@ -5511,7 +5518,9 @@ textarea,
   }
   .customer-tabbar {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* 顾客端只有「租车 / 个人中心」两格：用 auto-fit，条目增减时自动均分宽度，
+       不会像写死 repeat(4) 那样多出两格空气、把仅有的两个按钮挤成窄条 */
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     position: fixed;
     left: 0;
     right: 0;
@@ -5568,10 +5577,14 @@ textarea,
 }
 .ho-photo-add {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 4px; font-size: 12px; color: var(--text-secondary);
-  cursor: pointer; border-style: dashed;
+  gap: 4px; font-size: 12px; font-weight: 600; color: var(--primary);
+  cursor: pointer; border-style: solid; border-color: var(--border-color);
+  /* 与系统主题一致：主色淡底 + 实线边框，不再用灰底虚线框——
+     虚线框在红白主题里像是「未完成占位」，而不是一个可点的上传入口 */
+  background: var(--primary-bg, #fff5f5);
 }
-.ho-photo-add:hover { border-color: var(--primary, #d92d20); color: var(--primary-text, #d92d20); }
+.ho-photo-add:hover { border-color: var(--primary, #d92d20); color: var(--primary-text, #d92d20); background: var(--primary-bg-hover, #ffecec); }
+.ho-photo-add:focus-within { outline: 2px solid var(--primary-ring, rgba(217,45,32,.35)); outline-offset: 2px; }
 
 /* 验车记录卡片：取车/还车各一块，标题行放时间与电量 */
 .ho-card { padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; margin-bottom: 12px; }
@@ -5583,3 +5596,282 @@ textarea,
 
 /* 客户信用标签：一行内可换行排布，窄屏不会把表格撑破 */
 .credit-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ============================================================
+   线上租车（顾客端）：车辆列表 / 车辆详情 / 优惠券 / 柜台权益
+   新增区块统一走既有设计变量（--primary / --surface / --border），
+   手机端断点放在本段末尾，避免与上方 860px 规则互相打架。
+   ============================================================ */
+
+/* —— 排序 + 检索：一行三件，排序收进一个下拉 —— */
+.rent-toolbar { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; }
+.rent-sort-select {
+  position: relative; flex: none; display: inline-flex; align-items: center; gap: 5px;
+  height: 38px; padding: 0 9px 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text-secondary);
+}
+.rent-sort-select:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-bg); }
+.rent-sort-select select {
+  appearance: none; -webkit-appearance: none; border: none; outline: none;
+  background: transparent; color: var(--text); font-size: 13px; font-weight: 600;
+  padding-right: 15px; cursor: pointer;
+}
+.rent-sort-select > svg:last-child { position: absolute; right: 7px; pointer-events: none; color: var(--text-muted); transform: rotate(90deg); }
+.rent-search {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  flex: 1 1 auto; min-width: 0; height: 38px; padding: 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.rent-search input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 13px; color: var(--text); }
+.rent-search-clear { border: none; background: transparent; color: var(--text-muted); cursor: pointer; display: inline-flex; padding: 2px; }
+.rent-refresh { flex: none; width: 38px; padding: 0; justify-content: center; }
+
+/* —— 车辆卡片 —— */
+.rent-count { margin: 0 2px 8px; font-size: 12px; color: var(--text-muted); }
+.rent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 14px; }
+.rent-card {
+  display: flex; flex-direction: column; padding: 0; overflow: hidden;
+  text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.rent-card:hover { transform: translateY(-2px); border-color: #fecaca; box-shadow: var(--shadow-md); }
+.rent-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.rent-card-photo {
+  position: relative; height: 132px; display: flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-muted);
+}
+.rent-card-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rent-card-hot {
+  position: absolute; left: 8px; top: 8px; display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 999px; font-size: 11px; color: #fff; background: rgba(15, 23, 42, .68);
+}
+.rent-card-body { display: flex; flex-direction: column; gap: 5px; padding: 11px 13px 13px; }
+.rent-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rent-card-head strong { font-size: 15px; }
+.rent-card-brand { font-size: 12px; color: var(--text-muted); }
+.rent-card-price { display: flex; align-items: baseline; gap: 4px; }
+.rent-card-price strong { font-size: 20px; font-weight: 800; color: var(--primary-text); }
+.rent-card-price small { font-size: 11px; color: var(--text-muted); }
+.rent-card-price span { margin-left: auto; font-size: 12px; color: var(--text-secondary); }
+.rent-card-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+.rent-card-note { font-size: 11px; color: var(--primary-text); }
+
+/* —— 详情页 —— */
+.vehicle-detail-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.vehicle-hero {
+  display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px;
+  padding: 14px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.vehicle-hero-photo {
+  height: 190px; border-radius: var(--radius-sm); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-muted);
+}
+.vehicle-hero-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vehicle-hero-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.vehicle-hero-title { display: flex; align-items: center; gap: 8px; }
+.vehicle-hero-title strong { font-size: 20px; font-weight: 800; }
+.vehicle-hero-brand { font-size: 13px; color: var(--text-secondary); }
+.vehicle-hero-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.vehicle-hero-stats > div {
+  display: flex; flex-direction: column; gap: 3px; padding: 9px 10px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+}
+.vehicle-hero-stats span { font-size: 11.5px; color: var(--text-muted); }
+.vehicle-hero-stats strong { font-size: 15px; font-weight: 700; }
+
+/* —— 快捷租期 —— */
+.lease-quick { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.lease-quick-btn {
+  height: 36px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: all .18s ease;
+}
+.lease-quick-btn:hover { border-color: var(--primary-light); color: var(--primary-text); }
+.lease-quick-btn.active { background: var(--primary-bg); border-color: var(--primary); color: var(--primary-text); }
+
+/* —— 积分开关 —— */
+.points-toggle {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface-2); font-weight: 600; font-size: 13.5px; cursor: pointer;
+}
+.points-toggle input { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; }
+.points-toggle span { color: var(--text); }
+.points-toggle.disabled { opacity: .55; cursor: not-allowed; }
+.points-toggle.disabled input { cursor: not-allowed; }
+
+/* —— 增值服务 —— */
+.addon-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.addon-item {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center; gap: 9px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); cursor: pointer; font-weight: 400;
+  transition: border-color .18s ease, background .18s ease;
+}
+.addon-item:hover { border-color: var(--primary-light); }
+.addon-item.active { border-color: var(--primary); background: var(--primary-bg); }
+.addon-item input { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
+.addon-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.addon-item-main strong { display: flex; align-items: center; gap: 5px; font-size: 13.5px; }
+.addon-item-main small { font-size: 11.5px; color: var(--text-muted); }
+.addon-item-price { font-size: 13px; font-weight: 600; color: var(--text-secondary); text-align: right; white-space: nowrap; }
+
+/* —— 账单 —— */
+.rent-bill { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #fecaca; }
+.rent-bill-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; color: var(--text-secondary); }
+.rent-bill-row strong { color: var(--text); font-weight: 600; }
+.rent-bill-row strong.minus { color: var(--success-text); }
+.rent-bill-total {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border);
+  font-size: 14px; font-weight: 700;
+}
+.rent-bill-total strong { font-size: 22px; font-weight: 800; color: var(--primary-text); }
+
+/* —— 兑换码 / 我的券 —— */
+.redeem-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.redeem-row input {
+  flex: 1 1 180px; max-width: 320px; min-width: 0; height: 36px; padding: 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); font-size: 13px; letter-spacing: .3px;
+  text-transform: uppercase;
+}
+.redeem-row input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-bg); }
+.redeem-row .btn-sm { flex: none; height: 36px; padding: 0 14px; }
+.coupon-tabs { display: flex; gap: 8px; margin: 10px 0 12px; flex-wrap: wrap; }
+.coupon-tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-secondary); font-size: 13px; cursor: pointer;
+}
+.coupon-tab span { font-size: 11px; color: var(--text-muted); }
+.coupon-tab.active { border-color: var(--primary); background: var(--primary-bg); color: var(--primary-text); font-weight: 600; }
+.coupon-tab.active span { color: var(--primary-text); }
+.coupon-list { display: flex; flex-direction: column; gap: 10px; }
+.coupon-card {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+}
+.coupon-card.disabled { opacity: .62; }
+.coupon-stub {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  padding: 10px 6px; border-radius: 10px; color: var(--primary-text);
+  background: linear-gradient(160deg, #fff1f2, #fff7f6); border: 1px dashed #fca5a5;
+}
+.coupon-stub strong { font-size: 18px; font-weight: 800; }
+.coupon-stub small { font-size: 10.5px; color: var(--text-muted); text-align: center; }
+.coupon-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.coupon-name { font-size: 14px; font-weight: 700; }
+.coupon-meta { font-size: 12px; color: var(--text-muted); }
+.coupon-code { font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; color: var(--text-secondary); word-break: break-all; }
+.coupon-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.coupon-qr-modal { width: 360px; }
+.coupon-qr-box {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);
+}
+.coupon-qr-img { width: 240px; height: 240px; padding: 8px; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
+.coupon-qr-img svg { width: 100%; height: 100%; display: block; }
+.coupon-qr-name { font-size: 15px; font-weight: 700; text-align: center; }
+.coupon-qr-amount { font-size: 26px; font-weight: 800; color: var(--primary-text); }
+.coupon-qr-code { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; letter-spacing: .6px; color: var(--text-secondary); }
+.coupon-qr-holder { font-size: 12px; color: var(--text); }
+.coupon-qr-tip { font-size: 11.5px; color: var(--text-muted); text-align: center; }
+
+/* —— 前台核销 —— */
+.scan-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.scan-input {
+  display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 0;
+  height: 40px; padding: 0 12px; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: var(--surface); color: var(--text-muted);
+}
+.scan-input input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 13.5px; color: var(--text); letter-spacing: .4px; }
+.coupon-verify-card { margin-top: 14px; }
+.coupon-verify-head { display: flex; align-items: center; gap: 14px; margin: 6px 0 4px; }
+.coupon-verify-amount { font-size: 28px; font-weight: 800; color: var(--primary-text); }
+.coupon-verify-name { font-size: 15px; font-weight: 700; }
+.coupon-verify-sub { font-size: 12px; color: var(--text-muted); }
+.kv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.kv-grid > div { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); font-size: 13px; }
+.kv-grid span { color: var(--text-muted); }
+.kv-grid strong { font-weight: 600; word-break: break-all; }
+
+/* —— 个人中心的三个小按钮 —— */
+.profile-services { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.profile-service-btn {
+  display: flex; align-items: center; gap: 11px; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+  cursor: pointer; text-align: left; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.profile-service-btn:hover { border-color: #fecaca; box-shadow: var(--shadow-xs); transform: translateY(-1px); }
+.profile-service-icon {
+  width: 38px; height: 38px; flex: none; border-radius: 11px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--primary-bg); border: 1px solid #fecaca;
+}
+.profile-service-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.profile-service-text strong { font-size: 14px; }
+.profile-service-text small { font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 券模板表格里的兑换码单元格 */
+.redeem-code-cell { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px; }
+.muted-text { color: var(--text-muted); font-size: 12.5px; }
+
+/* 页面标题（核销页等无卡片外壳的独立页） */
+.page-head { margin-bottom: 12px; }
+.page-head h2 { display: flex; align-items: center; gap: 8px; font-size: 18px; line-height: 1.3; }
+.page-sub { margin-top: 4px; font-size: 12.5px; color: var(--text-muted); }
+
+/* ============================================================
+   手机端补强（≤860px / ≤560px）
+   新增页面与通用控件的窄屏规则集中在这里：
+   卡片单列、表格可横滑、弹窗不超屏、按钮可点。
+   ============================================================ */
+@media (max-width: 860px) {
+  .rent-grid { grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 10px; }
+  .rent-card-photo { height: 106px; }
+  .rent-card-price strong { font-size: 17px; }
+  .vehicle-hero { grid-template-columns: 1fr; gap: 12px; }
+  .vehicle-hero-photo { height: 180px; }
+  .vehicle-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .profile-services { grid-template-columns: 1fr; }
+  .kv-grid { grid-template-columns: 1fr; }
+  .estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .coupon-open-row { flex-direction: column; align-items: stretch; }
+  .coupon-qr-modal { width: 100%; max-width: 380px; }
+}
+@media (max-width: 560px) {
+  .rent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .rent-card-body { padding: 9px 10px 11px; }
+  .rent-card-head strong { font-size: 13.5px; }
+  .rent-card-price strong { font-size: 16px; }
+  .rent-card-price span { display: none; }
+  .rent-toolbar { gap: 6px; }
+  .rent-sort-select { height: 36px; padding: 0 8px 0 8px; }
+  .rent-sort-select select { font-size: 12px; max-width: 104px; padding-right: 13px; }
+  .rent-search { height: 36px; padding: 0 8px; }
+  .rent-search input { font-size: 12px; }
+  .rent-refresh { width: 36px; height: 36px; }
+  .coupon-card { grid-template-columns: 76px minmax(0, 1fr); }
+  .coupon-actions { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
+  .coupon-stub strong { font-size: 16px; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .estimate-grid strong { font-size: 14px; }
+  .coupon-qr-img { width: 210px; height: 210px; }
+  .scan-input { flex: 1 1 100%; }
+  .coupon-verify-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+  /* 弹窗在手机上留出安全边距，内部再滚动，避免关闭按钮顶到屏幕外 */
+  .modal { width: 100% !important; max-width: 100% !important; max-height: calc(100vh - 24px); border-radius: 16px; }
+  .modal-header, .modal-body, .modal-footer { padding-left: 16px; padding-right: 16px; }
+  /* 表单一行一列，标签与控件都够宽，不会出现「两个日期框各 90px」 */
+  .form-row { gap: 10px; }
+  .form-row .form-group { min-width: 100%; }
+}

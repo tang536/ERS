@@ -28,23 +28,9 @@ public class AppMessage
     [Column("receiver_type")]
     public string ReceiverType { get; init; } = string.Empty;
 
-    ///<summary>接收人 ID：customer 时为 customer_id</summary>
+    ///<summary>接收人 ID：customer 时为 customer_id；staff 时为 system_user.user_id</summary>
     [Column("receiver_id")]
     public int ReceiverId { get; init; }
-
-    ///<summary>顾客接收人</summary>
-    [Column("receiver_customer_id")]
-    public int? ReceiverCustomerId { get; init; }
-
-    [ForeignKey("ReceiverCustomerId")]
-    public Customer? ReceiverCustomer { get; init; }
-
-    ///<summary>员工接收人</summary>
-    [Column("receiver_staff_id")]
-    public int? ReceiverStaffId { get; init; }
-
-    [ForeignKey("ReceiverStaffId")]
-    public SystemUser? ReceiverStaff { get; init; }
 
     ///<summary>业务类型（稳定可复现，便于按场景筛选与统计）：顾客侧</summary>
     [Required, MaxLength(MaxRefType)]
@@ -113,8 +99,6 @@ public class AppMessage
         {
             ReceiverType = receiverType,
             ReceiverId = receiverId,
-            ReceiverCustomerId = receiverType == TypeCustomer ? receiverId : null,
-            ReceiverStaffId = receiverType == TypeStaff ? receiverId : null,
             RefType = refType,
             RefId = string.IsNullOrWhiteSpace(refId) ? null : refId,
             Title = Clip(title, MaxTitle),

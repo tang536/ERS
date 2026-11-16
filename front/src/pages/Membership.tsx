@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useUI } from '@/components/UIProvider'
-import { memberApi, paymentApi } from '@/api'
+import { memberApi, paymentApi, pointApi } from '@/api'
 import { setAuth } from '@/hooks/useAuth'
 import Icon from '@/components/Icon'
 import PayBrandIcon from '@/components/PayBrandIcon'
 import { PAY_CHANNEL_META, PAY_CHANNELS } from '@/utils/payChannels'
+import { openCashier } from '@/utils/payWindow'
 import { fmtDT } from '@/utils/datetime'
+import type { PointSummary } from '@/types'
 
 interface Option {
   memberLevel: string
@@ -52,6 +54,7 @@ export default function Membership() {
   const [channel, setChannel] = useState('支付宝')
   // 已发起支付的 HY 交易号：模拟收银台在新窗口付款，当前页轮询感知结果
   const [payingTradeNo, setPayingTradeNo] = useState<string | null>(null)
+  const [points, setPoints] = useState<PointSummary | null>(null)
   const timerRef = useRef<number>(0)
 
   const load = useCallback(async () => {
@@ -75,6 +78,11 @@ export default function Membership() {
   }, [toast])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    pointApi.summary()
+      .then((res: any) => setPoints(res.data || null))
+      .catch(() => setPoints(null))
+  }, [])
   useEffect(() => () => window.clearInterval(timerRef.current), [])
 
   const pendingCheckedRef = useRef(false)
@@ -177,11 +185,16 @@ export default function Membership() {
         window.location.href = payUrl
         return
       }
-      // 内置模拟收银台：新窗口打开，当前页轮询 HY 交易号状态
+      // 内置模拟收银台：新窗口打开，当前页轮询 HY 交易号状态。
+      // 缺 payUrl 时明确报错，不把「没配支付」变成「不用付」。
+      if (!payUrl) {
+        toast('未获取到收银台地址，请稍后重试；若持续失败请联系管理员检查支付配置', 'error')
+        return
+      }
       setPayingTradeNo(orderNo)
       startPolling(orderNo)
-      window.open(payUrl, '_blank', 'width=480,height=680')
-      toast('已打开模拟收银台，请在弹出窗口完成支付', 'info')
+      const opened = openCashier(payUrl)
+      toast(opened ? '已打开模拟收银台，请在弹出窗口完成支付' : '已进入模拟收银台，请完成支付', 'info')
     } catch (e: any) {
       toast(e?.message || '发起支付失败', 'error')
     } finally {
@@ -216,9 +229,52 @@ export default function Membership() {
           </div>
         </div>
         <p className="field-hint">
-          折扣会在下单时自动生效；租车费用按小时核算（小时价 = 日租金 ÷ 24），会员折扣同样按小时价计算。
+          折扣下单自动生效；小时价 = 日租金 ÷ 24。
         </p>
       </div>
+
+      {points && (
+        <div className="card">
+          <div className="card-title">
+            <Icon name="settlements" size={16} chip />我的积分
+            <span className="card-title-count">当前 {points.balance} 分</span>
+          </div>
+          <div className="stats-grid">
+            <div className="stat-card tone-emerald">
+              <div className="label">积分余额</div>
+              <div className="value">{points.balance}</div>
+            </div>
+            <div className="stat-card tone-sky">
+              <div className="label">本单最多可抵</div>
+              <div className="value">{points.maxRedeem} 分</div>
+            </div>
+          </div>
+          <p className="field-hint">{points.rule}</p>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr><th>时间</th><th>来源</th><th className="num">变动</th><th className="num">余额</th><th>说明</th></tr>
+              </thead>
+              <tbody>
+                {points.logs.map((l, i) => (
+                  <tr key={i}>
+                    <td className="cell-time">{fmtDT(l.createTime)}</td>
+                    <td>{l.source}</td>
+                    <td className="num" style={{ color: l.changeAmount < 0 ? 'var(--danger-text, #C0392B)' : 'var(--success-text, #15803d)' }}>
+                      {l.changeAmount > 0 ? '+' : ''}{l.changeAmount}
+                    </td>
+                    <td className="num">{l.balance}</td>
+                    <td>{l.remark || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {points.logs.length === 0 && (
+            <div className="empty"><Icon name="empty" size={36} chip /><div>暂无积分流水，完成租车结算后自动获得积分</div></div>
+          )}
+        </div>
+      )}
 
       <div className="card">
         <div className="card-title"><Icon name="settlements" size={16} chip />购买会员</div>
@@ -256,7 +312,6 @@ export default function Membership() {
             交易 {payingTradeNo} 正在确认中，请在弹出窗口完成支付；付款成功后本页会自动刷新等级。
           </p>
         )}
-        <p className="field-hint">更高等级享受更低折扣，付款成功后立即生效；不支持降级，已享折扣不会变差。</p>
       </div>
 
       <div className="card">

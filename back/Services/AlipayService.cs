@@ -1,4 +1,5 @@
 ﻿using System.Data;
+using System.Globalization;
 using System.Text;
 using ERental.Data;
 using ERental.DTOs;
@@ -53,8 +54,7 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
         if (!rt.IsReal || !rt.CredentialsComplete)
         {
             _logger.LogWarning("当前支付模式为「{Mode}」，订单 {OrderNo} 使用内置模拟收银台", rt.Mode, orderNo);
-            var mockUrl = $"/mock-pay?orderNo={Uri.EscapeDataString(orderNo)}&amount={amount:0.00}&subject={Uri.EscapeDataString(subject)}";
-            return mockUrl;
+            return BuildMockUrl(orderNo, amount, subject);
         }
 
         var bizContent = new Dictionary<string, string?>
@@ -134,6 +134,15 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
         return ok ? "success" : "failure";
     }
 
+    ///<summary>内置模拟收银台地址：带服务端签名，通知端核对订单号、金额与支付方式</summary>
+    public string BuildMockUrl(string orderNo, decimal amount, string subject, string payType = "支付宝")
+    {
+        var token = MockPayToken.Sign(_configuration, orderNo, amount, payType);
+        return $"/mock-pay?orderNo={Uri.EscapeDataString(orderNo)}&amount={amount:0.00}" +
+               $"&payType={Uri.EscapeDataString(payType)}&subject={Uri.EscapeDataString(subject)}" +
+               $"&token={Uri.EscapeDataString(token)}";
+    }
+
     ///<summary>处理内置模拟收银台（/mock-pay）的支付通知模拟通知表单请求是否来自本机（loopback）</summary>
     public async Task<MockNotifyResult> HandleMockNotifyAsync(IDictionary<string, string> form, bool isLoopback = false)
     {
@@ -170,6 +179,16 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
         //⑤ 支付方式白名单
         var payType = form.TryGetValue("_mock_pay_type", out var t) && !string.IsNullOrWhiteSpace(t) ? t.Trim() : "支付宝";
         if (payType is not ("支付宝" or "微信" or "微信支付" or "银行卡")) return MockNotifyResult.Fail($"不支持的模拟支付方式「{payType}」。");
+
+        //⑥ 服务端一次性签名：反向代理后所有请求都像来自 127.0.0.1，来源 IP 不能再作为信任依据
+        form.TryGetValue("mock_token", out var mockToken);
+        form.TryGetValue(AlipayParamTotalAmount, out var mockAmountText);
+        if (!decimal.TryParse(mockAmountText, NumberStyles.Number, CultureInfo.InvariantCulture, out var mockAmount)
+            || !MockPayToken.Validate(_configuration, mockOrderNo ?? "", mockAmount, payType, mockToken))
+        {
+            _logger.LogWarning("模拟支付通知签名无效，已拒绝（订单 {OrderNo}）", mockOrderNo ?? "(无)");
+            return MockNotifyResult.Fail("模拟支付通知签名无效，已拒绝。");
+        }
 
         var (ok, msg) = await ApplyTradeResultAsync(form, payType);
         return ok ? MockNotifyResult.Ok(msg) : MockNotifyResult.Fail(msg);
