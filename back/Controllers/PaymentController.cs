@@ -139,6 +139,11 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
         }
     }
 
+    ///<summary>顾客端支付渠道状态（无凭证，可匿名）：下单页据此标注「正式/模拟/未配置」</summary>
+    [HttpGet("channels/public")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetPublicPayChannels() => Ok(new ApiResponse<PublicPaymentChannelsDto> { Data = await _payConfig.GetPublicChannelsAsync() });
+
     ///<summary>三条通道（支付宝/微信/银行卡）的接线状态汇总</summary>
     [HttpGet("channels")]
     [Authorize(Policy = Policies.AdminOnly)]

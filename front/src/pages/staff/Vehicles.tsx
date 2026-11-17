@@ -19,7 +19,7 @@ import AiImagePanel from './components/AiImagePanel'
 import BatchCreateModal from './components/BatchCreateModal'
 import BatchEditModal from './components/BatchEditModal'
 import { useAuth, ROLE } from '@/hooks/useAuth'
-import { todayInput, toDateInputFrom } from '@/utils/datetime'
+import { todayInput, toDateInputFrom, fmtD } from '@/utils/datetime'
 
 const statusMap: Record<string, string> = {
   '空闲': 'status-success',
@@ -628,12 +628,12 @@ export default function Vehicles() {
           <tbody>
             {paged.map(v => (
               <tr key={v.vehicleId}>
-                {isAdmin && <td className="col-check"><input type="checkbox" checked={selected.includes(v.vehicleId)} onChange={() => toggleSelect(v.vehicleId)} aria-label="选择" /></td>}
+                {isAdmin && <td className="col-check" data-label="选择"><input type="checkbox" checked={selected.includes(v.vehicleId)} onChange={() => toggleSelect(v.vehicleId)} aria-label={`选择车辆 ${v.vehicleNo}`} /></td>}
                 <td>{thumb(v, setLightbox)}</td>
                 <td className="strong">{v.vehicleNo}</td>
                 <td>{v.brand || '—'}</td>
                 <td className="mono col-hide-lg">{v.frameNumber || '—'}</td>
-                <td className="cell-time col-hide-lg">{v.buyTime ? String(v.buyTime).slice(0, 10) : '—'}</td>
+                <td className="cell-time col-hide-lg">{fmtD(v.buyTime)}</td>
                 <td className="num col-hide-md">¥{v.buyPrice ?? '—'}</td>
                 {/* 每辆车可以有自己的租金与押金；两项都为空表示走系统默认价 */}
                 <td className="num">

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useUI } from '@/components/UIProvider'
 import { addonApi, couponApi, customerApi } from '@/api'
 import Icon from '@/components/Icon'
-import { fmtDT, nowDatetimeInput, afterDaysDatetimeInput } from '@/utils/datetime'
+import { fmtD, nowDatetimeInput, afterDaysDatetimeInput } from '@/utils/datetime'
 import type { AddonItem, Coupon, Customer } from '@/types'
 
 type Tab = 'coupon' | 'addon'
@@ -323,7 +323,7 @@ export default function Operations() {
         <>
           <div className="callout callout-info">
             <Icon name="info" size={18} chip />
-            <span>券只抵扣租金，不抵押金；同一订单最多使用一张。券状态改为「停用」后不再发放，已领出的券也会同时失效，操作前请确认。设置了兑换码并开放领取后，顾客可在「我的优惠券」自助领券，也可到店出示二维码由前台核销。</span>
+            <span>券只抵扣租金，不抵押金；同一订单最多使用一张。券状态改为「停用」后不再发放，已领出的券在有效期内仍可使用。设置了兑换码并开放领取后，顾客可在「我的优惠券」自助领券，也可到店出示二维码由前台核销。</span>
           </div>
           <div className="table-wrap">
             <table className="data-table nowrap-table">
@@ -346,7 +346,7 @@ export default function Operations() {
                         </span>
                         : <span className="muted-text">未设置</span>}
                     </td>
-                    <td className="col-hide-md">{fmtDT(c.validFrom)} ~ {fmtDT(c.validTo)}</td>
+                    <td className="col-hide-md">{fmtD(c.validFrom)} ~ {fmtD(c.validTo)}</td>
                     <td>{c.issuedQty} / {c.totalQty > 0 ? c.totalQty : '不限'}</td>
                     <td>{c.perLimit} 张</td>
                     <td>

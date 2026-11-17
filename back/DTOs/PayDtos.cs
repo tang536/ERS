@@ -176,6 +176,33 @@ public class PaymentChannelsDto
 }
 
 /// <summary>
+/// 顾客端可见的支付通道状态：只暴露「现在点这个渠道会发生什么」，
+/// 不返回 AppId、商户号、密钥等任何凭证线索。
+/// </summary>
+public class PublicPaymentChannelDto
+{
+    /// <summary>通道标识：alipay / wechat / bank</summary>
+    public string Key { get; init; } = string.Empty;
+
+    /// <summary>显示名：支付宝 / 微信支付 / 银行卡</summary>
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary>是否已接入真实支付（false 时点击会进入模拟收银台）</summary>
+    public bool Real { get; init; }
+
+    /// <summary>顾客端状态词：正式 / 模拟 / 未配置</summary>
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>一句话说明，例如「真实扣款」或「演示环境，不扣款」</summary>
+    public string Detail { get; init; } = string.Empty;
+}
+
+public class PublicPaymentChannelsDto
+{
+    public List<PublicPaymentChannelDto> Items { get; init; } = [];
+}
+
+/// <summary>
 /// 单个支付渠道的**余额**查询结果。
 /// 设计要点：无论成功失败都返回同一结构，用 <see cref="Status"/> 区分，
 /// 这样前端不必为「有余额/无余额/查询失败」写三套渲染分支。

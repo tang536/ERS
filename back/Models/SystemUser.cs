@@ -41,6 +41,14 @@ public class SystemUser
     [Column("lock_until")]
     public DateTime? LockUntil { get; private set; }
 
+    ///<summary>管理员发放的临时密码是否尚未被本人修改；登录后必须先改密</summary>
+    [Column("must_change_password")]
+    public bool MustChangePassword { get; private set; }
+
+    ///<summary>临时密码失效时间；null 表示没有临时密码限制</summary>
+    [Column("pwd_reset_expire")]
+    public DateTime? PwdResetExpire { get; private set; }
+
     ///<summary>TPH 判别值：与 AppDbContext 中 HasValue 注册的 user_type 一致</summary>
     [NotMapped]
     public virtual string UserType => "staff";
@@ -72,12 +80,24 @@ public class SystemUser
         if (!string.IsNullOrWhiteSpace(userName)) UserName = userName.Trim();
     }
 
-    ///<summary>重置登录密码</summary>
-    public void SetPasswordHash(string passwordHash)
+    ///<summary>重置登录密码；管理员重置时同时要求首次登录改密</summary>
+    public void SetPasswordHash(string passwordHash, bool requireChange = false, DateTime? expire = null)
     {
         LoginPwd = passwordHash;
         LoginFailCount = 0;
         LockUntil = null;
+        MustChangePassword = requireChange;
+        PwdResetExpire = requireChange ? expire : null;
+    }
+
+    ///<summary>本人完成改密：解除临时密码限制</summary>
+    public void CompletePasswordChange(string passwordHash)
+    {
+        LoginPwd = passwordHash;
+        LoginFailCount = 0;
+        LockUntil = null;
+        MustChangePassword = false;
+        PwdResetExpire = null;
     }
 
     ///<summary>启用/停用账号（1=启用，0=停用）</summary>

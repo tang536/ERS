@@ -5,7 +5,7 @@ import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
 import PayBrandIcon from '@/components/PayBrandIcon'
 import ReceiptModal from '@/components/ReceiptModal'
-import { PAY_CHANNEL_META, PAY_CHANNELS, DEFAULT_PAY_TYPE } from '../utils/payChannels'
+import { PAY_CHANNEL_META, PAY_CHANNELS, DEFAULT_PAY_TYPE, fetchPublicPayChannels, type PublicPayChannel } from '../utils/payChannels'
 import { qrSvg } from '../utils/qrcode'
 import { openCashier } from '../utils/payWindow'
 
@@ -31,6 +31,7 @@ export default function SupplementPayPage() {
   const [info, setInfo] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [payType, setPayType] = useState(DEFAULT_PAY_TYPE)
+  const [channelStatus, setChannelStatus] = useState<Record<string, PublicPayChannel>>({})
   const [paying, setPaying] = useState(false)
   const [paid, setPaid] = useState(false)
   const [receipt, setReceipt] = useState<string | null>(null)
@@ -62,6 +63,7 @@ export default function SupplementPayPage() {
   }, [pid, toast, navigate])
 
   useEffect(() => { loadStatus() }, [loadStatus])
+  useEffect(() => { fetchPublicPayChannels().then(setChannelStatus) }, [])
 
   /**
    * 从支付平台返回时补查一次（与首付款支付页同一口径）。
@@ -185,7 +187,9 @@ export default function SupplementPayPage() {
         ) : (
           <>
             <div className="pay-methods">
-              {Object.entries(PAY_CHANNEL_META).map(([name, meta]) => (
+              {Object.entries(PAY_CHANNEL_META).map(([name, meta]) => {
+                const status = channelStatus[name]
+                return (
                 <div
                   key={name}
                   className={`pay-method ${payType === name ? 'active' : ''}`}
@@ -195,12 +199,18 @@ export default function SupplementPayPage() {
                     <PayBrandIcon brand={meta.brand} icon={meta.icon} color={meta.color} size={24} />
                   </span>
                   <div className="pay-method-text">
-                    <strong>{name}</strong>
-                    <small>{meta.desc}</small>
+                    <strong>{name}
+                      {status && (
+                        <span className={`status-tag ${status.real ? 'status-success' : 'status-warning'}`} style={{ marginLeft: 8 }}>
+                          {status.status}
+                        </span>
+                      )}
+                    </strong>
+                    <small>{status?.detail || meta.desc}</small>
                   </div>
                   <span className={`pay-radio ${payType === name ? 'on' : ''}`} />
                 </div>
-              ))}
+              )})}
             </div>
 
             {qrHtml && (

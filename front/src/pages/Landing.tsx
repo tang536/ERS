@@ -194,7 +194,7 @@ export default function Landing() {
       <section className="hero">
         <div className="hero-inner">
           <div className="hero-copy">
-            <h1>电动车租赁，全程线上办理</h1>
+            <h1>电动车租赁，<br className="hero-break" />全程线上办理</h1>
             <p className="hero-sub">
               顾客在线选车、下单、支付，到店扫码取车，归还自动结算；
               门店员工登录后可处理订单、车辆、会员与对账事务。

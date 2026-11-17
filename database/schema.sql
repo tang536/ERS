@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS `system_user` (
   `user_status` INT DEFAULT 1 COMMENT '状态：1启用 0禁用',
   `login_fail_count` INT DEFAULT 0 COMMENT '登录失败次数',
   `lock_until` DATETIME DEFAULT NULL COMMENT '锁定截止时间',
+  `must_change_password` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否必须先修改临时密码',
+  `pwd_reset_expire` DATETIME DEFAULT NULL COMMENT '临时密码失效时间',
   `user_type` VARCHAR(20) DEFAULT 'staff' COMMENT 'TPH鉴别器：admin/reception/finance/staff',
   PRIMARY KEY (`user_id`),
   UNIQUE KEY `uk_login_account` (`login_account`),

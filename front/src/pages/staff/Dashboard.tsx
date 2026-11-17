@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react'
 import ReactEChartsCore from 'echarts-for-react/lib/core'
 import echarts, { chartTheme } from '@/utils/chart'
+import { fmtD } from '@/utils/datetime'
 import { useTheme } from '@/hooks/useTheme'
 import { reportApi, orderApi, paymentApi, messageApi } from '@/api'
 import { useUI } from '@/components/UIProvider'
@@ -591,7 +592,7 @@ export default function Dashboard() {
                     <td>{o.customerName || '—'}</td>
                     <td>{o.vehicleNo || '—'}</td>
                     <td className="num">¥{o.totalRent}</td>
-                    <td>{o.leaseStart ? new Date(o.leaseStart).toLocaleDateString('zh-CN') : '—'}</td>
+                    <td>{o.leaseStart ? fmtD(o.leaseStart) : '—'}</td>
                     <td>
                       <span className={`status-tag ${
                         o.orderStatus === '已完成' || o.orderStatus === '已完结' ? 'status-success'

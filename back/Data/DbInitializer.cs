@@ -36,7 +36,7 @@ public static class DbInitializer
     /// ⚠️ 改动 DbInitializer 里的 DDL（加列/加表/改约束）时必须把它 +1，
     /// 否则老库会因「版本已是最新」而跳过这次升级。
     /// </summary>
-    public const int SchemaVersion = 6;
+    public const int SchemaVersion = 7;
 
     /// <summary>幂等的结构升级：保证「老数据库」也能平滑支持新功能</summary>
     public static void EnsureSchemaUpgrades(AppDbContext db)
@@ -76,6 +76,8 @@ public static class DbInitializer
         //    这里只保留编排：每一组「相关的列/表」各自一个私有方法，调用顺序即原执行顺序，
         //    拆开后单个方法的分支数才不会堆到一屏之外（认知复杂度也才好降下来）。
         UpgradeAccountColumns(db);
+        UpgradeStaffPasswordColumns(db);
+        NormalizeMemberRightsDescriptions(db);
         UpgradeConfigColumns(db);
         UpgradeAccountStateColumns(db);
         CreateMissingTables(db);
@@ -150,6 +152,43 @@ public static class DbInitializer
 
         // 注册阶段不采集身份证号，租车环节才强制补录 → 允许为空
         db.Database.ExecuteSqlRaw("ALTER TABLE `customer` MODIFY COLUMN `id_card` VARCHAR(18) NULL COMMENT '身份证号（租车环节采集）';");
+    }
+
+    /// <summary>
+    /// 清理会员权益说明里的「75折 / 85折 / 95折 / 无折扣」——
+    /// 折扣列已经精确表达折扣，权益说明重复写会在会员页出现两遍。
+    /// 只改仍是这些占位文案的行，管理员自定义过的说明保持原样。
+    /// </summary>
+    private static void NormalizeMemberRightsDescriptions(AppDbContext db)
+    {
+        if (!TableExists(db, "member_rights")) return;
+        var replacements = new (string Level, string[] Old, string New)[]
+        {
+            ("银卡会员", ["95折", "9.5折", "95 折"], "会员专享活动、生日礼遇"),
+            ("金卡会员", ["85折", "8.5折", "85 折"], "会员专享活动、优先取车"),
+            ("钻石会员", ["75折", "7.5折", "75 折"], "会员专享活动、优先取车、专属客服"),
+            ("普通会员", ["无折扣"], "会员专享活动"),
+        };
+        foreach (var item in replacements)
+        {
+            var current = db.MemberRights.FirstOrDefault(r => r.MemberLevel == item.Level);
+            if (current == null || !item.Old.Contains((current.RightsDesc ?? string.Empty).Trim())) continue;
+            current.UpdateRights(current.Discount, current.MinRentCount, current.PurchasePrice, item.New);
+        }
+        db.SaveChanges();
+    }
+
+    /// <summary>员工一次性临时密码：必须改密标记 + 临时密码失效时间</summary>
+    private static void UpgradeStaffPasswordColumns(AppDbContext db)
+    {
+        if (!ColumnExists(db, "system_user", "must_change_password"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `system_user` ADD COLUMN `must_change_password` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否必须先修改临时密码' AFTER `lock_until`;");
+        }
+        if (!ColumnExists(db, "system_user", "pwd_reset_expire"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `system_user` ADD COLUMN `pwd_reset_expire` DATETIME NULL COMMENT '临时密码失效时间' AFTER `must_change_password`;");
+        }
     }
 
     /// <summary>长文本列：system_config 容纳支付凭证，message.content 收窄为 VARCHAR(500)</summary>

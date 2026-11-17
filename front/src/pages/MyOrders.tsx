@@ -4,6 +4,7 @@ import { useUI } from '@/components/UIProvider'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import Icon from '@/components/Icon'
+import Pagination from '@/components/Pagination'
 import ReceiptModal from '@/components/ReceiptModal'
 import ContractModal from '@/components/ContractModal'
 import { fmtDT } from '@/utils/datetime'
@@ -19,6 +20,8 @@ const statusMap: Record<string, string> = {
   '已逾期': 'status-danger',
 }
 
+const PAGE_SIZE = 6
+
 export default function MyOrders() {
   const { toast, confirm } = useUI()
   const { user } = useAuth()
@@ -26,6 +29,7 @@ export default function MyOrders() {
   const [searchParams] = useSearchParams()
   const [list, setList] = useState<any[]>([])
   const [keyword, setKeyword] = useState(searchParams.get('q') || '')
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   // 实名状态以服务端档案为准（本地缓存可能过期）
   const [profileVerified, setProfileVerified] = useState<boolean | null>(null)
@@ -56,6 +60,13 @@ export default function MyOrders() {
   }
 
   useEffect(() => { load() }, [keyword])
+
+  // 订单历史按 6 条/页浏览：十几条订单一屏铺开会把页面拉到几千像素
+  useEffect(() => { setPage(1) }, [keyword])
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(list.length / PAGE_SIZE))
+    if (page > maxPage) setPage(maxPage)
+  }, [list.length, page])
 
   // 从服务端拉取最新实名状态（避免本地缓存的 profileCompleted 过期）
   useEffect(() => {
@@ -152,6 +163,7 @@ export default function MyOrders() {
 
   const active = list.filter(o => o.orderStatus === '已支付' || o.orderStatus === '租赁中' || o.orderStatus === '待支付')
   const finished = list.filter(o => o.orderStatus === '已完成' || o.orderStatus === '已完结')
+  const paged = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
   // 门店结算选「线上补缴」生成的待支付补缴单，顾客在此在线缴款
   // 注意字段名与后端 JSON 一致（camelCase）：写成 PayStatus 会永远过滤出空列表，
   // 表现就是「关掉支付页以后再也找不到补缴入口」。
@@ -183,7 +195,7 @@ export default function MyOrders() {
         </div>
       )}
 
-      <div className="stats-grid">
+      <div className="stats-grid my-order-stats">
         {summary.map(s => (
           <div key={s.label} className={`stat-card tone-${s.tone}`}>
             <div className="label">{s.label}</div>
@@ -227,7 +239,7 @@ export default function MyOrders() {
               </tr>
             </thead>
             <tbody>
-              {list.map(o => {
+              {paged.map(o => {
                 const canEarlyReturn = (o.orderStatus === '已支付' || o.orderStatus === '租赁中')
                   && o.earlyReturnStatus !== '待审核'
                 const isPending = o.orderStatus === '待支付'
@@ -302,6 +314,9 @@ export default function MyOrders() {
             <Icon name="empty" size={40} chip />
             <div>{keyword ? '没有匹配的订单' : '您还没有租赁订单，到店后由前台为您开单'}</div>
           </div>
+        )}
+        {!loading && list.length > 0 && (
+          <Pagination total={list.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
         )}
         {!loading && list.length > 0 && (
           <div className="table-foot-note">累计租金合计：<strong>¥{list.reduce((s, o) => s + Number(o.totalRent || 0), 0).toFixed(2)}</strong></div>

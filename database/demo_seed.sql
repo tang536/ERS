@@ -32,10 +32,10 @@ DELETE FROM `car_check_list` WHERE `check_no` IN ('PD202610220001','PD2026102200
 DELETE FROM `check_report` WHERE `report_no` = 'RPT20261022001';
 
 -- ② 会员等级（演示用；真实门店按自己的等级体系在「会员管理」里建）
-INSERT INTO `member_rights` (`member_level`,`discount`,`min_rent_count`,`purchase_price`,`rights_desc`) SELECT '普通会员',1.00,NULL,NULL,'无折扣' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `member_rights` WHERE `member_level`='普通会员');
-INSERT INTO `member_rights` (`member_level`,`discount`,`min_rent_count`,`purchase_price`,`rights_desc`) SELECT '银卡会员',0.95,5,29.00,'95折' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `member_rights` WHERE `member_level`='银卡会员');
-INSERT INTO `member_rights` (`member_level`,`discount`,`min_rent_count`,`purchase_price`,`rights_desc`) SELECT '金卡会员',0.85,20,99.00,'85折' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `member_rights` WHERE `member_level`='金卡会员');
-INSERT INTO `member_rights` (`member_level`,`discount`,`min_rent_count`,`purchase_price`,`rights_desc`) SELECT '钻石会员',0.75,50,199.00,'75折' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `member_rights` WHERE `member_level`='钻石会员');
+INSERT INTO `member_rights` (`member_level`,`discount`,`min_rent_count`,`purchase_price`,`rights_desc`) SELECT '普通会员',1.00,NULL,NULL,'会员专享活动' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `member_rights` WHERE `member_level`='普通会员');
+INSERT INTO `member_rights` (`member_level`,`discount`,`min_rent_count`,`purchase_price`,`rights_desc`) SELECT '银卡会员',0.95,5,29.00,'会员专享活动、生日礼遇' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `member_rights` WHERE `member_level`='银卡会员');
+INSERT INTO `member_rights` (`member_level`,`discount`,`min_rent_count`,`purchase_price`,`rights_desc`) SELECT '金卡会员',0.85,20,99.00,'会员专享活动、优先取车' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `member_rights` WHERE `member_level`='金卡会员');
+INSERT INTO `member_rights` (`member_level`,`discount`,`min_rent_count`,`purchase_price`,`rights_desc`) SELECT '钻石会员',0.75,50,199.00,'会员专享活动、优先取车、专属客服' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM `member_rights` WHERE `member_level`='钻石会员');
 
 -- ③ 客户档案（登录密码统一 123456，可直接在顾客端登录验收）
 INSERT INTO `customer` (`login_account`,`id_card`,`full_name`,`contact_phone`,`login_password`,`member_level`,`account_status`,`create_time`) VALUES ('chenxiaoyu','450103199505120011','陈小雨','13878001001','$2a$11$Cmkl8ZgPVOgOm8yJlujUte/RsVGCYCh5iQymyKxyZ2.O4wApKH.Cm','银卡会员','正常','2026-08-14 10:20:00') ON DUPLICATE KEY UPDATE `id_card`=VALUES(`id_card`),`full_name`=VALUES(`full_name`),`contact_phone`=VALUES(`contact_phone`),`login_password`=VALUES(`login_password`),`member_level`=VALUES(`member_level`);

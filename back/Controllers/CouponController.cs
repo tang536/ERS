@@ -83,7 +83,20 @@ public class CouponController(CouponService svc) : ControllerBase
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
-    ///<summary>前台扫码查券：二维码里是顾客持券的码值，解析后带出持券人</summary>
+    ///<summary>顾客本人申请短时二维码令牌：绑定当前顾客与券，不暴露裸券码</summary>
+    [HttpPost("{id:int}/qr")]
+    [Authorize(Policy = Policies.CustomerOnly)]
+    public async Task<IActionResult> CreateQrToken(int id)
+    {
+        try
+        {
+            var token = await _svc.CreateQrTokenAsync(CurrentUserId, id);
+            return Ok(new ApiResponse<CouponQrTokenDto> { Data = token });
+        }
+        catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
+    }
+
+    ///<summary>前台扫码查券：二维码里是短时签名令牌，验证后带出持券人</summary>
     [HttpGet("verify")]
     [Authorize(Policy = Policies.AdminOrReception)]
     public async Task<IActionResult> Verify([FromQuery] string code)

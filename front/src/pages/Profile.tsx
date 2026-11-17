@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useUI } from '@/components/UIProvider'
 import { logoutEverywhere } from '@/utils/session'
+import { fmtD } from '@/utils/datetime'
 import Icon from '@/components/Icon'
 import Avatar from '@/components/Avatar'
 import ImageLightbox from '@/components/ImageLightbox'
@@ -215,7 +216,7 @@ export default function Profile() {
               ? <span className="status-tag status-success">租车资料已完善</span>
               : <span className="status-tag status-warning">租车资料待完善</span>}
           </div>
-          <p>注册时间：{new Date(info.createTime).toLocaleDateString('zh-CN')}</p>
+          <p>注册时间：{fmtD(info.createTime)}</p>
           {avatarReady && <p className="profile-avatar-hint">点击头像可查看原图</p>}
         </div>
       </div>
@@ -263,8 +264,6 @@ export default function Profile() {
           <div className="detail-item"><span className="detail-label">姓名</span><span className="detail-value">{info.fullName}</span></div>
           <div className="detail-item"><span className="detail-label">身份证号</span><span className="detail-value mono">{info.idCard || '待完善'}</span></div>
           <div className="detail-item"><span className="detail-label">手机号</span><span className="detail-value">{info.contactPhone || '待完善'}</span></div>
-          <div className="detail-item"><span className="detail-label">会员等级</span><span className="detail-value">{info.memberLevel}</span></div>
-          <div className="detail-item"><span className="detail-label">会员折扣</span><span className="detail-value">{(info.memberDiscount * 10).toFixed(1)} 折</span></div>
           <div className="detail-item">
             <span className="detail-label">积分余额</span>
             <span className="detail-value">
@@ -287,10 +286,8 @@ export default function Profile() {
           <div className="danger-zone-text">
             <strong>注销账号</strong>
             <p>
-              顾客的注销入口仅在本页提供（其他页面不再出现）。
-              注销后该账号将无法再登录，用户名会被释放、可重新注册使用；
-              历史订单、结算记录与操作日志会保留，以符合「数据不可删除、全流程可追溯」的要求。
-              存在未完结订单时无法注销，需先完成归还结算。
+              注销后账号无法再登录，用户名可重新注册；历史订单、结算记录与操作日志仍保留。
+              存在未完结订单时，需先完成归还结算。
             </p>
           </div>
           <button className="btn-sm btn-sm-danger" onClick={handleDeactivate}>

@@ -188,6 +188,9 @@ export const authApi = {
   /** 顾客自助修改登录密码：必须提供原密码（后端二次验证） */
   changePassword: (oldPassword: string, newPassword: string) =>
     api.post('/auth/customer-change-password', { oldPassword, newPassword }),
+  /** 员工自助改密：临时密码首次登录也走这里，成功后后端强制重新登录 */
+  staffChangePassword: (oldPassword: string, newPassword: string) =>
+    api.post('/auth/staff-change-password', { oldPassword, newPassword }),
   /**
    * 退出登录：注销当前会话（同一账号不允许同时登录）。
    * 只注销本设备这一条会话，不会影响该账号在别处的登录。
@@ -206,6 +209,8 @@ export const userApi = {
   list: () => api.get('/user'),
   create: (data: CreateUserPayload) => api.post('/user', data),
   update: (id: number, data: UpdateUserPayload) => api.put(`/user/${id}`, data),
+  /** 管理员生成一次性临时密码（明文只返回一次） */
+  resetPassword: (id: number) => api.post(`/user/${id}/reset-password`),
   /** 停用账号（系统操作「停用员工账号」）：后端同时吊销该账号全部在线会话 */
   disable: (id: number) => api.put(`/user/${id}/disable`),
   remove: (id: number) => api.delete(`/user/${id}`)
@@ -585,6 +590,8 @@ export const paymentApi = {
   selfCheckBank: () => api.get('/payment/bank/selfcheck'),
   /** 三条通道（支付宝/微信/银行卡）的接线状态汇总 */
   channels: () => api.get('/payment/channels'),
+  /** 顾客端通道状态（无凭证）：返回正式/模拟/未配置 */
+  publicChannels: () => api.get('/payment/channels/public'),
   /** 账户余额（企业支付宝 + 微信支付商户）与本地账目对照；force=true 跳过缓存 */
   balances: (force = false) => api.get(`/payment/balances${force ? '?force=true' : ''}`)
 }
@@ -703,8 +710,10 @@ export const couponApi = {
   byCustomer: (customerId: number) => api.get(`/coupon/customer/${customerId}`),
   /** 顾客输入兑换码领券（管理员在运营配置里为该券设码并开放） */
   redeem: (code: string) => api.post('/coupon/redeem', { code }),
-  /** 前台扫码查券：券码定位到具体顾客的那张券 */
+  /** 前台扫码查券：券码或短时签名二维码令牌定位到具体顾客的那张券 */
   verify: (code: string) => api.get('/coupon/verify', { params: { code } }),
+  /** 顾客本人申请短时二维码令牌（绑定当前顾客与券，不暴露裸券码） */
+  qr: (id: number) => api.post(`/coupon/${id}/qr`),
   /** 前台核销（置为已使用，不可撤销） */
   consume: (code: string) => api.post('/coupon/consume', { code })
 }

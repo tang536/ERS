@@ -6,8 +6,9 @@ import Icon from '@/components/Icon'
 import PayBrandIcon from '@/components/PayBrandIcon'
 import ReceiptModal from '@/components/ReceiptModal'
 // 渠道的图标/配色/说明集中在 utils/payChannels.ts（支付页、模拟收银台、结果页共用一份）
-import { PAY_CHANNEL_META, PAY_CHANNELS, DEFAULT_PAY_TYPE } from '../utils/payChannels'
+import { PAY_CHANNEL_META, PAY_CHANNELS, DEFAULT_PAY_TYPE, fetchPublicPayChannels, type PublicPayChannel } from '../utils/payChannels'
 import { qrSvg } from '../utils/qrcode'
+import { fmtDT } from '../utils/datetime'
 import { openCashier } from '../utils/payWindow'
 
 /** 轮询间隔与上限：30 次 × 3s ≈ 90s，超时提示用户手动刷新，避免无限轮询 */
@@ -33,6 +34,7 @@ export default function PayPage() {
   // 支付方式在「支付」时选择并发起：下单只锁定车辆，付款渠道由顾客在本页任选。
   // 旧数据若在下单时带过渠道，仅在合法渠道内预选，否则回到默认支付宝。
   const [payType, setPayType] = useState(DEFAULT_PAY_TYPE)
+  const [channelStatus, setChannelStatus] = useState<Record<string, PublicPayChannel>>({})
   const [paying, setPaying] = useState(false)
   const [paid, setPaid] = useState(false)
   const [receipt, setReceipt] = useState<string | null>(null)
@@ -52,6 +54,9 @@ export default function PayPage() {
   const cancelNotifiedRef = useRef(false)
 
   useEffect(() => { orderRef.current = order }, [order])
+
+  // 渠道状态只用于标注「正式 / 模拟 / 未配置」，不阻断模拟支付
+  useEffect(() => { fetchPublicPayChannels().then(setChannelStatus) }, [])
 
   /**
    * 支付成功的统一收口：置状态、停轮询、提示、拉小票。
@@ -265,7 +270,7 @@ export default function PayPage() {
         <div className="pay-order">
           <div className="pay-order-row"><span>订单号</span><strong>{order.orderNo}</strong></div>
           <div className="pay-order-row"><span>车辆</span><strong>{order.vehicleNo}</strong></div>
-          <div className="pay-order-row"><span>租期</span><strong>{String(order.leaseStart).replace('T', ' ').slice(0, 16)} 起</strong></div>
+          <div className="pay-order-row"><span>租期</span><strong>{fmtDT(order.leaseStart)} 起</strong></div>
           <div className="pay-order-row"><span>状态</span>
             <strong className={paid ? 'pay-ok' : 'pay-pending'}>{paid ? '已支付' : '待支付'}</strong>
           </div>
@@ -310,7 +315,9 @@ export default function PayPage() {
           <>
             {/* 支付方式：付款时选择，支付成功前可随时更换后重新发起 */}
             <div className="pay-methods">
-              {Object.entries(PAY_CHANNEL_META).map(([name, meta]) => (
+              {Object.entries(PAY_CHANNEL_META).map(([name, meta]) => {
+                const channel = channelStatus[name]
+                return (
                 <div
                   key={name}
                   className={`pay-method ${payType === name ? 'active' : ''}`}
@@ -320,12 +327,18 @@ export default function PayPage() {
                     <PayBrandIcon brand={meta.brand} icon={meta.icon} color={meta.color} size={24} />
                   </span>
                   <div className="pay-method-text">
-                    <strong>{name}</strong>
-                    <small>{meta.desc}</small>
+                    <strong>{name}
+                      {channel && (
+                        <span className={`status-tag ${channel.real ? 'status-success' : 'status-warning'}`} style={{ marginLeft: 8 }}>
+                          {channel.status}
+                        </span>
+                      )}
+                    </strong>
+                    <small>{channel?.detail || meta.desc}</small>
                   </div>
                   <span className={`pay-radio ${payType === name ? 'on' : ''}`} />
                 </div>
-              ))}
+              )})}
             </div>
 
             {qrHtml && (

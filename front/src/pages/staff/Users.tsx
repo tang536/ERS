@@ -5,6 +5,8 @@ import { useAuth } from '@/hooks/useAuth'
 import { authApi, userApi } from '@/api'
 import { logoutEverywhere } from '@/utils/session'
 import type { StaffUser } from '@/types'
+import { fmtDT } from '@/utils/datetime'
+import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import Icon from '@/components/Icon'
 
 const EMPTY = { loginAccount: '', password: '', userName: '', roleType: 'reception' }
@@ -23,6 +25,7 @@ export default function Users() {
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState({ ...EMPTY })
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [tempPwd, setTempPwd] = useState<{ account: string; password: string; expiresAt: string } | null>(null)
 
 
   const load = async () => {
@@ -52,10 +55,10 @@ export default function Users() {
       else if (!/^[A-Za-z0-9_]{3,20}$/.test(form.loginAccount.trim())) e.loginAccount = '账号为 3-20 位字母、数字或下划线'
     }
     if (!form.userName.trim()) e.userName = '请输入姓名'
-    // 密码：新增时必填；编辑时留空表示不修改。复杂度与后端 Validators.IsStrongPassword 同一条规则
+    // 密码只在新增时设置初始值；编辑资料不再直接改密码，必须走行内「重置密码」
     if (!editId && !form.password) e.password = '请输入初始密码'
-    else if (form.password && (form.password.length < 8 || !/[A-Za-z]/.test(form.password) || !/\d/.test(form.password)))
-      e.password = editId ? '新密码至少 8 位，且需同时包含字母和数字' : '初始密码至少 8 位，且需同时包含字母和数字'
+    else if (!editId && (form.password.length < 8 || !/[A-Za-z]/.test(form.password) || !/\d/.test(form.password)))
+      e.password = '初始密码至少 8 位，且需同时包含字母和数字'
     else if (form.password.length > 50) e.password = '密码长度不能超过 50 位'
     setErrors(e)
     return Object.keys(e).length === 0
@@ -65,7 +68,7 @@ export default function Users() {
     if (!validate()) return
     try {
       if (editId) {
-        await userApi.update(editId, { userName: form.userName.trim(), password: form.password || undefined })
+        await userApi.update(editId, { userName: form.userName.trim() })
         toast('账号信息已更新', 'success')
       } else {
         await userApi.create({ ...form, loginAccount: form.loginAccount.trim(), userName: form.userName.trim() })
@@ -97,6 +100,28 @@ export default function Users() {
     setShowModal(true)
   }
 
+
+  /** 生成一次性临时密码：明文由管理员当面/安全渠道转交，系统不留明文 */
+  const handleResetPassword = async (u: StaffUser) => {
+    const ok = await confirm({
+      title: '重置密码',
+      message: `将为「${u.loginAccount}」生成一次性临时密码，原密码立即失效、该账号现有登录全部下线。临时密码 24 小时内有效，本人首次登录必须修改密码。`,
+      type: 'warning',
+      confirmText: '生成临时密码',
+    })
+    if (!ok) return
+    try {
+      const res: any = await userApi.resetPassword(u.userId)
+      setTempPwd({ account: u.loginAccount, password: res.data?.temporaryPassword || '', expiresAt: res.data?.expiresAt || '' })
+      load()
+    } catch (e: any) { toast(e?.message || '重置密码失败', 'error') }
+  }
+
+  const copyTempPassword = async () => {
+    if (!tempPwd?.password) return
+    try { await navigator.clipboard.writeText(tempPwd.password); toast('临时密码已复制', 'success') }
+    catch { toast('复制失败，请手动选择文本', 'warning') }
+  }
 
   const handleDelete = async (u: StaffUser) => {
     const ok = await confirm({
@@ -149,6 +174,35 @@ export default function Users() {
     }
   }
 
+  const columns: DataTableColumn<StaffUser>[] = [
+    { key: 'loginAccount', label: '登录账号', className: 'mono strong' },
+    { key: 'userName', label: '姓名' },
+    {
+      key: 'roleName', label: '角色',
+      render: u => (
+        <span className={`status-tag ${u.roleName === '管理员' ? 'status-danger' : u.roleName === '财务' ? 'status-warning' : 'status-primary'}`}>
+          {u.roleName}
+        </span>
+      ),
+    },
+    {
+      key: 'userStatus', label: '状态',
+      render: u => <span className={`status-tag ${u.userStatus === 1 ? 'status-success' : 'status-default'}`}>{u.userStatus === 1 ? '启用' : '禁用'}</span>,
+    },
+    { key: 'loginFailCount', label: '失败次数', numeric: true, className: 'col-hide-md' },
+    {
+      key: 'actions', label: '操作',
+      render: u => (
+        <div className="btn-group">
+          <button className="btn-sm btn-sm-default" onClick={() => openEditor(u)}>编辑</button>
+          <button className="btn-sm btn-sm-default" onClick={() => handleResetPassword(u)}>重置密码</button>
+          <button className="btn-sm btn-sm-default" onClick={() => handleToggle(u)}>{u.userStatus === 1 ? '禁用' : '启用'}</button>
+          <button className="btn-sm btn-sm-danger" onClick={() => handleDelete(u)} disabled={u.roleName === '管理员'} title={u.roleName === '管理员' ? '唯一管理员账号不可删除' : ''}>删除</button>
+        </div>
+      ),
+    },
+  ]
+
   return (
     <div className="card">
       <div className="card-title">
@@ -180,41 +234,10 @@ export default function Users() {
       </div>
 
       <div className="toolbar-note" style={{ margin: '-6px 0 14px' }}>
-        <Icon name="shield" size={14} />前台、财务账号的登录密码可随时查看（用于当面告知本人）；每次查看都会写入系统操作日志，可追溯。
+        <Icon name="shield" size={14} />系统不保存明文密码；重置会生成一次性临时密码，本人首次登录必须修改。不要把临时密码发到聊天或工单。
       </div>
 
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>登录账号</th><th>姓名</th><th>角色</th><th>状态</th>
-              <th className="num col-hide-md">失败次数</th><th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(u => (
-              <tr key={u.userId}>
-                <td className="mono strong">{u.loginAccount}</td>
-                <td>{u.userName}</td>
-                <td>
-                  <span className={`status-tag ${u.roleName === '管理员' ? 'status-danger' : u.roleName === '财务' ? 'status-warning' : 'status-primary'}`}>
-                    {u.roleName}
-                  </span>
-                </td>
-                <td><span className={`status-tag ${u.userStatus === 1 ? 'status-success' : 'status-default'}`}>{u.userStatus === 1 ? '启用' : '禁用'}</span></td>
-                <td className="num col-hide-md">{u.loginFailCount}</td>
-                <td>
-                  <div className="btn-group">
-                    <button className="btn-sm btn-sm-default" onClick={() => openEditor(u)}>编辑</button>
-                    <button className="btn-sm btn-sm-default" onClick={() => handleToggle(u)}>{u.userStatus === 1 ? '禁用' : '启用'}</button>
-                    <button className="btn-sm btn-sm-danger" onClick={() => handleDelete(u)} disabled={u.roleName === '管理员'} title={u.roleName === '管理员' ? '唯一管理员账号不可删除' : ''}>删除</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable columns={columns} rows={filtered} rowKey={u => u.userId} ariaLabel="员工账号列表" />
 
       {loading && <div className="loading-line"><Icon name="refresh" size={18} />数据加载中…</div>}
       {!loading && filtered.length === 0 && (
@@ -266,17 +289,20 @@ export default function Users() {
                 />
                 {errors.userName && <div className="field-error">{errors.userName}</div>}
               </div>
-              <div className="form-group">
-                <label>{editId ? '重置密码（留空表示不修改）' : '初始密码'} {!editId && <span className="req">*</span>}</label>
-                <input
-                  type="password"
-                  className={errors.password ? 'has-error' : ''}
-                  value={form.password}
-                  onChange={e => { setForm({ ...form, password: e.target.value }); setErrors({ ...errors, password: '' }) }}
-                  placeholder="6-50 位"
-                />
-                {errors.password && <div className="field-error">{errors.password}</div>}
-              </div>
+              {!editId && (
+                <div className="form-group">
+                  <label>初始密码 <span className="req">*</span></label>
+                  <input
+                    type="password"
+                    className={errors.password ? 'has-error' : ''}
+                    value={form.password}
+                    onChange={e => { setForm({ ...form, password: e.target.value }); setErrors({ ...errors, password: '' }) }}
+                    placeholder="至少 8 位，含字母和数字"
+                  />
+                  {errors.password && <div className="field-error">{errors.password}</div>}
+                  <div className="field-hint">初始密码用于首次登录；如员工遗失，请用列表中的「重置密码」生成一次性临时密码。</div>
+                </div>
+              )}
               {!editId && (
                 <div className="form-group">
                   <label>角色</label>
@@ -291,6 +317,39 @@ export default function Users() {
             <div className="modal-footer">
               <button className="btn-sm btn-sm-default" onClick={() => setShowModal(false)}>取消</button>
               <button className="btn-sm btn-sm-primary" onClick={handleSave}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tempPwd && (
+        <div className="modal-overlay" onClick={() => setTempPwd(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <span>一次性临时密码</span>
+              <button className="close-btn" onClick={() => setTempPwd(null)}><Icon name="close" size={15} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="callout callout-warning">
+                <Icon name="warning" size={18} chip />
+                <div>
+                  <strong>仅显示这一次，关闭后无法再次查看</strong>
+                  <p>请通过安全渠道当面交给「{tempPwd.account}」，不要发到聊天、工单或邮件。临时密码 24 小时内有效，首次登录必须改密。</p>
+                </div>
+              </div>
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label>临时密码</label>
+                <div className="input-affix">
+                  <input readOnly value={tempPwd.password} className="mono" onFocus={e => e.currentTarget.select()} />
+                  <button type="button" className="input-affix-btn" onClick={copyTempPassword} title="复制临时密码">
+                    <Icon name="copy" size={16} />
+                  </button>
+                </div>
+                {tempPwd.expiresAt && <div className="field-hint">失效时间：{fmtDT(tempPwd.expiresAt)}</div>}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-sm btn-sm-default" onClick={() => setTempPwd(null)}>关闭</button>
             </div>
           </div>
         </div>

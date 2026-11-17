@@ -60,6 +60,11 @@ export default function StaffLoginPanel({
       const info = res.data
       login(info)
       toast(`欢迎回来，${info.userName}`, 'success')
+      // 管理员发放的临时密码：先强制改密，改完再回原目标页
+      if (info.mustChangePassword) {
+        navigate('/change-password', { replace: true })
+        return
+      }
       // 回跳来源页：守卫转来登录时记录的原路径，仅当该路径对本次登录的角色可访问时才回跳
       const from = (location.state as { from?: string } | null)?.from
       const target = from && isRegisteredPath(from) && canAccess(from, info.roleName) ? from : homePathOf(info)

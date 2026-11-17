@@ -574,7 +574,7 @@ export default function Reports() {
       {/* 打印抬头：屏幕上不显示，仅在报表打印（body.print-report）时进纸面 */}
       <div className="print-header">
         <div className="print-header-title">电动车出租店出租管理系统 — 统计报表（{isFinance ? '财务口径' : '管理员运营口径'}）</div>
-        <div className="print-header-meta">统计区间：{rangeText} ｜ 打印时间：{new Date().toLocaleString('zh-CN', { hour12: false })}</div>
+        <div className="print-header-meta">统计区间：{rangeText} ｜ 打印时间：{fmtDT(new Date().toISOString())}</div>
       </div>
       <div className="card-title">
         <Icon name="reports" size={18} chip />经营概览

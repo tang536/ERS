@@ -4,7 +4,7 @@ import { memberApi, paymentApi, pointApi } from '@/api'
 import { setAuth } from '@/hooks/useAuth'
 import Icon from '@/components/Icon'
 import PayBrandIcon from '@/components/PayBrandIcon'
-import { PAY_CHANNEL_META, PAY_CHANNELS } from '@/utils/payChannels'
+import { PAY_CHANNEL_META, PAY_CHANNELS, fetchPublicPayChannels, type PublicPayChannel } from '@/utils/payChannels'
 import { openCashier } from '@/utils/payWindow'
 import { fmtDT } from '@/utils/datetime'
 import type { PointSummary } from '@/types'
@@ -16,6 +16,27 @@ interface Option {
   rightsDesc?: string | null
   isCurrent: boolean
   canBuy: boolean
+}
+
+/** 10 折等价于无折扣，不再显示成「10.0 折」与「无折扣」两行 */
+function discountText(discount: number) {
+  return discount >= 1 ? '无折扣' : `${(discount * 10).toFixed(1)} 折`
+}
+
+/** 权益说明与折扣重复时不再二次展示（例如折扣 7.5 折、权益说明 75折） */
+function displayRightsDesc(desc: string | null | undefined, discount: number) {
+  const text = (desc || '').trim()
+  if (!text) return ''
+  const normalized = text.replace(/[。.\s]/g, '')
+  // 「无折扣 / 不打折 / 10 折」本来就是当前折扣列的另一种说法，不再重复一行
+  if (discount >= 1 && /^(无折扣|不打折|10折|100折)$/.test(normalized)) return ''
+  // 7.5 折 / 75 折 / 5 折 / 50 折都是同一折扣的不同写法，按数值而不是字符串比较
+  const numeric = normalized.match(/^(\d+)折$/)
+  if (numeric && discount < 1) {
+    const n = Number(numeric[1])
+    if (Math.abs(n - discount * 10) < 0.01 || Math.abs(n - discount * 100) < 0.01) return ''
+  }
+  return text
 }
 
 /**
@@ -52,6 +73,7 @@ export default function Membership() {
   // 待选支付方式的会员等级：点「购买」后先弹渠道选择，确认后再发起支付
   const [buyTarget, setBuyTarget] = useState<Option | null>(null)
   const [channel, setChannel] = useState('支付宝')
+  const [channelStatus, setChannelStatus] = useState<Record<string, PublicPayChannel>>({})
   // 已发起支付的 HY 交易号：模拟收银台在新窗口付款，当前页轮询感知结果
   const [payingTradeNo, setPayingTradeNo] = useState<string | null>(null)
   const [points, setPoints] = useState<PointSummary | null>(null)
@@ -78,6 +100,7 @@ export default function Membership() {
   }, [toast])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { fetchPublicPayChannels().then(setChannelStatus) }, [])
   useEffect(() => {
     pointApi.summary()
       .then((res: any) => setPoints(res.data || null))
@@ -219,12 +242,12 @@ export default function Membership() {
         <div className="stats-grid">
           <div className="stat-card tone-indigo">
             <div className="label">当前折扣</div>
-            <div className="value">{(data.memberDiscount * 10).toFixed(1)} 折</div>
+            <div className="value">{discountText(data.memberDiscount)}</div>
             <div className="icon-bg"><Icon name="settlements" size={24} chip /></div>
           </div>
           <div className="stat-card tone-amber">
-            <div className="label">可升级等级</div>
-            <div className="value">{data.options.filter(o => o.canBuy).length}</div>
+            <div className="label">可购买等级</div>
+            <div className="value">{data.options.filter(o => o.canBuy).length} 个</div>
             <div className="icon-bg"><Icon name="profile" size={24} chip /></div>
           </div>
         </div>
@@ -286,8 +309,10 @@ export default function Membership() {
                 {o.memberLevel}
                 {o.isCurrent && <span className="status-tag status-success">当前</span>}
               </div>
-              <div className="member-discount">{(o.discount * 10).toFixed(1)} 折</div>
-              <div className="member-desc">{o.rightsDesc || '—'}</div>
+              <div className="member-discount">{discountText(o.discount)}</div>
+              {displayRightsDesc(o.rightsDesc, o.discount) && (
+                <div className="member-desc">{displayRightsDesc(o.rightsDesc, o.discount)}</div>
+              )}
               <div className="member-price">
                 {o.isCurrent ? '已拥有' : `¥${o.price}`}
               </div>
@@ -355,6 +380,7 @@ export default function Membership() {
                 {CHANNELS.map(ch => {
                   const meta = PAY_CHANNEL_META[ch]
                   const active = channel === ch
+                  const status = channelStatus[ch]
                   return (
                     <div key={ch} className={`pay-method ${active ? 'active' : ''}`} style={{ cursor: 'pointer' }}
                       onClick={() => setChannel(ch)}>
@@ -362,8 +388,14 @@ export default function Membership() {
                         <PayBrandIcon brand={meta.brand} icon={meta.icon} color={meta.color} size={24} />
                       </span>
                       <div className="pay-method-text">
-                        <strong>{ch}</strong>
-                        <small>{meta.desc}</small>
+                        <strong>{ch}
+                          {status && (
+                            <span className={`status-tag ${status.real ? 'status-success' : 'status-warning'}`} style={{ marginLeft: 8 }}>
+                              {status.status}
+                            </span>
+                          )}
+                        </strong>
+                        <small>{status?.detail || meta.desc}</small>
                       </div>
                       <span className={`pay-radio ${active ? 'on' : ''}`} />
                     </div>

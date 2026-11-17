@@ -325,7 +325,7 @@ export default function Customers() {
       <div className="toolbar">
         <div className="search-box">
           <input
-            placeholder="搜索姓名 / 用户名 / 身份证号 / 手机号"
+            placeholder="姓名 / 账号 / 手机号"
             value={keyword}
             onChange={e => { setKeyword(e.target.value); setPage(1) }}
           />
@@ -587,7 +587,7 @@ export default function Customers() {
                     <button className="btn-sm btn-sm-primary" onClick={applyRecordFilter}>
                       <Icon name="search" size={14} />查询
                     </button>
-                    <button className="btn-sm btn-sm-default" title="重置为默认筛选（近 30 天）"
+                    <button className="btn-sm btn-sm-default btn-icon-sm" title="重置为默认筛选（近 30 天）"
                       onClick={() => {
                         const initial = makeRecordFilter()
                         setRecordDraft(initial)
