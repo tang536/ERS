@@ -1,7 +1,6 @@
 import axios from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
 import type {
-  UserInfo,
   CreateUserPayload, UpdateUserPayload,
   CreateCustomerPayload, UpdateCustomerPayload,
   SaveVehiclePayload, BatchVehicleUpdatePayload,
@@ -10,11 +9,10 @@ import type {
   OpenShiftPayload, CloseShiftPayload,
   ChangeVehiclePayload, ReschedulePayload, SignContractPayload,
 } from '../types'
-import { clearAuth, setAuth } from '../hooks/useAuth'
+import { clearAuth } from '../hooks/useAuth'
+import { getAccessToken, setAccessToken } from '../hooks/authToken'
 
-const api = axios.create({ baseURL: '/api', timeout: 15000 })
-
-const STORAGE_KEY = 'user'
+const api = axios.create({ baseURL: '/api', timeout: 15000, withCredentials: true })
 
 /**
  * 从 JWT 读出剩余有效秒数。
@@ -40,32 +38,21 @@ const REFRESH_AHEAD_SECONDS = 10 * 60
 let refreshing: Promise<string | null> | null = null
 
 /**
- * 用续期令牌换新令牌。成功则写回本地登录态并返回新 access token，失败返回 null。
- *
- * 失败即代表**会话真的结束了**（续期令牌过期 / 账号在别处登录 / 被停用或改密后被强制下线），
- * 此时不重试、不清登录态——交给 401 分支统一处理，那里能拿到后端给的具体下线原因。
+ * 用 HttpOnly Cookie 里的续期令牌换新 access token。
+ * 前端读不到 refresh token，也不把它放进请求体；浏览器只在 /api/auth 路径自动携带 Cookie。
+ * 失败即代表会话真的结束了（续期令牌过期 / 账号在别处登录 / 被停用或改密），
+ * 不重试、不清登录态——交给 401 分支统一处理，那里能拿到后端给的具体下线原因。
  */
 function refreshAccessToken(): Promise<string | null> {
   if (refreshing) return refreshing
   refreshing = (async () => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (!raw) return null
-      const u: UserInfo = JSON.parse(raw)
-      if (!u.refreshToken) return null
-
       // 用裸 axios 而不是 api 实例：避免刷新请求再次进入本拦截器，形成递归
-      const res = await axios.post('/api/auth/refresh', { refreshToken: u.refreshToken })
-      const data = res.data?.data
-      if (!data?.token) return null
-
-      const next: UserInfo = {
-        ...u,
-        token: data.token,
-        refreshToken: data.refreshToken || u.refreshToken
-      }
-      setAuth(next)
-      return data.token as string
+      const res = await axios.post('/api/auth/refresh', {}, { withCredentials: true })
+      const token = res.data?.data?.token
+      if (!token) return null
+      setAccessToken(token)
+      return token as string
     } catch {
       return null
     } finally {
@@ -83,19 +70,12 @@ api.interceptors.request.use(async config => {
     config.headers['X-Client-Origin'] = window.location.origin
   }
 
-  const raw = localStorage.getItem(STORAGE_KEY)
-  if (!raw) return config
-
-  let u: UserInfo = JSON.parse(raw)
-  // 临期先换新，别让请求带着一个马上失效的令牌出门
-  if (u.refreshToken && secondsLeft(u.token) < REFRESH_AHEAD_SECONDS) {
-    const fresh = await refreshAccessToken()
-    if (fresh) {
-      const latest = localStorage.getItem(STORAGE_KEY)
-      if (latest) u = JSON.parse(latest)
-    }
+  let token = getAccessToken()
+  // 临期先换新，别让请求带着一个马上失效的令牌出门；刷新失败就照常发，401 分支还会再试一次。
+  if (token && secondsLeft(token) < REFRESH_AHEAD_SECONDS) {
+    token = (await refreshAccessToken()) || token
   }
-  config.headers.Authorization = `Bearer ${u.token}`
+  if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 
@@ -374,6 +354,8 @@ export const orderApi = {
     page: number; pageSize: number
   }) => api.get('/order', { params }),
   get: (id: number) => api.get(`/order/${id}`),
+  /** 订单时间线：下单、支付、取还车、换车/改期、结算按时间正序聚合 */
+  timeline: (id: number) => api.get(`/order/${id}/timeline`),
   /**
    * 柜台开单（系统操作「线下开单」）：后端建档 + 置车在租 + 当场收款同一步完成。
    * 客户不存在时后端自动建档。
@@ -389,8 +371,11 @@ export const orderApi = {
   createOnline: (data: {
     vehicleId: number; leaseStart: string; leaseEnd: string; payType?: string
     customerCouponId?: number | null; pointsUsed?: number; addonIds?: number[]
+    requestId?: string
   }) => api.post('/order/online', data),
   availableVehicles: () => api.get('/order/available-vehicles'),
+  /** 车辆可用日历：员工端按时间窗查每台车的占用档期（最长 31 天） */
+  calendar: (params?: { from?: string; to?: string; vehicleId?: number }) => api.get('/order/calendar', { params }),
   estimate: (leaseStart: string, leaseEnd: string, vehicleId?: number) =>
     api.get('/order/estimate', { params: { leaseStart, leaseEnd, vehicleId } }),
 
@@ -564,8 +549,8 @@ export const configApi = {
 
 // 支付
 export const paymentApi = {
-  /** from/to 为闭区间 */
-  list: (params?: { status?: string; from?: string; to?: string }) => api.get('/payment', { params }),
+  /** 分页查询支付流水；from/to 为闭区间，page 从 1 开始 */
+  list: (params?: { status?: string; from?: string; to?: string; page?: number; size?: number }) => api.get('/payment', { params }),
   refund: (id: number, amount: number) => api.put(`/payment/${id}/refund`, amount, { headers: { 'Content-Type': 'application/json' } }),
   /** 发起支付：返回 { orderNo, payType, amount, payUrl, realPay }，前端跳 payUrl */
   create: (data: { orderNo: string; payType: string }) => api.post('/payment/create', data),

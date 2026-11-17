@@ -162,14 +162,11 @@ function CopyBtn({ text, label = '复制' }: { text: string; label?: string }) {
 }
 
 /**
- * 密钥输入框：默认圆点遮字，点「显示」才明文。
+ * 密钥输入框：默认圆点遮字。
  *
- * 两个容易踩的坑，这版都处理了：
- *  ① 已保存的密钥后端只回脱敏串，输入框里本来是空的——此时点「显示」什么都不会出现，
- *     看起来就像按钮坏了。所以第一次点「显示」会按 field 去后端取**这一项**的明文填进来，
- *     管理员才能真正「看着已有配置改」，而不是只能整段重贴。
- *  ② 光能填不能删等于配置改不回去。加「清空此项」，把值置为后端约定的 CLEAR，
- *     保存时后端会把该项抹掉（留空仍然表示「保持不变」，两者语义不能混）。
+ * 后端已改为「只回指纹、不回明文」：点「显示」时不再把服务端保存的密钥载入输入框，
+ * 而是展示 SHA-256 前 12 位与长度，管理员据此核对「是不是同一把密钥」。
+ * 输入框留空 = 保持原值；要换密钥就直接粘贴新值，要删除则点「清空此项」。
  */
 function SecretInput({
   value, onChange, placeholder, isSet, rows = 3, field,
@@ -189,19 +186,17 @@ function SecretInput({
 
   const reveal = async () => {
     if (show) { setShow(false); return }
-    // 故意只在「输入框为空 + 且确实存过」时才去拉明文：
-    // 已经手动输入了新值时，点显示只是切换遮字，不该拿服务端的旧值覆盖用户正在编辑的内容。
+    // 只在「输入框为空 + 且确实存过」时查指纹：已经手动输入新值时，点显示只切换遮字。
     if (!value && isSet && field) {
       setLoading(true)
       setHint('')
       try {
         const res: any = await paymentApi.secret(field)
-        const plain = res?.data?.value ?? ''
-        if (plain) {
-          onChange(plain)
-          setHint('已载入服务端保存的明文，可直接修改后保存')
+        const data = res?.data ?? {}
+        if (data.set) {
+          setHint(`已保存 · 指纹 ${data.fingerprint || '—'} · ${data.length ?? 0} 字符；出于安全不回显明文`)
         } else {
-          setHint('服务端没有保存这一项')
+          setHint(data.message || '服务端没有保存这一项')
         }
         setShow(true)
       } catch (e: any) {

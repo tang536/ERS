@@ -68,18 +68,18 @@ public class PayReconcileLog
     ///<summary>新建一条对账记录：文本列统一去空格并按列宽截断，避免脏数据把整批写入拖垮</summary>
     public static PayReconcileLog Create(string channel, string? orderNo, int? payId, string? localStatus,
         string? channelStatus, decimal localAmount, decimal? channelAmount, string action, string? detail) => new()
-    {
-        Channel = Cut(channel, ChannelMaxLength),
-        OrderNo = Cut(orderNo, OrderNoMaxLength),
-        PayId = payId,
-        LocalStatus = Cut(localStatus, StatusMaxLength),
-        ChannelStatus = string.IsNullOrWhiteSpace(channelStatus) ? null : Cut(channelStatus, StatusMaxLength),
-        LocalAmount = localAmount,
-        ChannelAmount = channelAmount,
-        Action = Cut(action, ActionMaxLength),
-        Detail = Cut(detail, DetailMaxLength),
-        CreatedAt = AppClock.Now
-    };
+        {
+            Channel = Cut(channel, ChannelMaxLength),
+            OrderNo = Cut(orderNo, OrderNoMaxLength),
+            PayId = payId,
+            LocalStatus = Cut(localStatus, StatusMaxLength),
+            ChannelStatus = string.IsNullOrWhiteSpace(channelStatus) ? null : Cut(channelStatus, StatusMaxLength),
+            LocalAmount = localAmount,
+            ChannelAmount = channelAmount,
+            Action = Cut(action, ActionMaxLength),
+            Detail = Cut(detail, DetailMaxLength),
+            CreatedAt = AppClock.Now
+        };
 
     private static string Cut(string? value, int max) =>
         string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim()[..Math.Min(value.Trim().Length, max)];

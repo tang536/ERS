@@ -61,16 +61,16 @@ public class Contract
     ///<summary>签署：签名图与时间落库，状态固定为「已签署」</summary>
     public static Contract Sign(string contractNo, int orderId, int customerId, string version,
         string content, string contentHash, string signatureUrl, string? signIp, DateTime signTime) => new()
-    {
-        ContractNo = contractNo,
-        OrderId = orderId,
-        CustomerId = customerId,
-        Version = version,
-        Content = content,
-        ContentHash = contentHash,
-        SignatureUrl = signatureUrl,
-        SignTime = signTime,
-        SignIp = signIp,
-        Status = StatusSigned,
-    };
+        {
+            ContractNo = contractNo,
+            OrderId = orderId,
+            CustomerId = customerId,
+            Version = version,
+            Content = content,
+            ContentHash = contentHash,
+            SignatureUrl = signatureUrl,
+            SignTime = signTime,
+            SignIp = signIp,
+            Status = StatusSigned,
+        };
 }

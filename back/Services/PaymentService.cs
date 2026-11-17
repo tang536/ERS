@@ -15,30 +15,42 @@ public class PaymentService(AppDbContext db, AlipayService alipay, PayConfigServ
     private readonly BankPayService _bank = bank;
     private readonly ILogger<PaymentService> _logger = logger;
 
-    ///<summary>支付记录列表</summary>
-    public async Task<List<PaymentDto>> GetAll(string? status = null, DateTime? from = null, DateTime? to = null)
+    ///<summary>
+    /// 支付记录列表：日期区间**各自独立生效**（只传 from 或只传 to 都不会被忽略）。
+    /// 返回 PagedResult，不再用 Take(MaxUnpagedRows) 静默截断；默认 50 条/页，最多 200 条/页。
+    /// </summary>
+    public async Task<PagedResult<PaymentDto>> GetAll(string? status = null, DateTime? from = null, DateTime? to = null, int page = 1, int size = 50)
     {
         var q = _db.PaymentRecords.AsNoTracking().AsQueryable();
         if (!string.IsNullOrEmpty(status)) q = q.Where(p => p.PayStatus == status);
 
-        var rangeFrom = from?.Date;
-        var rangeTo = to?.Date.AddDays(1);
-        if (rangeFrom.HasValue && rangeTo.HasValue) q = q.Where(p => p.PayTime.HasValue && p.PayTime >= rangeFrom && p.PayTime < rangeTo);
+        // 两个边界分别判断：旧实现只在 from/to 同时存在时才过滤，单边日期会被悄悄忽略。
+        if (from.HasValue) q = q.Where(p => p.PayTime.HasValue && p.PayTime >= from.Value.Date);
+        if (to.HasValue) q = q.Where(p => p.PayTime.HasValue && p.PayTime < to.Value.Date.AddDays(1));
 
-        return await q.OrderByDescending(p => p.PayTime).Take(Paging.MaxUnpagedRows).Select(p => new PaymentDto
-        {
-            PayId = p.PayId,
-            OrderId = p.OrderId,
-            OrderNo = p.RentalOrder != null ? p.RentalOrder.OrderNo : "",
-            CustomerName = p.RentalOrder != null && p.RentalOrder.Customer != null ? p.RentalOrder.Customer.FullName : "",
-            VehicleNo = p.RentalOrder != null && p.RentalOrder.Vehicle != null ? p.RentalOrder.Vehicle.VehicleNo : "",
-            PayAmount = p.PayAmount,
-            PayType = p.PayType ?? "",
-            PayStatus = p.PayStatus,
-            RefundAmount = p.RefundAmount,
-            TransactionNo = p.TransactionNo ?? "",
-            PayTime = p.PayTime
-        }).ToListAsync();
+        var total = await q.CountAsync();
+        var (pageNo, pageSize, skip, take) = Paging.Normalize(page, size > 0 ? size : 50);
+        var rows = await q.OrderByDescending(p => p.PayTime)
+            .ThenByDescending(p => p.PayId)
+            .Skip(skip)
+            .Take(take)
+            .Select(p => new PaymentDto
+            {
+                PayId = p.PayId,
+                OrderId = p.OrderId,
+                OrderNo = p.RentalOrder != null ? p.RentalOrder.OrderNo : "",
+                CustomerName = p.RentalOrder != null && p.RentalOrder.Customer != null ? p.RentalOrder.Customer.FullName : "",
+                VehicleNo = p.RentalOrder != null && p.RentalOrder.Vehicle != null ? p.RentalOrder.Vehicle.VehicleNo : "",
+                PayAmount = p.PayAmount,
+                PayType = p.PayType ?? "",
+                PayStatus = p.PayStatus,
+                RefundAmount = p.RefundAmount,
+                TransactionNo = p.TransactionNo ?? "",
+                PayTime = p.PayTime
+            })
+            .ToListAsync();
+
+        return new PagedResult<PaymentDto>(rows, total, pageNo, pageSize);
     }
 
     ///<summary>退款结果：Message 直接给前台/财务看，RealMoney 表示是否真的走了资金通道</summary>

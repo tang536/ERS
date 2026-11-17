@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useUI } from '@/components/UIProvider'
 import { customerApi, vehicleApi, orderApi, printApi, couponApi, addonApi, pointApi } from '@/api'
 import Icon from '@/components/Icon'
@@ -6,6 +6,7 @@ import ReceiptModal from '@/components/ReceiptModal'
 import VehicleQrLookup from './VehicleQrLookup'
 import type { VehicleQrDetail, CreateOrderPayload, MyCoupon, AddonItem, PointSummary } from '@/types'
 import { nowDatetimeInput, afterDaysDatetimeInput, isBeforeNow, clampLeaseStart } from '@/utils/datetime'
+import { newRequestId } from '@/utils/requestId'
 
 const PAY_TYPES = ['微信', '支付宝', '现金', '银行卡']
 
@@ -24,6 +25,8 @@ type CustomerMode = 'existing' | 'new'
  */
 export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
   const { toast, confirm } = useUI()
+  /** 柜台开单幂等键：同一笔提交复用；表单要素变化时刷新，成功开单后再换新 */
+  const requestIdRef = useRef(newRequestId())
   const [customers, setCustomers] = useState<any[]>([])
   const [vehicles, setVehicles] = useState<any[]>([])
   const [mode, setMode] = useState<CustomerMode>('existing')
@@ -162,6 +165,11 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
   const rentAfterCoupon = Math.max(0, rentBase - couponAmount)
   const maxPoints = points ? Math.min(points.balance, Math.floor(rentAfterCoupon * 0.1 * 100)) : 0
   const pointsUsed = usePoints ? maxPoints : 0
+
+  // 客户/车辆/租期/权益任一变化 → 换新幂等键；同一笔提交的多次重试仍复用旧键。
+  useEffect(() => {
+    requestIdRef.current = newRequestId()
+  }, [mode, form, profile, newCustomer, couponId, usePoints, addonIds])
   const billableDays = preview ? Math.max(1, Math.ceil(preview.hours / 24)) : 1
   const addonFee = addons
     .filter(a => addonIds.includes(a.addonId))
@@ -267,10 +275,12 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
                   }
                 : {}),
             }),
+        requestId: requestIdRef.current,
       }
 
       const res: any = await orderApi.createStaff(payload)
       const order = res.data
+      requestIdRef.current = newRequestId()
       toast(mode === 'new' ? '线下订单创建成功，客户档案已同步建立' : '订单创建成功，车辆已置为在租状态', 'success')
 
       // 开单后立即拉取小票，前台可当场打印交付客户（顾客端亦可在「我的订单」自助打印）

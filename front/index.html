@@ -8,6 +8,11 @@
     <meta name="theme-color" content="#dc2626" />
     <!-- viewport-fit=cover：让页面铺到刘海屏边缘，配合 CSS 的 env(safe-area-inset-*) 留出安全区 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- 与后端安全头同口径：脚本/连接只允许本站；上传图片与二维码允许 data/blob；React 内联 style 需要 style-src 'unsafe-inline' -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; media-src 'self' blob:; object-src 'none'; frame-ancestors 'self'; form-action 'self'"
+    />
     <title>途电驿站</title>
   </head>
   <body>

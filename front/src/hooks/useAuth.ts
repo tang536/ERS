@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { UserInfo } from '../types'
+import { clearAccessToken, setAccessToken } from './authToken'
 
 const STORAGE_KEY = 'user'
 
@@ -23,9 +24,12 @@ function readStorage(): UserInfo | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as UserInfo
-    if (!parsed || !parsed.token) return null
-    return parsed
+    const parsed = JSON.parse(raw) as UserInfo & { token?: string; refreshToken?: string }
+    if (!parsed?.userId || !parsed?.roleName) return null
+    // 兼容旧版本：旧包曾把 access/refresh token 明文放在 localStorage，读到后立即清掉。
+    const { token: _legacyToken, refreshToken: _legacyRefresh, ...profile } = parsed
+    if (_legacyToken || _legacyRefresh) localStorage.setItem(STORAGE_KEY, JSON.stringify(profile))
+    return profile as UserInfo
   } catch {
     return null
   }
@@ -50,13 +54,20 @@ function getSnapshot() {
   return cache
 }
 
-export function setAuth(info: UserInfo) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(info))
-  cache = info
+/**
+ * 写入登录态。登录响应里的 token 只放进内存，其余资料落 localStorage。
+ * 更新资料（会员等级、实名完成等）时不传 token，不能清掉当前会话的 access token。
+ */
+export function setAuth(info: UserInfo & { token?: string }) {
+  const { token, ...profile } = info
+  if (token) setAccessToken(token)
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(profile))
+  cache = profile
   emit()
 }
 
 export function clearAuth() {
+  clearAccessToken()
   localStorage.removeItem(STORAGE_KEY)
   cache = null
   emit()

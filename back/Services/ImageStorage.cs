@@ -124,22 +124,39 @@ public class ImageStorage(IWebHostEnvironment env)
         return sb.Length == 0 ? string.Empty : sb.ToString() + "_";
     }
 
-    ///<summary>保存内存中的图片字节流（AI 生图成品下载后走这里，与上传同一套命名/目录规则）</summary>
+    ///<summary>保存内存中的图片字节流（AI 生图成品/合同签名下载后走这里，与上传同一套校验）</summary>
     public async Task<string> SaveStreamAsync(Stream content, string subDir, string ext)
     {
         if (!AllowedImageExt.Contains(ext.ToLowerInvariant())) throw new BusinessException("仅支持 jpg / jpeg / png / webp / gif 格式的图片");
 
-        var dir = Path.Combine(RootUploadsPath, subDir);
+        // SaveAsync 走 IFormFile 有文件大小与魔数校验；这里是内存流，必须补齐同一套规则，
+        // 否则合同签名或 AI 返回内容可以被伪造成任意字节落进 uploads。
+        await using var buffered = new MemoryStream();
+        await content.CopyToAsync(buffered);
+        if (buffered.Length == 0) throw new BusinessException("图片内容为空，请重新生成");
+        if (buffered.Length > MaxImageBytes) throw new BusinessException("图片不能超过 5MB，请压缩后再上传");
+
+        buffered.Seek(0, SeekOrigin.Begin);
+        var header = new byte[12];
+        var read = await buffered.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, CancellationToken.None);
+        var actual = DetectImageFormat(header.AsSpan(0, read))
+            ?? throw new BusinessException("文件内容不是可识别的图片，请重新生成");
+
+        var normalizedExt = ext.ToLowerInvariant();
+        if (!string.Equals(ExtAlias.GetValueOrDefault(normalizedExt), actual, StringComparison.Ordinal))
+            throw new BusinessException("图片内容与扩展名不一致，请重新生成");
+
+        var dir = Path.Combine(RootUploadsPath, subDir, AppClock.Now.ToString("yyyy-MM"));
         Directory.CreateDirectory(dir);
 
-        var name = $"{AppClock.Now:yyyyMMddHHmmss}_{Guid.NewGuid().ToString("N")[..8]}{ext.ToLowerInvariant()}";
+        var name = $"{AppClock.Now:yyyyMMddHHmmss}_{Guid.NewGuid().ToString("N")[..8]}{normalizedExt}";
         var path = Path.Combine(dir, name);
         await using (var fs = new FileStream(path, FileMode.Create))
         {
-            content.Seek(0, SeekOrigin.Begin);
-            await content.CopyToAsync(fs);
+            buffered.Seek(0, SeekOrigin.Begin);
+            await buffered.CopyToAsync(fs);
         }
-        return $"/uploads/{subDir}/{name}";
+        return $"/uploads/{subDir}/{AppClock.Now:yyyy-MM}/{name}";
     }
 
     ///<summary>删除一张已上传的图片（按 /uploads/ 开头的相对路径）</summary>

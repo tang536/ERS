@@ -18,6 +18,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MaintenanceOrder> MaintenanceOrders => Set<MaintenanceOrder>();
     public DbSet<ScrapRecord> ScrapRecords => Set<ScrapRecord>();
     public DbSet<SystemConfig> SystemConfigs => Set<SystemConfig>();
+    public DbSet<SessionState> Sessions => Set<SessionState>();
     public DbSet<SystemLog> SystemLogs => Set<SystemLog>();
     public DbSet<PayReconcileLog> PayReconcileLogs => Set<PayReconcileLog>();
     public DbSet<RenewalRecord> RenewalRecords => Set<RenewalRecord>();
@@ -123,6 +124,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(o => o.RentDiscount).HasDefaultValue(1.00m);
             e.Property(o => o.AddonFee).HasDefaultValue(0m);
             e.Property(o => o.PointsUsed).HasDefaultValue(0);
+            e.HasIndex(o => new { o.OrderStatus, o.LeaseEnd }).HasDatabaseName("idx_status_lease_end");
+        });
+
+        modelBuilder.Entity<SessionState>(e =>
+        {
+            e.HasIndex(s => s.SessionKey).IsUnique().HasDatabaseName("uk_session_key");
+            e.HasIndex(s => s.UpdateTime).HasDatabaseName("idx_session_update");
         });
 
         modelBuilder.Entity<CustomerCoupon>(e =>

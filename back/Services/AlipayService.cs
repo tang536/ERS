@@ -116,6 +116,11 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
             return "failure";
         }
 
+        //①.5 回调身份校验：验签只证明“报文由支付宝私钥签过”，还必须确认这笔通知属于当前应用/商户。
+        //否则攻击者用一个合法应用的回调报文重放到另一个应用，仍可能命中同名 out_trade_no。
+        if (!ValidateCallbackIdentity(form, rt))
+            return "failure";
+
         //② 重放防护：验签通过后，5 分钟窗口内「完全相同的报文」只放行一次。
         //   登记落在 pay_notify_log 唯一键上，多实例共享同一份判定（旧实现只在进程内有效）。
         form.TryGetValue("notify_id", out var notifyId);
@@ -132,6 +137,37 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
 
         var (ok, _) = await ApplyTradeResultAsync(form, "支付宝");
         return ok ? "success" : "failure";
+    }
+
+    ///<summary>
+    /// 校验回调是否属于当前生效的应用/商户。
+    /// app_id 必须与当前运行时一致；配置了 pid 时 seller_id 也必须一致。
+    /// 任何一个不匹配都直接拒绝，且只记录订单号与不匹配字段，不打印商户凭证。
+    /// </summary>
+    private bool ValidateCallbackIdentity(IDictionary<string, string> form, PayRuntime rt)
+    {
+        form.TryGetValue("app_id", out var callbackAppId);
+        form.TryGetValue(AlipayParamOutTradeNo, out var orderNo);
+
+        if (string.IsNullOrWhiteSpace(rt.AppId)
+            || !string.Equals(callbackAppId?.Trim(), rt.AppId?.Trim(), StringComparison.Ordinal))
+        {
+            _logger.LogWarning("支付宝回调 app_id 与当前应用不一致，已拒绝（订单 {OrderNo}）", orderNo ?? "(无)");
+            return false;
+        }
+
+        var expectedSellerId = rt.Pid?.Trim() ?? "";
+        if (expectedSellerId.Length > 0)
+        {
+            form.TryGetValue("seller_id", out var callbackSellerId);
+            if (!string.Equals(callbackSellerId?.Trim(), expectedSellerId, StringComparison.Ordinal))
+            {
+                _logger.LogWarning("支付宝回调 seller_id 与当前商户不一致，已拒绝（订单 {OrderNo}）", orderNo ?? "(无)");
+                return false;
+            }
+        }
+
+        return true;
     }
 
     ///<summary>内置模拟收银台地址：带服务端签名，通知端核对订单号、金额与支付方式</summary>
@@ -236,6 +272,44 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
         return await DbConcurrency.RunAsync(() => ApplyOrderPaidAsync(outTradeNo, tradeNo, totalAmount, payType), _logger, "支付通知入账", reset: () => _db.ChangeTracker.Clear());
     }
 
+    /// <summary>
+    /// 已取消订单收到支付成功通知时，给管理员/财务写一条「待人工退款」站内待办。
+    /// 不自动调用退款接口：取消原因、是否部分使用、退款金额需要财务核实，
+    /// 自动扣款/退款属于不可逆外部动作，必须由人确认。
+    /// </summary>
+    private async Task NotifyCancelledPaidAsync(RentalOrder order, string tradeNo, string payType)
+    {
+        try
+        {
+            var staffIds = await _db.SystemUsers.AsNoTracking()
+                .Where(u => u.UserStatus != 0 && u.Role != null
+                    && (u.Role.RoleName == "管理员" || u.Role.RoleName == "财务"))
+                .Select(u => u.UserId)
+                .ToListAsync();
+            if (staffIds.Count == 0) return;
+
+            var amount = order.TotalRent + order.Deposit;
+            var title = $"订单 {order.OrderNo} 已取消但收到支付成功通知";
+            var content = $"渠道：{payType}　金额：¥{amount:0.00}　交易号：{tradeNo}。"
+                + "订单已取消，这笔收款不会自动入账，请财务核实后原路退款，并在支付流水中登记退款结果。";
+            var link = $"/reports?orderNo={Uri.EscapeDataString(order.OrderNo)}";
+
+            foreach (var staffId in staffIds)
+            {
+                await _messages.SendAsync(
+                    ("staff", staffId),
+                    ("refund", order.OrderNo),
+                    (title, content),
+                    ("danger", link, true));
+            }
+        }
+        catch (Exception ex)
+        {
+            // 通知失败不能反向影响回调确认：日志保留订单号和异常类型，金额已在业务表中。
+            _logger.LogWarning(ex, "已取消订单 {OrderNo} 的退款待办通知写入失败（{ExType}）", order.OrderNo, ex.GetType().Name);
+        }
+    }
+
     ///<summary>租赁订单入账本体（必须在订单行锁的保护下执行）</summary>
     private async Task<(bool Ok, string Message)> ApplyOrderPaidAsync(string outTradeNo, string tradeNo, string totalAmount, string payType)
     {
@@ -265,6 +339,9 @@ public class AlipayService(AppDbContext db, PayConfigService payConfig, IOptions
             {
                 _logger.LogWarning("订单 {OrderNo} 已取消，仍收到支付通知，需人工退款。交易号 {TradeNo}", outTradeNo, tradeNo);
                 await tx.CommitAsync();
+                // 支付宝收到 success 后不会重推，必须把「钱已到账但订单已取消」变成
+                // 财务待办，而不是只留一条日志等人工发现。
+                await NotifyCancelledPaidAsync(order, tradeNo, payType);
                 return (true, "订单已取消，该笔收款需人工退款处理。");
             }
             if (order.OrderStatus != "待支付")

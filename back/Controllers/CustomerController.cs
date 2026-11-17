@@ -38,8 +38,9 @@ public class CustomerController(CustomerService svc) : ControllerBase
         });
     }
 
-    ///<summary>客户详情：工作人员可查任意客户，顾客仅能查自己</summary>
+    ///<summary>客户详情：管理员/前台可查任意客户，顾客仅能查自己；财务不再拥有客户 PII 读取权</summary>
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Policies.AdminOrReceptionOrCustomer)]
     public async Task<IActionResult> GetCustomerInfoById(int id)
     {
         if (IsCustomer && id != CurrentUserId)
@@ -80,8 +81,9 @@ public class CustomerController(CustomerService svc) : ControllerBase
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
-    ///<summary>客户消费记录</summary>
+    ///<summary>客户消费记录：管理员/前台可查任意客户，顾客仅能查自己；财务不再拥有客户明细读取权</summary>
     [HttpGet("{id:int}/records")]
+    [Authorize(Policy = Policies.AdminOrReceptionOrCustomer)]
     public async Task<IActionResult> GetCustomerRecords(int id, DateTime? from, DateTime? to, string? status)
     {
         if (IsCustomer && id != CurrentUserId)

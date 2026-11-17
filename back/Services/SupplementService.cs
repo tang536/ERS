@@ -40,7 +40,7 @@ public class SupplementService(AppDbContext db, MessageService messages, AlipayS
         switch (snap.PayType)
         {
             case "支付宝":
-                payUrl = await _alipay.CreatePagePayAsync(snap.OutTradeNo!, $"电动车租赁补缴 {snap.OrderNo}", snap.Amount, await BuildReturnUrl(), await _payConfig.BuildNotifyUrlAsync(ClientOrigin, "api/payment/alipay/notify"));
+                payUrl = await _alipay.CreatePagePayAsync(snap.OutTradeNo!, $"电动车租赁补缴 {snap.OrderNo}", snap.Amount, await BuildReturnUrl(), await _payConfig.BuildNotifyUrlAsync("api/payment/alipay/notify"));
                 realPay = real;
                 break;
             case "微信":
@@ -428,7 +428,7 @@ public class SupplementService(AppDbContext db, MessageService messages, AlipayS
         var subject = $"电动车租赁补缴 {snap.OrderNo}";
         //与订单/会员统一：付款完成后落到同一个「支付结果页」，不再各自回补缴页/订单页
         var returnUrl = await _payConfig.BuildReturnUrlAsync(ClientOrigin, "pay-result");
-        var notifyUrl = await _payConfig.BuildNotifyUrlAsync(ClientOrigin, "api/payment/alipay/notify");
+        var notifyUrl = await _payConfig.BuildNotifyUrlAsync("api/payment/alipay/notify");
         switch (channel)
         {
             case "支付宝":

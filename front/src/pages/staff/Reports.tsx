@@ -111,6 +111,8 @@ export default function Reports() {
 
   const [dashboard, setDashboard] = useState<any>(null)
   const [payments, setPayments] = useState<any[]>([])
+  /** 后端支付流水分页后的总数：表格只展示当前页，标题用总数说明范围 */
+  const [paymentTotal, setPaymentTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   /** 加载失败与「查到了但没数据」分开：前者给重试按钮，后者只是空态提示。
    *  共用 !dashboard 一个分支会让失败也显示「暂无可用报表数据」，误导排查方向。 */
@@ -142,11 +144,15 @@ export default function Reports() {
     // 支付流水仅财务（后端 Roles=财务）：管理员只看运营口径，不请求资金明细，
     // 否则 403 会把 Promise.all 整个带崩，报表页直接报错。
     const jobs: Promise<any>[] = [reportApi.summary(params.from, params.to)]
-    if (isFinance) jobs.push(paymentApi.list(params))
+    if (isFinance) jobs.push(paymentApi.list({ ...params, page: 1, size: 50 }))
     Promise.all(jobs)
       .then(([res, p]: any[]) => {
         setDashboard(res.data)
-        setPayments(isFinance ? (p?.data || []) : [])
+        //支付流水已改为 PagedResult<PaymentDto>：不再直接消费数组，兼容旧数组响应
+        const payload = p?.data
+        const rows = Array.isArray(payload) ? payload : (payload?.items || [])
+        setPayments(isFinance ? rows : [])
+        setPaymentTotal(isFinance ? (Number(payload?.total) || rows.length) : 0)
       })
       .catch((e: any) => setLoadError(errMessage(e, '报表数据加载失败')))
       .finally(() => setLoading(false))
@@ -1186,7 +1192,7 @@ export default function Reports() {
         <div className="card-title">
           <Icon name="settlements" size={16} chip />支付流水明细
           <span className="card-title-count">
-            {hasRange ? `区间内 ${payments.length} 笔，显示最近 10 笔` : '最近 10 笔'}
+            {hasRange ? `区间内共 ${paymentTotal} 笔，当前页 ${payments.length} 笔` : `共 ${paymentTotal} 笔，当前页 ${payments.length} 笔`}
           </span>
         </div>
         <div className="table-wrap">
@@ -1198,7 +1204,7 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {payments.slice(0, 10).map((p: any) => (
+              {payments.map((p: any) => (
                 <tr key={p.payId}>
                   <td className="mono">{p.payId}</td>
                   <td className="mono">{p.orderNo || '—'}</td>

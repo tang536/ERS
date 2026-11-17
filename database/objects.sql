@@ -258,8 +258,8 @@ BEGIN
     IF NOT (
       (OLD.`order_status` = '待支付' AND NEW.`order_status` IN ('已支付', '已取消'))
       OR (OLD.`order_status` = '已支付' AND NEW.`order_status` IN ('租赁中', '已完结', '已取消'))
-      OR (OLD.`order_status` = '租赁中' AND NEW.`order_status` IN ('已完结', '已取消'))
-      OR (OLD.`order_status` = '已完成' AND NEW.`order_status` IN ('已完结', '已取消'))
+      OR (OLD.`order_status` = '租赁中' AND NEW.`order_status` = '已完结')
+      OR (OLD.`order_status` = '已完成' AND NEW.`order_status` = '已完结')
     ) THEN
       SET v_msg = CONCAT('ERENTAL:订单状态不允许从「', OLD.`order_status`, '」变更为「', NEW.`order_status`, '」');
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;

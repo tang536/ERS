@@ -1,8 +1,17 @@
 using System.Data.Common;
 using ERental.Data;
+using ERental.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ERental.Tests;
+
+/// <summary>测试用的「未配置 Redis」实例：所有读写直接回落，不依赖本机 Redis 服务。</summary>
+internal static class TestRedis
+{
+    public static RedisState Disabled() => new(new ConfigurationBuilder().Build(), NullLogger<RedisState>.Instance);
+}
 
 /// <summary>
 /// MySQL 集成测试用的事实标记：只有显式配置了测试服务器连接串才执行。

@@ -355,6 +355,12 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     ///<summary>线下开单</summary>
     public async Task<OrderCreatedDto> Create(CreateOrderDto dto, int operatorId)
     {
+        // 幂等必须放在「车辆是否空闲」之前：重复提交时车已经被第一单占了，
+        // 若先判车辆状态，重试永远到不了幂等分支，用户会看到「车已被租走」而不是原订单。
+        var reused = await TryReuseOrderAsync(dto.RequestId, dto.CustomerId, dto.VehicleId,
+            dto.LeaseStart, dto.LeaseEnd, dto.NewCustomerIdCard ?? dto.IdCard);
+        if (reused is not null) return reused;
+
         //用 AsNoTracking 读车辆
         var vehicle = await _db.Vehicles.AsNoTracking().FirstOrDefaultAsync(v => v.VehicleId == dto.VehicleId) ?? throw new BusinessException("车辆不存在");
 
@@ -368,7 +374,7 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
 
         //柜台开单：前台当场当面收款（现金/扫码枪），订单直接置「已支付」，维持原有线下体验
         return await PlaceOrder(customer, vehicle, dto.LeaseStart, dto.LeaseEnd, dto.PayType, operatorId, paidImmediately: true,
-            new OrderBenefits(dto.CustomerCouponId, dto.PointsUsed, dto.AddonIds));
+            new OrderBenefits(dto.CustomerCouponId, dto.PointsUsed, dto.AddonIds), dto.RequestId);
     }
 
     ///<summary>线上下单</summary>
@@ -378,13 +384,16 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         if (customer.AccountStatus == "已注销") throw new BusinessException("该账号已注销，无法线上下单");
         if (!customer.ProfileCompleted) throw new BusinessException(RealNameRequiredMessage);
 
+        var reused = await TryReuseOrderAsync(dto.RequestId, customerId, dto.VehicleId, dto.LeaseStart, dto.LeaseEnd, null);
+        if (reused is not null) return reused;
+
         var vehicle = await _db.Vehicles.AsNoTracking().FirstOrDefaultAsync(v => v.VehicleId == dto.VehicleId) ?? throw new BusinessException("车辆不存在");
         //同 Create：仅作快速失败，并发正确性由 PlaceOrder 的原子占车保证
         if (vehicle.VehicleStatus != "空闲") throw new BusinessException($"车辆 {vehicle.VehicleNo} 已被他人租走，请重新选择");
 
         //线上下单：先落「待支付」单并锁车，待支付宝回调验签通过后再置「已支付」
         return await PlaceOrder(customer, vehicle, dto.LeaseStart, dto.LeaseEnd, dto.PayType, null, paidImmediately: false,
-            new OrderBenefits(dto.CustomerCouponId, dto.PointsUsed, dto.AddonIds));
+            new OrderBenefits(dto.CustomerCouponId, dto.PointsUsed, dto.AddonIds), dto.RequestId);
     }
 
     ///<summary>线下新客户按身份证号查重：命中复用，未命中则新建</summary>
@@ -412,8 +421,58 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         return created;
     }
 
+    /// <summary>
+    /// 幂等预处理：按 RequestId 找回已创建的订单。放在占车/客户建档之前，
+    /// 这样重复提交不会因为「车已被第一单占走」而失败，也不会再建一份客户档案。
+    /// 同一把键换了客户、车辆或租期时拒绝，避免把不同业务请求折叠成一张单。
+    /// </summary>
+    private async Task<OrderCreatedDto?> TryReuseOrderAsync(
+        string? requestKey, int customerId, int vehicleId, DateTime leaseStart, DateTime leaseEnd, string? idCard)
+    {
+        if (string.IsNullOrWhiteSpace(requestKey)) return null;
+
+        var key = requestKey.Trim();
+        if (key.Length > 64) throw new BusinessException("幂等键不能超过 64 位");
+
+        var existing = await _db.RentalOrders.AsNoTracking()
+            .Include(o => o.Customer)
+            .FirstOrDefaultAsync(o => o.RequestKey == key);
+        if (existing is null) return null;
+
+        if (leaseStart.Kind == DateTimeKind.Utc) leaseStart = leaseStart.ToLocalTime();
+        if (leaseEnd.Kind == DateTimeKind.Utc) leaseEnd = leaseEnd.ToLocalTime();
+
+        var now = AppClock.Now;
+        var nowMinute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Local);
+        // 客户端的起租时间已经过去时，PlaceOrder 会把它回落到「当前」；
+        // 重试间隔越久差得越多，此时不再比较精确起点，其他要素一致即可返回原单。
+        var startWasPast = leaseStart < nowMinute;
+        if (startWasPast) leaseStart = now;
+
+        // 起租时间可能因「早于当前自动回落到 now」每次重试都相差几秒，允许 2 分钟容差。
+        var startMatches = startWasPast || Math.Abs((existing.LeaseStart - leaseStart).TotalMinutes) <= 2;
+        if (existing.VehicleId != vehicleId
+            || !startMatches
+            || existing.LeaseEnd != leaseEnd)
+        {
+            throw new BusinessException("该幂等键已用于另一笔订单，请刷新页面后重新提交");
+        }
+
+        if (customerId > 0 && existing.CustomerId != customerId)
+            throw new BusinessException("该幂等键已用于另一位顾客的订单，请刷新页面后重新提交");
+
+        var expectedIdCard = string.IsNullOrWhiteSpace(idCard) ? null : idCard.Trim();
+        if (expectedIdCard is not null
+            && !string.Equals(existing.Customer?.IdCard, expectedIdCard, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new BusinessException("该幂等键已用于另一位顾客的订单，请刷新页面后重新提交");
+        }
+
+        return ToCreatedDto(existing);
+    }
+
     ///<summary>开单主流程（线下/线上共用）：计费、生成订单、占用车辆、登记收款true=柜台当场收款</summary>
-    private async Task<OrderCreatedDto> PlaceOrder(Customer customer, Vehicle vehicle, DateTime leaseStart, DateTime leaseEnd, string payType, int? operatorId, bool paidImmediately, OrderBenefits benefits)
+    private async Task<OrderCreatedDto> PlaceOrder(Customer customer, Vehicle vehicle, DateTime leaseStart, DateTime leaseEnd, string payType, int? operatorId, bool paidImmediately, OrderBenefits benefits, string? requestKey = null)
     {
         //时间口径统一到本地
         if (leaseStart.Kind == DateTimeKind.Utc) leaseStart = leaseStart.ToLocalTime();
@@ -425,6 +484,29 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         if (leaseStart < nowMinute) leaseStart = now;
         //还车时间必须晚于起租时间
         if (leaseEnd <= leaseStart) throw new BusinessException("还车时间必须晚于起租时间");
+
+        // 幂等快路径：同一 RequestId 已经创建过订单，直接返回原订单，不再重复扣券/扣积分/占车。
+        // 先比对客户、车辆与租期，防止调用方拿同一个键提交不同业务请求。
+        var normalizedRequestKey = string.IsNullOrWhiteSpace(requestKey) ? null : requestKey.Trim();
+        if (normalizedRequestKey is { Length: > 64 })
+            throw new BusinessException("幂等键不能超过 64 位");
+
+        if (normalizedRequestKey is not null)
+        {
+            var existing = await _db.RentalOrders.AsNoTracking()
+                .FirstOrDefaultAsync(o => o.RequestKey == normalizedRequestKey);
+            if (existing is not null)
+            {
+                if (existing.CustomerId != customer.CustomerId
+                    || existing.VehicleId != vehicle.VehicleId
+                    || existing.LeaseStart != leaseStart
+                    || existing.LeaseEnd != leaseEnd)
+                {
+                    throw new BusinessException("该幂等键已用于另一笔订单，请刷新页面后重新提交");
+                }
+                return ToCreatedDto(existing);
+            }
+        }
 
         var hours = CalcHours(leaseStart, leaseEnd);
         //计价按车辆取：每辆车有自己的日租金与押金，留空才回退全局配置
@@ -487,6 +569,7 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
                 (leaseStart, leaseEnd),
                 (totalRent, deposit),
                 paidImmediately ? "已支付" : "待支付");
+            order.SetRequestKey(normalizedRequestKey);
             //金额构成固化在订单上：结算时按本单当时的折扣率与优惠重算，不受会员之后升降级影响
             order.ApplyBenefits(discountAmount, discount, addonFee, benefits.CouponId, pointsUsed);
             _db.RentalOrders.Add(order);
@@ -509,6 +592,16 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
 
             await tx.CommitAsync();
             return ToCreatedDto(order);
+        }
+        catch (DbUpdateException ex) when (normalizedRequestKey is not null && DbConcurrency.IsDuplicateKey(ex))
+        {
+            // 两个相同 RequestId 的请求同时到达：唯一键只有一个能成功，另一个回滚后返回已创建订单。
+            await tx.RollbackAsync();
+            _db.ChangeTracker.Clear();
+            var existing = await _db.RentalOrders.AsNoTracking()
+                .FirstOrDefaultAsync(o => o.RequestKey == normalizedRequestKey);
+            if (existing is not null) return ToCreatedDto(existing);
+            throw;
         }
         catch
         {

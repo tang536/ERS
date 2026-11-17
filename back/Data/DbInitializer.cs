@@ -1,4 +1,5 @@
 ﻿using System.Data;
+using System.Text.Json;
 using ERental.Models;
 using ERental.Services;
 using Microsoft.EntityFrameworkCore;
@@ -17,6 +18,7 @@ public static class DbInitializer
     private const string TableCarCheckList = "car_check_list";
     private const string TableMessage = "message";
     private const string TableSystemLog = "system_log";
+    private const string TableSessionState = "session_state";
 
     // 权限字典里的模块名：多条权限共用同一模块，抽常量避免同一文案抄多遍
     private const string ModuleRentalOrder = "租赁订单管理";
@@ -36,7 +38,7 @@ public static class DbInitializer
     /// ⚠️ 改动 DbInitializer 里的 DDL（加列/加表/改约束）时必须把它 +1，
     /// 否则老库会因「版本已是最新」而跳过这次升级。
     /// </summary>
-    public const int SchemaVersion = 7;
+    public const int SchemaVersion = 9;
 
     /// <summary>幂等的结构升级：保证「老数据库」也能平滑支持新功能</summary>
     public static void EnsureSchemaUpgrades(AppDbContext db)
@@ -81,6 +83,7 @@ public static class DbInitializer
         UpgradeConfigColumns(db);
         UpgradeAccountStateColumns(db);
         CreateMissingTables(db);
+        MigrateLegacySessions(db);
         NormalizeRenewalDays(db);
         UpgradeVehicleColumns(db);
         UpgradeRentalColumns(db);
@@ -339,7 +342,68 @@ public static class DbInitializer
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付渠道对账流水表';
         """);
 
+        // 单点登录状态从 system_config 独立出来：登录/强退是每个已认证请求的读路径，
+        // 不应与支付密钥、门店参数共用一张配置表，也不应把会话 JSON 当配置项保存。
+        EnsureTable(db, TableSessionState, """
+        CREATE TABLE IF NOT EXISTS `session_state` (
+        `session_id` INT NOT NULL AUTO_INCREMENT,
+        `session_key` VARCHAR(64) NOT NULL COMMENT '账号键：staff.<id> / customer.<id>',
+        `session_token` VARCHAR(64) DEFAULT NULL COMMENT '当前会话 sid（空串=强制下线墓碑）',
+        `refresh_jti` VARCHAR(64) DEFAULT NULL COMMENT '当前续期令牌 jti',
+        `revoked_reason` VARCHAR(100) DEFAULT NULL COMMENT '强制下线原因',
+        `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后更新时间',
+        PRIMARY KEY (`session_id`),
+        UNIQUE KEY `uk_session_key` (`session_key`),
+        KEY `idx_session_update` (`update_time`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='登录会话状态表';
+        """);
+
         CreateOperationsTables(db);
+    }
+
+    /// <summary>
+    /// 把旧版 system_config 中的 sess.* 会话行搬到 session_state。
+    /// 迁移失败的单行按无效会话丢弃（用户重新登录即可），成功后清理旧配置键，
+    /// 避免同一份会话长期存在两套存储里。
+    /// </summary>
+    private static void MigrateLegacySessions(AppDbContext db)
+    {
+        var legacy = db.SystemConfigs.AsNoTracking()
+            .Where(c => c.ConfigKey.StartsWith("sess."))
+            .ToList();
+        if (legacy.Count == 0) return;
+
+        var existingKeys = db.Sessions.AsNoTracking()
+            .Select(s => s.SessionKey)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var row in legacy)
+        {
+            if (existingKeys.Contains(row.ConfigKey) || string.IsNullOrWhiteSpace(row.ConfigValue)) continue;
+
+            string? token = null;
+            string? revoked = null;
+            string? refreshJti = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(row.ConfigValue);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("Token", out var tokenEl)) token = tokenEl.GetString();
+                if (root.TryGetProperty("Revoked", out var revokedEl)) revoked = revokedEl.GetString();
+                if (root.TryGetProperty("RefreshJti", out var jtiEl)) refreshJti = jtiEl.GetString();
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            db.Sessions.Add(SessionState.Create(row.ConfigKey, token, refreshJti, revoked));
+            existingKeys.Add(row.ConfigKey);
+        }
+
+        db.SaveChanges();
+        // 只清旧会话键，不动支付密钥、门店参数等真正的配置。
+        db.SystemConfigs.Where(c => c.ConfigKey.StartsWith("sess.")).ExecuteDelete();
     }
 
     ///<summary>运营与顾客权益的 8 张表：券、持券、增值服务、订单服务、积分、交接班、订单变更、电子合同</summary>
@@ -774,6 +838,8 @@ public static class DbInitializer
         EnsureIndex(db, TableRentalOrder, "idx_create_time", "`create_time`");
         EnsureIndex(db, TableRentalOrder, "idx_lease_end", "`lease_end`");
         EnsureIndex(db, TableRentalOrder, "idx_order_status", "`order_status`");
+        // 租期提醒 / 车辆日历的核心过滤：status + lease_end 一起走索引，避免全表排序。
+        EnsureCompositeIndex(db, TableRentalOrder, "idx_status_lease_end", "`order_status`, `lease_end`", "租期提醒：按状态过滤后按到期时间排序");
         EnsureIndex(db, TablePaymentRecord, "idx_pay_time", "`pay_time`");
         EnsureIndex(db, TablePaymentRecord, "idx_pay_status", "`pay_status`");
         EnsureIndex(db, TableSystemLog, "idx_operate_time", "`operate_time`");
@@ -797,6 +863,7 @@ public static class DbInitializer
         EnsureUniqueIndex(db, "member_rights", "uk_member_level", "`member_level`", "会员等级名唯一（客户表自然外键）");
         EnsureNullableUniqueIndex(db, "coupon", "uk_coupon_redeem_code", "`redeem_code`", "券兑换码唯一");
         EnsureNullableUniqueIndex(db, TablePaymentRecord, "uk_pay_out_trade_no", "`out_trade_no`", "支付商户单号唯一");
+        EnsureNullableUniqueIndex(db, TableRentalOrder, "uk_rental_request_key", "`request_key`", "订单幂等键唯一（重复提交只保留一单）");
         EnsureUniqueIndex(db, "order_addon", "uk_order_addon", "`order_id`, `addon_id`", "同一订单同一增值服务唯一");
 
         // ② 复合索引：归还/占用的核心 SQL 都是「按车 + 按状态」二维过滤
@@ -960,7 +1027,8 @@ public static class DbInitializer
     }
 
     private static void EnsureMessageContentWidth(AppDbContext db)
-    {        if (!TableExists(db, TableMessage)) return;
+    {
+        if (!TableExists(db, TableMessage)) return;
         var current = ColumnType(db, TableMessage, "content");
         // 已是目标类型就什么都不做。同类型 MODIFY 虽是空操作，但每次启动发一条 ALTER
         // 仍要拿一次元数据锁，多实例同时重启时会互相排队。

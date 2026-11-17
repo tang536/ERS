@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { customerApi, orderApi, couponApi, addonApi, pointApi } from '@/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
 import { nowDatetimeInput, afterDaysDatetimeInput, isBeforeNow, clampLeaseStart } from '@/utils/datetime'
+import { newRequestId } from '@/utils/requestId'
 import type { RentableVehicle, RentEstimate, MyCoupon, AddonItem, PointSummary } from '@/types'
 
 /**
@@ -47,6 +48,8 @@ export default function RentVehicle() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { toast, confirm } = useUI()
+  /** 同一笔提交复用同一个幂等键：网络重试/双击不会重复开单；改租期、券或加装项时重置换新键 */
+  const requestIdRef = useRef(newRequestId())
 
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -130,6 +133,11 @@ export default function RentVehicle() {
   const maxPoints = points ? Math.min(points.balance, Math.floor(rentAfterCoupon * 0.1 * 100)) : 0
   const effectivePoints = usePoints ? maxPoints : 0
   const pointsAmount = effectivePoints / 100
+
+  // 订单要素一变化就换新幂等键；否则后端会把「同车同租期但换了券」的第二次提交当成重复单。
+  useEffect(() => {
+    requestIdRef.current = newRequestId()
+  }, [vehicleId, form.leaseStart, form.leaseEnd, couponId, usePoints, addonIds])
   const billableDays = estimate ? Math.max(1, Math.ceil(estimate.hours / 24)) : 1
   const addonFee = addons
     .filter(a => addonIds.includes(a.addonId))
@@ -173,8 +181,11 @@ export default function RentVehicle() {
         customerCouponId: couponAmount > 0 ? couponId : null,
         pointsUsed: effectivePoints,
         addonIds,
+        requestId: requestIdRef.current,
       })
       const order = res.data
+      //下一单必须换新键，否则后端会把这次的新订单当成上一单的重复提交
+      requestIdRef.current = newRequestId()
       navigate(`/pay/${encodeURIComponent(order.orderNo)}`)
     } catch (e2: any) {
       toast(e2?.message || '下单失败', 'error')

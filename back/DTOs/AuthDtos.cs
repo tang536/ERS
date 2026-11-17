@@ -1,4 +1,6 @@
-﻿namespace ERental.DTOs;
+﻿using System.Text.Json.Serialization;
+
+namespace ERental.DTOs;
 
 public class StaffLoginDto
 {
@@ -78,7 +80,9 @@ public class LoginResponseDto
     /// <summary>
     /// 续期令牌：access token 过期后用它换新令牌，避免用户填到一半被踢回登录页。
     /// 无状态实现（不新增会话表），有效性绑定在 JWT 的 sid 上——单点登录被顶掉后此令牌自动失效。
+    /// 服务端只把它写入 HttpOnly Cookie，绝不放进 JSON 响应体，避免 XSS 直接读取。
     /// </summary>
+    [JsonIgnore]
     public string RefreshToken { get; init; } = string.Empty;
 }
 

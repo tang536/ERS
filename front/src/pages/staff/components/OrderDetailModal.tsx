@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { renewalApi } from '@/api'
+import { orderApi, renewalApi } from '@/api'
 import type { Order } from '@/types'
 import Icon from '@/components/Icon'
 import { fmtDT } from '@/utils/datetime'
@@ -34,25 +34,32 @@ interface OrderDetailModalProps {
   onPrint?: (orderId: number) => void
 }
 
+interface TimelineEvent {
+  kind: string
+  title: string
+  detail?: string | null
+  time?: string | null
+  amount?: number | null
+}
+
 export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetailModalProps) {
   const [renewals, setRenewals] = useState<RenewalRecord[]>([])
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let alive = true
     setLoading(true)
-    renewalApi
-      .list(order.orderId)
-      .then((res: any) => {
-        if (alive) setRenewals(Array.isArray(res?.data) ? res.data : [])
-      })
-      .catch(() => {
-        // 续租记录取不到不影响订单本身可读，列表区留空即可，不弹错打断查看
-        if (alive) setRenewals([])
-      })
-      .finally(() => {
-        if (alive) setLoading(false)
-      })
+    // 时间线与续租记录一起拉：任一失败都不影响另一块展示，也不打断详情阅读。
+    const jobs = [
+      renewalApi.list(order.orderId)
+        .then((res: any) => { if (alive) setRenewals(Array.isArray(res?.data) ? res.data : []) })
+        .catch(() => { if (alive) setRenewals([]) }),
+      orderApi.timeline(order.orderId)
+        .then((res: any) => { if (alive) setTimeline(Array.isArray(res?.data?.events) ? res.data.events : []) })
+        .catch(() => { if (alive) setTimeline([]) }),
+    ]
+    Promise.allSettled(jobs).finally(() => { if (alive) setLoading(false) })
     return () => {
       alive = false
     }
@@ -132,6 +139,33 @@ export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetai
               <b>{order.earlyReturnStatus || '未申请'}</b>
             </div>
           </div>
+
+          <div className="qr-orders-title">订单时间线（{timeline.length}）</div>
+          {loading ? (
+            <div className="loading-line"><Icon name="refresh" size={16} />正在读取时间线…</div>
+          ) : timeline.length === 0 ? (
+            <div className="field-hint">该订单暂无时间线记录</div>
+          ) : (
+            <div className="timeline">
+              {timeline.map((event, index) => (
+                <div className="timeline-item" key={`${event.kind}-${index}`}>
+                  <span className={`timeline-dot ${event.kind === 'cancelled' ? 'is-danger' : ''}`} />
+                  <div className="timeline-body">
+                    <div className="timeline-head">
+                      <strong>{event.title}</strong>
+                      <span className="cell-time">{event.time ? fmtDT(event.time) : '时间未记录'}</span>
+                    </div>
+                    {event.detail && <div className="field-hint">{event.detail}</div>}
+                    {event.amount != null && (
+                      <div className={event.amount < 0 ? 'text-success' : 'text-danger'}>
+                        {event.amount < 0 ? '退回' : '收取'} ¥{Math.abs(event.amount).toFixed(2)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="qr-orders-title">
             续租记录（{renewals.length}）

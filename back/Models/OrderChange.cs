@@ -69,32 +69,32 @@ public class OrderChange
     ///<summary>换车变更</summary>
     public static OrderChange ForVehicle(int orderId, int oldVehicleId, int newVehicleId,
         decimal oldRent, decimal newRent, string? reason, int? operatorId) => new()
-    {
-        OrderId = orderId,
-        ChangeType = TypeVehicle,
-        OldVehicleId = oldVehicleId,
-        NewVehicleId = newVehicleId,
-        OldRent = oldRent,
-        NewRent = newRent,
-        DiffAmount = Math.Round(newRent - oldRent, 2),
-        Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
-        OperatorId = operatorId,
-    };
+        {
+            OrderId = orderId,
+            ChangeType = TypeVehicle,
+            OldVehicleId = oldVehicleId,
+            NewVehicleId = newVehicleId,
+            OldRent = oldRent,
+            NewRent = newRent,
+            DiffAmount = Math.Round(newRent - oldRent, 2),
+            Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
+            OperatorId = operatorId,
+        };
 
     ///<summary>改期变更</summary>
     public static OrderChange ForSchedule(int orderId, DateTime oldStart, DateTime oldEnd,
         DateTime newStart, DateTime newEnd, decimal oldRent, decimal newRent, string? reason, int? operatorId) => new()
-    {
-        OrderId = orderId,
-        ChangeType = TypeSchedule,
-        OldStart = oldStart,
-        OldEnd = oldEnd,
-        NewStart = newStart,
-        NewEnd = newEnd,
-        OldRent = oldRent,
-        NewRent = newRent,
-        DiffAmount = Math.Round(newRent - oldRent, 2),
-        Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
-        OperatorId = operatorId,
-    };
+        {
+            OrderId = orderId,
+            ChangeType = TypeSchedule,
+            OldStart = oldStart,
+            OldEnd = oldEnd,
+            NewStart = newStart,
+            NewEnd = newEnd,
+            OldRent = oldRent,
+            NewRent = newRent,
+            DiffAmount = Math.Round(newRent - oldRent, 2),
+            Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
+            OperatorId = operatorId,
+        };
 }

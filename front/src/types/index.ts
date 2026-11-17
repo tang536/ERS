@@ -8,12 +8,6 @@ export type RoleName = '管理员' | '前台' | '财务' | '顾客'
 export type UserType = 'customer' | 'staff' | 'admin' | 'reception' | 'finance'
 
 export interface UserInfo {
-  token: string
-  /**
-   * 续期令牌：access token 临近过期时用它静默换新令牌，避免用户填到一半被踢回登录页。
-   * 与 token 同属一个登录会话，账号在别处登录后一并失效（单点登录语义不变）。
-   */
-  refreshToken?: string
   userType: UserType
   /** 系统角色，用于路由与菜单判定 */
   roleName: RoleName | string
@@ -426,6 +420,8 @@ export interface CreateOrderPayload {
   pointsUsed?: number
   /** 勾选的增值服务（addon_item.addon_id） */
   addonIds?: number[]
+  /** 客户端幂等键：双击/网络重试时后端返回首次创建的订单，不会重复扣券或占车 */
+  requestId?: string
 }
 
 /** 归还结算（OrderDtos.cs → SettleOrderDto）：逾期费由后端按实际还车时间算，前端不传 */
