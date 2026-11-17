@@ -30,6 +30,7 @@ const PayPage = lazy(() => import('./pages/PayPage'))
 const SupplementPayPage = lazy(() => import('./pages/SupplementPayPage'))
 const MockPay = lazy(() => import('./pages/MockPay'))
 const PayResult = lazy(() => import('./pages/PayResult'))
+const ChangePassword = lazy(() => import('./pages/ChangePassword'))
 
 // 工作人员端页面（从 staff 工程合并而来）
 const Dashboard = lazy(() => import('./pages/staff/Dashboard'))
@@ -93,6 +94,9 @@ function Guard({ roles, children }: { roles?: string[]; children: JSX.Element })
   // 未登录 → 登录页（外层 Layout 守卫会先到这里）：原路径放进 state.from，
   // 由落地页判断来源是否员工路由来决定点亮哪张登录卡（见 pages/Landing.tsx）
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  // 临时密码未修改：除改密页外全部拦回，不能靠前端「提示」当权限
+  if (user.mustChangePassword && location.pathname !== '/change-password')
+    return <Navigate to="/change-password" replace />
   if (denied) {
     if (home === location.pathname) return <NotFound />
     return <Navigate to={home} replace />
@@ -133,6 +137,7 @@ function CustomerGuard({ pathKey, children }: { pathKey: string; children: JSX.E
 function RootIndex() {
   const { user } = useAuth()
   if (!user) return <Landing />
+  if (user.mustChangePassword) return <Navigate to="/change-password" replace />
   return <Navigate to={homePathOf(user)} replace />
 }
 
@@ -155,6 +160,9 @@ export default function App() {
           </Guard>
         }
       >
+        {/* 员工临时密码强制修改：允许所有员工角色，改密成功后重新登录 */}
+        <Route path="change-password" element={<Guard><ChangePassword /></Guard>} />
+
         {/* ===== 顾客端 ===== */}
         <Route path="my-orders" element={<CustomerGuard pathKey="/my-orders"><MyOrders /></CustomerGuard>} />
         <Route path="rent" element={<CustomerGuard pathKey="/rent"><RentBike /></CustomerGuard>} />

@@ -9,8 +9,8 @@ import Icon, { type IconName } from './Icon'
 import Avatar from './Avatar'
 import { authApi, customerApi, orderApi, reportApi, vehicleApi, messageApi } from '../api'
 import { logoutEverywhere } from '../utils/session'
+import { fmtDT } from '../utils/datetime'
 import { GITHUB_URL } from '../utils/links'
-import useTableLabels from '../hooks/useTableLabels'
 import type { NotificationItem } from '../types'
 
 /** 菜单定义：按业务模块分组，每个菜单声明允许访问的角色 */
@@ -83,6 +83,12 @@ const MENU_ALIAS: Record<string, string> = {
   '/coupons': '/profile',        // 我的优惠券：个人中心的小按钮进入
 }
 
+/** 归属菜单用于高亮，但浏览器标签标题仍应显示子页面自己的名字 */
+const PAGE_TITLE_OVERRIDE: Record<string, string> = {
+  '/coupons': '我的优惠券',
+  '/vehicle-catalog': '全部车辆',
+}
+
 /**
  * 带参数子页面的前缀归属。
  *
@@ -150,9 +156,6 @@ export default function Layout() {
       window.clearTimeout(fallback)
     }
   }, [])
-
-  // 手机端表格卡片化：给每个单元格补 data-label（列名），CSS 靠它渲染「列名 + 值」
-  useTableLabels()
 
   const [collapsed, setCollapsed] = useState(false)
   const [scrolled, setScrolled] = useState(false)
@@ -255,8 +258,9 @@ export default function Layout() {
   // 浏览器标签标题跟随当前页面：同时开几个标签时能一眼分辨，
   // 打印小票时 ReceiptModal 会临时改标题并在关闭时还原，两者不冲突。
   useEffect(() => {
-    document.title = activeMenu?.label ? `${activeMenu.label} · 途电驿站` : '途电驿站'
-  }, [activeMenu])
+    const pageLabel = PAGE_TITLE_OVERRIDE[location.pathname] || activeMenu?.label
+    document.title = pageLabel ? `${pageLabel} · 途电驿站` : '途电驿站'
+  }, [activeMenu, location.pathname])
 
   // Ctrl/⌘ + K 聚焦全局搜索：员工端高频操作是「搜单号」，不用先找输入框
   useEffect(() => {
@@ -747,8 +751,8 @@ export default function Layout() {
                             </span>
                             <span className="notify-desc">{n.description}</span>
                             <span className="notify-time">
-                              {n.time ? new Date(n.time).toLocaleString('zh-CN') : ''}
-                              {n.isRead && n.readTime && <em>（已读于 {new Date(n.readTime).toLocaleString('zh-CN')}）</em>}
+                              {n.time ? fmtDT(n.time) : ''}
+                              {n.isRead && n.readTime && <em>（已读于 {fmtDT(n.readTime)}）</em>}
                             </span>
                           </span>
                           <span

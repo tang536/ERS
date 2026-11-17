@@ -2,6 +2,7 @@
 using ERental.DTOs;
 using ERental.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
 
 namespace ERental.Services;
 
@@ -22,7 +23,8 @@ public class UserService(AppDbContext db, SessionRegistry sessions)
             UserName = u.UserName ?? "",
             RoleName = u.Role!.RoleName,
             UserStatus = u.UserStatus,
-            LoginFailCount = u.LoginFailCount
+            LoginFailCount = u.LoginFailCount,
+            MustChangePassword = u.MustChangePassword
         }).ToListAsync();
     }
 
@@ -57,19 +59,51 @@ public class UserService(AppDbContext db, SessionRegistry sessions)
         if (dto.UserStatus == 0 && user.UserStatus == 1) await EnsureNotLastActiveAdmin(user, "停用");
 
         user.Rename(dto.UserName);
+        //密码不再由「编辑资料」直接写入：重置必须走一次性临时密码接口，
+        //否则管理员改完密码既无法保证首次登录改密，也没有可交付的临时凭据。
         if (!string.IsNullOrEmpty(dto.Password))
-        {
-            if (!Validators.IsStrongPassword(dto.Password)) throw new BusinessException(Validators.PasswordRuleHint);
-            if (dto.Password.Length > MaxPasswordLength) throw new BusinessException($"密码长度不能超过 {MaxPasswordLength} 位");
-            //重置密码同时解除失败计数与锁定
-            user.SetPasswordHash(BCrypt.Net.BCrypt.HashPassword(dto.Password));
-        }
+            throw new BusinessException("请使用「重置密码」生成一次性临时密码，不要直接修改密码");
         if (dto.UserStatus.HasValue) user.ChangeStatus(dto.UserStatus.Value);
         await _db.SaveChangesAsync();
 
-        //管理员改了密码或停用账号 → 立刻清掉该账号的在线会话
-        if (!string.IsNullOrEmpty(dto.Password)) await _sessions.RevokeAllAsync(user.UserType, id, "密码已被管理员重置，请用新密码重新登录");
+        //停用账号 → 立刻清掉该账号的在线会话
         if (dto.UserStatus == 0) await _sessions.RevokeAllAsync(user.UserType, id, "账号已被管理员停用");
+    }
+
+    ///<summary>管理员生成一次性临时密码：本人首次登录必须改密，24 小时后失效</summary>
+    public async Task<ResetPasswordResultDto> ResetPasswordAsync(int id)
+    {
+        var user = await _db.SystemUsers.FindAsync(id) ?? throw new BusinessException("用户不存在");
+        if (user.UserStatus == 0) throw new BusinessException("账号已停用，请先启用再重置密码");
+
+        var temp = GenerateTemporaryPassword();
+        var expires = AppClock.Now.AddHours(24);
+        user.SetPasswordHash(BCrypt.Net.BCrypt.HashPassword(temp), requireChange: true, expire: expires);
+        await _db.SaveChangesAsync();
+        await _sessions.RevokeAllAsync(user.UserType, id, "管理员已重置密码，请用一次性临时密码重新登录");
+
+        return new ResetPasswordResultDto { TemporaryPassword = temp, ExpiresAt = expires };
+    }
+
+    ///<summary>生成至少 8 位、同时含字母与数字的临时密码（去掉易混淆字符）</summary>
+    private static string GenerateTemporaryPassword()
+    {
+        const string letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz";
+        const string digits = "23456789";
+        Span<char> chars = stackalloc char[10];
+        for (var i = 0; i < chars.Length; i++)
+        {
+            var source = i % 2 == 0 ? letters : digits;
+            chars[i] = source[RandomNumberGenerator.GetInt32(source.Length)];
+        }
+        //保证两种字符都出现（上面的交替生成已经满足）；再打乱顺序，避免固定模式
+        var shuffled = chars.ToArray();
+        for (var i = shuffled.Length - 1; i > 0; i--)
+        {
+            var j = RandomNumberGenerator.GetInt32(i + 1);
+            (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
+        }
+        return new string(shuffled);
     }
 
     public async Task DeleteStaff(int id)

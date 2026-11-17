@@ -451,7 +451,7 @@ export default function Orders() {
               <Icon name="search" size={14} className="filter-icon" />
               <input
                 className="filter-kw"
-                placeholder="搜索订单号 / 客户 / 车辆"
+                placeholder="订单号 / 客户 / 车牌"
                 value={keyword}
                 onChange={e => { setKeyword(e.target.value); setPage(1) }}
               />

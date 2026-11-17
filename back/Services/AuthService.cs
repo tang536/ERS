@@ -100,6 +100,8 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         }
         //账号侧 lock_until 不再由登录逻辑写入（自动锁账号=可被利用的拒绝服务，见方法注释）
         if (user.LockUntil.HasValue && user.LockUntil > AppClock.Now) throw new BusinessException($"账号已锁定，请于 {user.LockUntil:HH:mm} 后重试");
+        if (user.MustChangePassword && user.PwdResetExpire.HasValue && user.PwdResetExpire < AppClock.Now)
+            throw new BusinessException("临时密码已过期，请联系管理员重新生成");
 
         //角色分端隔离：登录页选的是「管理员/前台/财务」哪个页签，就必须是该角色的账号
         var actualRole = user.Role?.RoleName ?? RoleReception;
@@ -121,19 +123,21 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         //单点登录 + 刷新令牌轮换：刷新令牌带独立 jti，登录时与 sid 一起登记
         var refreshJti = Guid.NewGuid().ToString("N");
         var sid = await _sessions.IssueAsync(user.UserType, user.UserId, refreshJti);
-        var token = GenerateJwt(user.UserId, user.LoginAccount, user.UserType, roleName, sid);
+        var token = GenerateJwt(user.UserId, user.LoginAccount, user.UserType, roleName, sid, mustChangePassword: user.MustChangePassword);
         return new LoginResponseDto
         {
             Token = token,
             //续期令牌
-            RefreshToken = GenerateJwt(user.UserId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime(), refreshJti),
+            RefreshToken = GenerateJwt(user.UserId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime(), refreshJti, user.MustChangePassword),
             UserType = user.UserType,
             RoleName = roleName,
             //权限项：代码层授予清单（RolePermissionMap）对接出的权限编码
             PermissionCodes = await LoadPermissionCodesAsync(user.Role),
             UserName = user.UserName ?? user.LoginAccount,
             UserId = user.UserId,
-            ProfileCompleted = true
+            ProfileCompleted = true,
+            MustChangePassword = user.MustChangePassword,
+            PasswordResetExpire = user.PwdResetExpire
         };
     }
 
@@ -272,6 +276,30 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         }
         customer.SetMemberDiscount(await MemberDiscountLookup.OfLevelAsync(_db, customer.MemberLevel));
         return customer;
+    }
+
+    ///<summary>员工自助修改密码：临时密码首次登录与普通改密共用这一条入口</summary>
+    public async Task ChangeStaffPassword(int userId, ChangePasswordDto dto)
+    {
+        var oldPwd = dto.OldPassword;
+        var newPwd = dto.NewPassword;
+        if (string.IsNullOrEmpty(oldPwd)) throw new BusinessException("请输入原密码");
+        if (string.IsNullOrEmpty(newPwd)) throw new BusinessException("请输入新密码");
+
+        var user = await _db.SystemUsers.FindAsync(userId) ?? throw new BusinessException(MsgAccountNotFound);
+        if (user.UserStatus == 0) throw new BusinessException("账号已停用");
+        if (!BCrypt.Net.BCrypt.Verify(oldPwd, user.LoginPwd))
+        {
+            await WriteLog(user.UserId, $"员工修改密码失败：原密码错误（{user.LoginAccount}）", "用户登录", "失败");
+            throw new BusinessException("原密码不正确");
+        }
+        if (!Validators.IsStrongPassword(newPwd)) throw new BusinessException(Validators.PasswordRuleHint);
+        if (BCrypt.Net.BCrypt.Verify(newPwd, user.LoginPwd)) throw new BusinessException("新密码不能与原密码相同");
+
+        user.CompletePasswordChange(BCrypt.Net.BCrypt.HashPassword(newPwd));
+        await _db.SaveChangesAsync();
+        await WriteLog(user.UserId, $"员工修改登录密码成功（{user.LoginAccount}）", "用户登录", "成功");
+        await _sessions.RevokeAllAsync(user.UserType, userId, "密码已修改，请用新密码重新登录");
     }
 
     ///<summary>顾客自助修改登录密码（个人中心入口）</summary>
@@ -417,7 +445,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
     ///<summary>当前请求的客户端 IP</summary>
     private string? ResolveClientIp() => ClientIp.Resolve(_http.HttpContext);
 
-    private string GenerateJwt(int userId, string account, string userType, string role, string sessionToken, string tokenType = TokenTypeAccess, TimeSpan? lifetime = null, string? refreshJti = null)
+    private string GenerateJwt(int userId, string account, string userType, string role, string sessionToken, string tokenType = TokenTypeAccess, TimeSpan? lifetime = null, string? refreshJti = null, bool mustChangePassword = false)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -434,6 +462,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         ];
         //jti：续期令牌的一次性标识，刷新时轮换（旧令牌立即作废）
         if (!string.IsNullOrEmpty(refreshJti)) claims.Add(new(JwtRegisteredClaimNames.Jti, refreshJti));
+        if (mustChangePassword) claims.Add(new("must_change", "1"));
 
         var token = new JwtSecurityToken(
             issuer: _config["Jwt:Issuer"],
@@ -509,14 +538,16 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         var roleName = user.Role?.RoleName ?? RoleReception;
         return new LoginResponseDto
         {
-            Token = GenerateJwt(userId, user.LoginAccount, user.UserType, roleName, sid),
-            RefreshToken = GenerateJwt(userId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime(), newJti),
+            Token = GenerateJwt(userId, user.LoginAccount, user.UserType, roleName, sid, mustChangePassword: user.MustChangePassword),
+            RefreshToken = GenerateJwt(userId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime(), newJti, user.MustChangePassword),
             UserType = user.UserType,
             RoleName = roleName,
             PermissionCodes = await LoadPermissionCodesAsync(user.Role),
             UserName = user.UserName ?? user.LoginAccount,
             UserId = userId,
-            ProfileCompleted = true
+            ProfileCompleted = true,
+            MustChangePassword = user.MustChangePassword,
+            PasswordResetExpire = user.PwdResetExpire
         };
     }
 

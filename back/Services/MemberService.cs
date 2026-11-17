@@ -1,5 +1,6 @@
 ﻿using System.Data;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using ERental.Data;
 using ERental.DTOs;
 using ERental.Models;
@@ -9,7 +10,7 @@ using System.Text.Json;
 namespace ERental.Services;
 
 ///<summary>会员自助购买（顾客端）：选等级</summary>
-public class MemberService(AppDbContext db, LogService log, ILogger<MemberService> logger)
+public partial class MemberService(AppDbContext db, LogService log, ILogger<MemberService> logger)
 {
     private readonly AppDbContext _db = db;
     private readonly LogService _log = log;
@@ -247,6 +248,7 @@ public class MemberService(AppDbContext db, LogService log, ILogger<MemberServic
         if (level.Length > 20) throw new BusinessException("等级名称不能超过 20 个字");
         ValidateDiscount(dto.Discount);
         ValidatePrice(dto.PurchasePrice);
+        ValidateRightsDesc(dto.RightsDesc);
         if (await _db.MemberRights.AnyAsync(m => m.MemberLevel == level)) throw new BusinessException($"会员等级「{level}」已存在");
 
         var r = MemberRights.Create(level, dto.Discount, dto.MinRentCount, dto.PurchasePrice, dto.RightsDesc);
@@ -271,6 +273,7 @@ public class MemberService(AppDbContext db, LogService log, ILogger<MemberServic
     {
         ValidateDiscount(dto.Discount);
         ValidatePrice(dto.PurchasePrice);
+        ValidateRightsDesc(dto.RightsDesc);
         var r = await _db.MemberRights.FirstOrDefaultAsync(x => x.RightsId == id) ?? throw new BusinessException("会员类型不存在");
         var oldDiscount = r.Discount;
         var oldPrice = r.PurchasePrice;
@@ -288,6 +291,21 @@ public class MemberService(AppDbContext db, LogService log, ILogger<MemberServic
     {
         if (d is < 0.5m or > 1m) throw new BusinessException("折扣需在 0.5 ~ 1 之间（5 折 ~ 不打折）");
     }
+
+    /// <summary>
+    /// 权益说明只写折扣以外的真实权益。像「95折」「9.5 折」「无折扣」这类，
+    /// 折扣列已经精确表达，重复写会在会员页出现两遍，直接拒绝并给出改写方向。
+    /// </summary>
+    private static void ValidateRightsDesc(string? desc)
+    {
+        var text = (desc ?? string.Empty).Replace(" ", string.Empty).Trim();
+        if (text.Length == 0) return;
+        if (DiscountOnlyRegex().IsMatch(text))
+            throw new BusinessException("权益说明不要重复写折扣，请填写折扣以外的权益（如免费保养、优先取车）");
+    }
+
+    [GeneratedRegex(@"^无折扣$|^\d+(\.\d+)?折$")]
+    private static partial Regex DiscountOnlyRegex();
 
     private static void ValidatePrice(decimal? p)
     {

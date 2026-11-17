@@ -249,6 +249,29 @@ public partial class PayConfigService(AppDbContext db, IOptions<LanOptions> lan,
         return result;
     }
 
+    ///<summary>顾客端支付通道状态：不返回任何凭证，只告诉前端当前是真实收款还是模拟</summary>
+    public async Task<PublicPaymentChannelsDto> GetPublicChannelsAsync()
+    {
+        var admin = await GetChannelsAsync();
+        var items = admin.Items.Select(c =>
+        {
+            var real = c.Enabled && c.Configured;
+            return new PublicPaymentChannelDto
+            {
+                Key = c.Key,
+                Name = c.Name,
+                Real = real,
+                Status = real ? "正式" : (c.Configured ? "模拟" : "未配置"),
+                Detail = real
+                    ? "真实支付通道，支付成功会实际扣款。"
+                    : (c.Configured
+                        ? "通道已配置但未启用，当前使用模拟收银台，不会扣款。"
+                        : "通道尚未配置，当前使用模拟收银台，不会扣款。")
+            };
+        }).ToList();
+        return new PublicPaymentChannelsDto { Items = items };
+    }
+
     ///<summary>三条支付通道的状态汇总</summary>
     public async Task<PaymentChannelsDto> GetChannelsAsync()
     {

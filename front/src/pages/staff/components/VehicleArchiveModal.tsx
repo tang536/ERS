@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { vehicleApi } from '@/api'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
-import { fmtDT } from '@/utils/datetime'
+import { fmtDT, fmtD } from '@/utils/datetime'
 import type { VehicleArchive } from '@/types'
 
 const TYPE_TONE: Record<string, string> = {
@@ -55,7 +55,7 @@ export default function VehicleArchiveModal({ vehicleId, vehicleNo, onClose }: {
                 <Icon name="info" size={18} chip />
                 <span>
                   {data.brand || '未知品牌'} · 当前状态 {data.vehicleStatus}
-                  {data.buyTime ? ` · 购入于 ${String(data.buyTime).slice(0, 10)}` : ''}
+                  {data.buyTime ? ` · 购入于 ${fmtD(data.buyTime)}` : ''}
                   {data.dailyRent != null ? ` · 日租金 ¥${data.dailyRent}` : ' · 日租金按默认价'}
                   {data.deposit != null ? ` · 押金 ¥${data.deposit}` : ''}
                 </span>

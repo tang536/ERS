@@ -51,6 +51,26 @@ public sealed class SingleSessionMiddleware(RequestDelegate next)
                 }, context.RequestAborted);
                 return;
             }
+
+            //管理员发放了临时密码：除改密/退出外，所有业务接口都拒绝，避免拿到 token 后绕过前端提示
+            if (context.User.FindFirst("must_change")?.Value == "1")
+            {
+                var path = context.Request.Path.Value ?? string.Empty;
+                var allowed = path.EndsWith("/api/auth/staff-change-password", StringComparison.OrdinalIgnoreCase)
+                    || path.EndsWith("/api/auth/logout", StringComparison.OrdinalIgnoreCase);
+                if (!allowed)
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    context.Response.ContentType = "application/json; charset=utf-8";
+                    await context.Response.WriteAsJsonAsync(new ApiResponse<object>
+                    {
+                        Code = 403,
+                        Success = false,
+                        Message = "当前使用的是临时密码，请先修改密码后再继续操作"
+                    }, context.RequestAborted);
+                    return;
+                }
+            }
         }
 
         await _next(context);

@@ -13,6 +13,22 @@ import type { MemberRights } from '@/types'
  */
 const emptyForm = () => ({ memberLevel: '', discount: '0.9', minRentCount: '' as string, purchasePrice: '' as string, rightsDesc: '' })
 
+/** 权益说明若只是把折扣换个写法（如 7.5 折 / 75折），不再重复展示 */
+function nonDuplicateRights(desc: string | null | undefined, discount: number) {
+  const text = (desc || '').trim()
+  if (!text) return '—'
+  const normalized = text.replace(/[。.\s]/g, '')
+  // 折扣列已经把「不打折」讲清楚，权益说明再写「无折扣」就是重复
+  if (discount >= 1 && /^(无折扣|不打折|10折|100折)$/.test(normalized)) return '—'
+  // 同一个折扣的不同写法：7.5 折 / 75 折 / 5 折 / 50 折
+  const numeric = normalized.match(/^(\d+)折$/)
+  if (numeric && discount < 1) {
+    const n = Number(numeric[1])
+    if (Math.abs(n - discount * 10) < 0.01 || Math.abs(n - discount * 100) < 0.01) return '—'
+  }
+  return text
+}
+
 /**
  * 会员管理（管理员）：只做一件事——维护「会员类型」（权益表 member_rights）。
  *
@@ -168,7 +184,7 @@ export default function Members() {
                 <td className="num">{r.discount < 1 ? `${(r.discount * 10).toFixed(1)} 折` : '不打折'}</td>
                 <td className="num">{r.minRentCount != null ? r.minRentCount : '—'}</td>
                 <td className="num">{r.purchasePrice != null ? `¥${r.purchasePrice}` : '—'}</td>
-                <td>{r.rightsDesc || '—'}</td>
+                <td>{nonDuplicateRights(r.rightsDesc, r.discount)}</td>
                 <td className="num">{r.memberCount}</td>
                 <td>
                   <button className="btn-sm btn-sm-default" onClick={() => openEdit(r)}>编辑</button>

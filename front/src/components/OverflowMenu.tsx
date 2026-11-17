@@ -89,7 +89,7 @@ export default function OverflowMenu({ items, triggerLabel = '更多' }: {
       <button
         ref={triggerRef}
         type="button"
-        className={`btn-sm btn-sm-default btn-icon-sm ${open ? 'is-active' : ''}`}
+        className={`btn-sm btn-sm-default btn-icon-sm overflow-trigger ${open ? 'is-active' : ''}`}
         onClick={() => setOpen(o => !o)}
         aria-haspopup="menu"
         aria-expanded={open}

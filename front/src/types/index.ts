@@ -23,6 +23,10 @@ export interface UserInfo {
   userId: number
   /** 顾客租车资料（身份证号 + 手机号）是否已完善 */
   profileCompleted?: boolean
+  /** 员工使用管理员发放的临时密码登录，必须先改密 */
+  mustChangePassword?: boolean
+  /** 临时密码失效时间（仅员工且 mustChangePassword 时有意义） */
+  passwordResetExpire?: string
 }
 
 export interface Vehicle {
@@ -143,6 +147,7 @@ export interface StaffUser {
   roleName: string
   userStatus: number
   loginFailCount: number
+  mustChangePassword?: boolean
 }
 
 

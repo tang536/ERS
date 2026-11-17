@@ -31,6 +31,14 @@ public class UserController(UserService svc) : ControllerBase
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
+    ///<summary>管理员生成一次性临时密码；明文只在本次响应返回，前端展示后不再保存</summary>
+    [HttpPost("{id:int}/reset-password")]
+    public async Task<IActionResult> ResetStaffPassword(int id)
+    {
+        try { return Ok(new ApiResponse<ResetPasswordResultDto> { Data = await _svc.ResetPasswordAsync(id), Message = "临时密码已生成" }); }
+        catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
+    }
+
     ///<summary>停用员工账号：置为停用并立即吊销该账号全部在线会话，旧令牌随即失效</summary>
     [HttpPut("{id:int}/disable")]
     public async Task<IActionResult> DisableStaffAccount(int id)

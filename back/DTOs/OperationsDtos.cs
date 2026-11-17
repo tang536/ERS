@@ -45,7 +45,14 @@ public class CouponRedeemInput
     [JsonRequired] public string Code { get; init; } = string.Empty;
 }
 
-///<summary>前台扫码查券：二维码里是 customer_coupon.code，查到即带出持券顾客</summary>
+///<summary>顾客端动态二维码令牌：只暴露短时签名票，不把裸券码交给扫码端</summary>
+public class CouponQrTokenDto
+{
+    public string Token { get; init; } = string.Empty;
+    public DateTime ExpiresAt { get; init; }
+}
+
+///<summary>前台扫码查券：二维码里是短时签名令牌，验证后带出持券顾客</summary>
 public class CouponVerifyDto
 {
     public int CustomerCouponId { get; init; }

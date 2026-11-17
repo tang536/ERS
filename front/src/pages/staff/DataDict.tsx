@@ -6,6 +6,16 @@ import Icon from '@/components/Icon'
 interface DictItem { id: number; key: string; value: string; desc?: string }
 interface DictGroup { group: string; groupName: string; items: DictItem[] }
 
+/** 新增字典项时按当前分组给示例，避免「车辆品牌」下提示「电池故障」这种错位 */
+const DICT_NAME_PLACEHOLDER: Record<string, string> = {
+  车辆品牌: '如：雅迪',
+  车型: '如：Q70',
+  颜色: '如：白色',
+  故障类型: '如：电池故障',
+  费用类型: '如：上门服务费',
+  会员等级: '如：铂金会员',
+}
+
 /**
  * 数据字典管理（需求 4.2.1）
  * 管理员可对系统内的枚举数据（车辆品牌、车型、颜色、故障类型、费用类型、会员等级）
@@ -135,7 +145,7 @@ export default function DataDict() {
       </div>
 
       <div className="toolbar">
-        <div className="tab-switch">
+        <div className="tab-switch dict-type-tabs">
           {groups.map(g => (
             <button
               key={g.group}
@@ -209,7 +219,7 @@ export default function DataDict() {
                   className={errors.value ? 'has-error' : ''}
                   value={form.value}
                   onChange={e => { setForm({ ...form, value: e.target.value }); setErrors({}) }}
-                  placeholder="如：电池故障"
+                  placeholder={DICT_NAME_PLACEHOLDER[current?.groupName || ''] || '输入字典项名称'}
                   autoFocus
                 />
                 {errors.value && <div className="field-error">{errors.value}</div>}

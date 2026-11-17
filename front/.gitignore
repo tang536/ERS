@@ -28,3 +28,8 @@ certs/
 
 # SonarQube 扫描器工作目录
 .scannerwork/
+
+# Playwright 回归产物：截图/视频/trace 只作本地证据，不入库
+test-results/
+playwright-report/
+blob-report/

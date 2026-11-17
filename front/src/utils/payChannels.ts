@@ -1,5 +1,29 @@
 import type { IconName } from '@/components/Icon'
 import type { PayBrand } from '@/components/PayBrandIcon'
+import { paymentApi } from '@/api'
+
+/** 服务端下发的顾客端通道状态（不含任何凭证） */
+export interface PublicPayChannel {
+  key: string
+  name: string
+  real: boolean
+  status: string
+  detail: string
+}
+
+/**
+ * 读取顾客端支付通道状态。
+ * 失败时返回空表：页面按旧文案渲染并继续允许模拟支付，不能因为状态接口挂了就阻断付款。
+ */
+export async function fetchPublicPayChannels(): Promise<Record<string, PublicPayChannel>> {
+  try {
+    const res: any = await paymentApi.publicChannels()
+    const items: PublicPayChannel[] = res?.data?.items || []
+    return Object.fromEntries(items.map(item => [item.name, item]))
+  } catch {
+    return {}
+  }
+}
 
 /**
  * 支付渠道元数据 —— 全前端唯一的一份。

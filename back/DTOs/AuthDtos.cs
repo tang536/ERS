@@ -69,6 +69,13 @@ public class LoginResponseDto
     /// <summary>顾客租车资料是否已完善</summary>
     public bool ProfileCompleted { get; init; } = true;
     /// <summary>
+    /// 管理员发放的临时密码尚未修改：前端必须把用户引导到改密页，
+    /// 后端 JWT 同时携带 must_change 声明，改密前只放行改密/退出接口。
+    /// </summary>
+    public bool MustChangePassword { get; init; }
+    /// <summary>临时密码截止时间（仅 MustChangePassword=true 时有意义）</summary>
+    public DateTime? PasswordResetExpire { get; init; }
+    /// <summary>
     /// 续期令牌：access token 过期后用它换新令牌，避免用户填到一半被踢回登录页。
     /// 无状态实现（不新增会话表），有效性绑定在 JWT 的 sid 上——单点登录被顶掉后此令牌自动失效。
     /// </summary>

@@ -3,6 +3,7 @@ import { couponApi } from '@/api'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
 import QrScanner from '@/components/QrScanner'
+import { fmtDT } from '@/utils/datetime'
 import type { CouponVerifyInfo } from '@/types'
 
 /**
@@ -13,16 +14,18 @@ import type { CouponVerifyInfo } from '@/types'
  * 刻意做成「先查后核销」两步：券一旦核销不可撤销，扫到就自动扣会误伤顾客。
  */
 
-/** 二维码前缀由顾客端拼接；后端也会剥一次，这里先剥保证手输/扫码两条路径一致 */
+/** 二维码前缀由顾客端拼接；后端也会剥一次，这里先剥保证手输/扫码两条路径一致。
+ *  注意：动态令牌是 Base64Url，大小写敏感，不能像裸券码那样整体转大写。 */
 const QR_PREFIX = 'ERENTAL:COUPON:'
 const normalize = (raw: string) => {
   const t = (raw || '').trim()
   const upper = t.toUpperCase()
-  return upper.startsWith(QR_PREFIX) ? t.slice(QR_PREFIX.length).trim().toUpperCase() : upper
+  const rest = upper.startsWith(QR_PREFIX) ? t.slice(QR_PREFIX.length).trim() : t
+  if (rest.toUpperCase().startsWith('QT1.')) return rest
+  return rest.toUpperCase()
 }
 
 const money = (v: number) => `¥${(Number.isFinite(v) ? v : 0).toFixed(2)}`
-const fmtDT = (v?: string | null) => v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '—'
 
 export default function CouponVerify() {
   const { toast, confirm } = useUI()
@@ -82,9 +85,9 @@ export default function CouponVerify() {
             <Icon name="qrcode" size={18} />
             <input
               value={code}
-              onChange={e => setCode(e.target.value.toUpperCase())}
+              onChange={e => setCode(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') lookup() }}
-              placeholder="扫码枪扫描或输入券码，如 CP3F9A…"
+              placeholder="扫码枪扫描或输入券码"
               aria-label="券码"
             />
           </div>
@@ -95,7 +98,6 @@ export default function CouponVerify() {
             <Icon name="search" size={15} /><span className="btn-label">{loading ? '查询中…' : '查询'}</span>
           </button>
         </div>
-        <p className="field-hint">券码与顾客一一对应：扫码结果会显示持券人，请与到场顾客核对姓名/手机号后再核销。</p>
       </div>
 
       {info && (
@@ -110,7 +112,7 @@ export default function CouponVerify() {
             <div>
               <div className="coupon-verify-name">{info.name}</div>
               <div className="coupon-verify-sub">
-                {info.minAmount > 0 ? `满 ${money(info.minAmount)} 可用` : '无门槛'} · 有效期至 {fmtDT(info.expireTime)}
+                {info.minAmount > 0 ? `满 ${money(info.minAmount)} 可用` : '无门槛'}
               </div>
             </div>
           </div>

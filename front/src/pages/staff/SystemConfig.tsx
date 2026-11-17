@@ -23,6 +23,27 @@ const CONFIG_LABEL: Record<string, string> = {
 const CORE_KEYS = ['daily_rent', 'deposit', 'overdue_multiplier', 'max_login_fail', 'lock_minutes', 'maintain_cycle_days', 'member_default_price']
 
 /**
+ * 参数分组：手机端 16 张纵向卡片接近 4000px，按业务域折叠后先给概览。
+ * 桌面端默认全部展开；手机端默认只显示分组标题，点开才渲染表格。
+ */
+const CONFIG_GROUPS = [
+  { key: 'rent', name: '租车计费与押金', prefix: ['daily_rent', 'deposit', 'overdue_multiplier', 'pending_pay_timeout_minutes'] },
+  { key: 'credit', name: '信用与登录安全', prefix: ['credit_', 'max_login_fail', 'lock_minutes'] },
+  { key: 'vehicle', name: '车辆运维', prefix: ['maintain_cycle_days', 'damage_maintenance_threshold', 'upload_archive_days'] },
+  { key: 'member', name: '会员价格', prefix: ['member_default_price'] },
+  { key: 'site', name: '站点与登录方式', prefix: ['site.', 'login.modes', 'theme.options'] },
+  { key: 'ai', name: 'AI 生图', prefix: ['ai.'] },
+] as const
+
+const groupOfConfig = (key: string) =>
+  CONFIG_GROUPS.find(g => g.prefix.some(p => p.endsWith('_') || p.endsWith('.') ? key.startsWith(p) : key === p))?.key || 'other'
+const GROUP_NAME: Record<string, string> = {
+  ...Object.fromEntries(CONFIG_GROUPS.map(g => [g.key, g.name])),
+  other: '其他参数',
+}
+
+
+/**
  * 日志筛选初始值：日期默认带出**近 30 天**（含今天），其余条件为空。
  *
  * 留空会让两个日期框只显示「年/月/日」占位，看不出查的是哪段时间，
@@ -65,6 +86,11 @@ export default function SystemConfig() {
   /** 从余额卡「去绑定」跳过来时带的渠道（alipay / wechat / bank），用于展开对应配置卡 */
   const focusChannel = searchParams.get('channel') || undefined
   const [list, setList] = useState<any[]>([])
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
+    typeof window !== 'undefined' && window.innerWidth >= 768
+      ? Object.fromEntries([...CONFIG_GROUPS.map(g => g.key), 'other'].map(k => [k, true]))
+      : {})
+
   const [logs, setLogs] = useState<any[]>([])
   const [page, setPage] = useState(1)
   // 日志筛选（需求 4.2.1）：条件一变即自动查询，不再需要点「查询」——
@@ -191,6 +217,19 @@ export default function SystemConfig() {
     setLogFilter(makeLogFilter())
     setPage(1)
   }
+
+  /** 参数按业务域分组；分组顺序固定，未命中的落到「其他参数」 */
+  const configGroups = useMemo(() => {
+    const map = new Map<string, any[]>()
+    list.forEach(item => {
+      const key = groupOfConfig(String(item.configKey || ''))
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(item)
+    })
+    return [...CONFIG_GROUPS.map(g => g.key), 'other']
+      .filter(key => map.has(key))
+      .map(key => ({ key, name: GROUP_NAME[key], items: map.get(key)! }))
+  }, [list])
 
   /** 是否有非默认筛选（决定是否显示「重置」图标） */
   const hasLogFilter = useMemo(() => {
@@ -456,55 +495,79 @@ export default function SystemConfig() {
               不确定通不通，先点「测试连接」验一下再保存。
             </div>
           </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>参数名</th><th>参数含义</th><th className="num">参数值</th>
-                  <th>配置说明</th><th>更新时间</th><th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.map(c => {
-                  const dirty = c.configKey in drafts
-                  return (
-                    <tr key={c.configId} className={dirty ? 'cfg-row-dirty' : undefined}>
-                      <td className="mono">{c.configKey}</td>
-                      <td>{CONFIG_LABEL[c.configKey] || '—'}</td>
-                      <td className="num">
-                        <div className="cfg-value">
-                          <input
-                            className="cfg-input"
-                            value={dirty ? drafts[c.configKey] : String(c.configValue)}
-                            inputMode="decimal"
-                            aria-label={`${CONFIG_LABEL[c.configKey] || c.configKey} 参数值`}
-                            onChange={e => setDraft(c, e.target.value)}
-                            onKeyDown={e => {
-                              // 回车直接提交全部草稿（连续改多项时不用去找按钮）
-                              if (e.key === 'Enter') saveDrafts()
-                              if (e.key === 'Escape') undoOne(c.configKey)
-                            }}
-                          />
-                          {dirty && (
-                            <button className="cfg-undo" title="撤销这一项修改" onClick={() => undoOne(c.configKey)}>
-                              <Icon name="refresh" size={12} />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      <td>{c.configDesc}</td>
-                      <td className="cell-time">{fmtDT(c.updateTime)}</td>
-                      <td>
-                        {CORE_KEYS.includes(c.configKey)
-                          ? <span className="cfg-core" title="核心业务参数：参与费用核算，不允许删除">核心</span>
-                          : <button className="btn-sm btn-sm-danger" onClick={() => handleDelete(c)}>删除</button>}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          {configGroups.map(group => {
+            const open = !!openGroups[group.key]
+            return (
+              <section className="cfg-group" key={group.key}>
+                <button
+                  type="button"
+                  className="cfg-group-head"
+                  aria-expanded={open}
+                  aria-controls={`cfg-group-${group.key}`}
+                  onClick={() => setOpenGroups(prev => ({ ...prev, [group.key]: !prev[group.key] }))}
+                >
+                  <Icon name="chevron-right" size={16} className={`cfg-group-chevron ${open ? 'open' : ''}`} />
+                  <strong>{group.name}</strong>
+                  <span className="cfg-group-count">{group.items.length} 项</span>
+                  <span className="cfg-group-preview">
+                    {group.items.slice(0, 3).map(c => `${CONFIG_LABEL[c.configKey] || c.configKey}=${c.configValue}`).join(' · ')}
+                    {group.items.length > 3 ? ' …' : ''}
+                  </span>
+                </button>
+                {open && (
+                  <div className="table-wrap" id={`cfg-group-${group.key}`}>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>参数名</th><th>参数含义</th><th className="num">参数值</th>
+                          <th>配置说明</th><th>更新时间</th><th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.items.map(c => {
+                          const dirty = c.configKey in drafts
+                          return (
+                            <tr key={c.configId} className={dirty ? 'cfg-row-dirty' : undefined}>
+                              <td className="mono">{c.configKey}</td>
+                              <td>{CONFIG_LABEL[c.configKey] || '—'}</td>
+                              <td className="num">
+                                <div className="cfg-value">
+                                  <input
+                                    className="cfg-input"
+                                    value={dirty ? drafts[c.configKey] : String(c.configValue)}
+                                    inputMode="decimal"
+                                    aria-label={`${CONFIG_LABEL[c.configKey] || c.configKey} 参数值`}
+                                    onChange={e => setDraft(c, e.target.value)}
+                                    onKeyDown={e => {
+                                      // 回车直接提交全部草稿（连续改多项时不用去找按钮）
+                                      if (e.key === 'Enter') saveDrafts()
+                                      if (e.key === 'Escape') undoOne(c.configKey)
+                                    }}
+                                  />
+                                  {dirty && (
+                                    <button className="cfg-undo" title="撤销这一项修改" onClick={() => undoOne(c.configKey)}>
+                                      <Icon name="refresh" size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                              <td>{c.configDesc}</td>
+                              <td className="cell-time">{fmtDT(c.updateTime)}</td>
+                              <td>
+                                {CORE_KEYS.includes(c.configKey)
+                                  ? <span className="cfg-core" title="核心业务参数：参与费用核算，不允许删除">核心</span>
+                                  : <button className="btn-sm btn-sm-danger" onClick={() => handleDelete(c)}>删除</button>}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )
+          })}
           {list.length === 0 && <div className="empty"><Icon name="empty" size={40} chip /><div>暂无系统参数</div></div>}
 
           {/* 有未保存改动时才出现：不占常驻位置，也不至于改完忘了点保存 */}
@@ -672,7 +735,7 @@ export default function SystemConfig() {
                       <tr key={b.fileName}>
                         <td className="mono">{b.fileName}</td>
                         <td className="num">{(b.sizeBytes / 1024).toFixed(1)} KB</td>
-                        <td>{new Date(b.createdAt).toLocaleString()}</td>
+                        <td>{fmtDT(b.createdAt)}</td>
                         <td>
                           <button className="btn-sm" onClick={() => handleDownloadBackup(b.fileName)}>
                             <Icon name="download" size={14} />下载

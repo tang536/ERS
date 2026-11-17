@@ -99,6 +99,23 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
+    ///<summary>员工自助改密：临时密码首次登录必须走这里；改密后吊销全部会话并重新登录</summary>
+    [HttpPost("staff-change-password")]
+    [Authorize(Policy = Policies.AnyAuthenticated)]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    public async Task<IActionResult> ChangeStaffPassword([FromBody] ChangePasswordDto dto)
+    {
+        try
+        {
+            if (User.FindFirst("user_type")?.Value == "customer")
+                return BadRequest(new ApiResponse<object> { Code = 400, Message = "该接口仅用于员工账号", Success = false });
+            var id = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            await _auth.ChangeStaffPassword(id, dto);
+            return Ok(new ApiResponse<object> { Message = "密码已修改，请用新密码重新登录" });
+        }
+        catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
+    }
+
     ///<summary>顾客自助修改登录密码：需提供原密码验证身份，新密码走复杂度校验（与注册同规则）</summary>
     [HttpPost("customer-change-password")]
     [Authorize(Policy = Policies.CustomerOnly)]

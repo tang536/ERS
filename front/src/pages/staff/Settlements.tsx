@@ -89,6 +89,7 @@ export default function Settlements() {
   const [handover, setHandover] = useState<{ orderId: number; orderNo: string } | null>(null)
   const [handoverList, setHandoverList] = useState<any[]>([])
   const [handoverLoading, setHandoverLoading] = useState(false)
+  const handoverModalRef = useRef<HTMLDivElement>(null)
   const [hoForm, setHoForm] = useState<{ phase: string; battery: string; note: string; photos: string[] }>(
     { phase: '还车', battery: '', note: '', photos: [] })
   const [hoSaving, setHoSaving] = useState(false)
@@ -171,6 +172,30 @@ export default function Settlements() {
 
   /** 首次进页面只拉订单；记录由下面的副作用（含 300ms 防抖）负责 */
   useEffect(() => { loadOrders() }, [])
+
+  // 验车记录弹窗是「核赔/补登证据」的高风险操作：ESC 关闭 + 焦点圈在弹窗内，
+  // 避免键盘用户 Tab 到遮罩后的页面误触结算按钮。
+  useEffect(() => {
+    if (!handover) return
+    const dialog = handoverModalRef.current
+    const previous = document.activeElement as HTMLElement | null
+    const focusables = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ) || []).filter(el => el.offsetParent !== null)
+    focusables()[0]?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setHandover(null); return }
+      if (e.key !== 'Tab') return
+      const items = focusables()
+      if (!items.length) return
+      const first = items[0], last = items[items.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey); previous?.focus?.() }
+  }, [handover])
+
 
   /**
    * 筛选/翻页触发重新查询。关键词是边打字边查，300ms 防抖足够，
@@ -649,7 +674,7 @@ export default function Settlements() {
           <Icon name="search" size={15} className="settle-filter-icon" />
           <input
             className="settle-filter-kw"
-            placeholder="搜索结算单号 / 订单号 / 车牌 / 客户"
+            placeholder="结算单 / 订单 / 车牌"
             value={filterKw}
             onChange={e => { setFilterKw(e.target.value); setPage(1) }}
           />
@@ -1341,10 +1366,10 @@ export default function Settlements() {
       {/* 验车记录：一张单的损坏费凭什么收，就看这两条快照（取车 / 还车） */}
       {handover && (
         <div className="modal-overlay" onClick={() => setHandover(null)}>
-          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+          <div className="modal modal-lg" ref={handoverModalRef} role="dialog" aria-modal="true" aria-labelledby="handover-title" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <span>验车记录 · 订单 {handover.orderNo}</span>
-              <button className="close-btn" onClick={() => setHandover(null)}><Icon name="close" size={15} /></button>
+              <span id="handover-title">验车记录 · 订单 {handover.orderNo}</span>
+              <button className="close-btn" onClick={() => setHandover(null)} aria-label="关闭验车记录"><Icon name="close" size={15} /></button>
             </div>
             <div className="modal-body">
               {handoverLoading ? (
@@ -1387,19 +1412,21 @@ export default function Settlements() {
 
                   {canOperate && (
                     <div className="form-group" style={{ marginTop: 16 }}>
-                      <label>补登 / 更新验车记录</label>
+                      <label htmlFor="handover-phase">补登 / 更新验车记录</label>
                       <div className="ho-inputs">
-                        <select value={hoForm.phase} onChange={e => setHoForm({ ...hoForm, phase: e.target.value })}>
+                        <select id="handover-phase" aria-label="验车阶段" value={hoForm.phase} onChange={e => setHoForm({ ...hoForm, phase: e.target.value })}>
                           <option value="取车">取车</option>
                           <option value="还车">还车</option>
                         </select>
                         <input
-                          type="number" min={0} max={100} placeholder="电量 %"
+                          id="handover-battery" type="number" min={0} max={100} placeholder="电量 %"
+                          aria-label="电瓶电量（0-100%）"
                           value={hoForm.battery}
                           onChange={e => setHoForm({ ...hoForm, battery: e.target.value })}
                         />
                         <input
-                          type="text" placeholder="车况备注：划痕位置 / 随车配件"
+                          id="handover-note" type="text" placeholder="车况备注：划痕位置 / 随车配件"
+                          aria-label="车况备注（划痕位置、损坏部位、随车配件）"
                           value={hoForm.note}
                           onChange={e => setHoForm({ ...hoForm, note: e.target.value })}
                         />
@@ -1414,15 +1441,16 @@ export default function Settlements() {
                           </span>
                         ))}
                         {hoForm.photos.length < 3 && (
-                          <label className="ho-photo-add">
+                            <label className="ho-photo-add" aria-label="上传整车照或仪表盘照片">
                             <Icon name="camera" size={16} />
-                            <span>{hoUploading ? '上传中…' : '拍照上传'}</span>
+                            <span>{hoUploading ? '上传中…' : '上传照片'}</span>
                             <input type="file" accept="image/jpeg,image/png,image/webp" hidden disabled={hoUploading}
+                              aria-label="选择整车照或仪表盘照片"
                               onChange={e => { uploadHoPhoto(e.target.files?.[0], 'modal'); e.target.value = '' }} />
                           </label>
                         )}
                       </div>
-                      <div className="field-hint">同一阶段重复提交会覆盖原记录，照片按追加合并。</div>
+                      <div className="field-hint">照片请包含整车与仪表盘电量读数；同一阶段重复提交会覆盖原记录，照片按追加合并。</div>
                     </div>
                   )}
                 </>

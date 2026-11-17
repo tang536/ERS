@@ -1489,6 +1489,27 @@ html[data-theme='dark'] .filter-inputs select {
   padding: 2px 7px; border: 1px dashed var(--border-strong); border-radius: 999px;
   white-space: nowrap;
 }
+/* 参数分组：标题行即折叠按钮，手机端默认收起，预览只给前三个「中文名=值」 */
+.cfg-group { margin-bottom: 10px; }
+.cfg-group-head {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface, #fff); color: var(--text); text-align: left; cursor: pointer;
+  font-size: 13px;
+}
+.cfg-group-head:hover { border-color: var(--primary); background: var(--primary-bg, #fff5f5); }
+.cfg-group-chevron { flex: none; transition: transform .15s; }
+.cfg-group-chevron.open { transform: rotate(90deg); }
+.cfg-group-count { flex: none; font-size: 11.5px; color: var(--text-muted); }
+.cfg-group-preview {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-left: auto; font-size: 11.5px; color: var(--text-muted);
+}
+@media (max-width: 620px) {
+  .cfg-group-preview { display: none; }
+  .cfg-group-head { padding: 9px 10px; }
+  .cfg-group .table-wrap { margin-top: 8px; }
+}
 .cfg-save-bar {
   position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
   z-index: 300;
@@ -3740,6 +3761,8 @@ a.landing-theme-btn { text-decoration: none; }
   line-height: 1.1; font-weight: 800; letter-spacing: -1.4px;
   color: var(--text);
 }
+/* 手机把标题断成均衡的两行，避免「办理」两个字单独掉到第二行 */
+.hero-break { display: none; }
 .hero-sub {
   margin: 18px auto 0; max-width: 700px;
   font-size: 18px; line-height: 1.7; color: var(--text-secondary);
@@ -4240,6 +4263,7 @@ a.landing-theme-btn { text-decoration: none; }
   .landing-grid { grid-template-columns: 1fr; }
   .flow-track { grid-template-columns: 1fr; }
   .landing-nav-actions .landing-btn-ghost { display: none; }
+  .hero-break { display: inline; }
   .hero-actions { flex-direction: column; align-items: stretch; }
   .hero-btn-primary, .hero-btn-ghost { justify-content: center; }
   .stage-idle-actions { flex-direction: column; width: 100%; }
@@ -4749,6 +4773,17 @@ textarea,
   /* 没有列名的单元格（勾选框列）只右对齐控件，不占一行文字 */
   table.data-table:not(.batch-table) tbody td[data-label='']::before { content: none; }
   table.data-table:not(.batch-table) tbody td[data-label=''] { justify-content: flex-end; }
+  /* 车辆档案的勾选列：表头只有复选框，读不到列名，但卡片里必须说明这一行是什么 */
+  table.data-table:not(.batch-table) tbody td.col-check {
+    justify-content: space-between;
+  }
+  table.data-table:not(.batch-table) tbody td.col-check::before {
+    content: '选择';
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
   /* ⚠️ 卡片模式下「次要列」必须放出来。
      .col-hide-lg（≤1280px）/ .col-hide-md（≤1024px）是为了「一屏看完整行」，
      但手机上表格已经变成一行一张卡、每列各占一行，宽度不再是问题；
@@ -5849,6 +5884,12 @@ textarea,
 }
 @media (max-width: 560px) {
   .rent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  /* 看板四张指标卡在手机上 2×2：四项指标一屏可比较，不用滚过四整行才看到趋势图 */
+  .dash-primary .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  /* 顾客「我的订单」四张概览卡同理，压缩列表上方占高 */
+  .my-order-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  /* 全部车辆目录与线上租车保持同样的两列密度：一列大卡会把 12 条拉成近 4000px */
+  .popular-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
   .rent-card-body { padding: 9px 10px 11px; }
   .rent-card-head strong { font-size: 13.5px; }
   .rent-card-price strong { font-size: 16px; }
@@ -5865,7 +5906,13 @@ textarea,
   .detail-grid { grid-template-columns: 1fr; }
   .estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .estimate-grid strong { font-size: 14px; }
-  .coupon-qr-img { width: 210px; height: 210px; }
+  .coupon-qr-img { width: 180px; height: 180px; }
+  /* 会员等级卡在手机上两列并排：五张卡不再纵向拉出一屏半，折扣和价格仍能一眼比较 */
+  .member-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .member-card { padding: 12px; gap: 5px; }
+  .member-level { font-size: 13px; flex-wrap: wrap; gap: 4px; }
+  .member-discount { font-size: 20px; }
+  .member-card .btn-sm { width: 100%; justify-content: center; }
   .scan-input { flex: 1 1 100%; }
   .coupon-verify-head { flex-direction: column; align-items: flex-start; gap: 4px; }
   /* 弹窗在手机上留出安全边距，内部再滚动，避免关闭按钮顶到屏幕外 */
@@ -5874,4 +5921,43 @@ textarea,
   /* 表单一行一列，标签与控件都够宽，不会出现「两个日期框各 90px」 */
   .form-row { gap: 10px; }
   .form-row .form-group { min-width: 100%; }
+}
+
+/* 窄屏筛选条：日期输入在 390~560px 的视口里会被「起租/至」标签 + 半栏宽挤压，
+ * 浏览器对 type=date 有最小内容宽度，最终会把年份截断成 2026/10/1…。
+ * 这一档改为日期组各占整行，给原生日期控件足够宽度；搜索框与状态下拉仍保持
+ * 第一行左右两列，避免整个筛选条被拉成四行。
+ */
+@media (max-width: 560px) {
+  .filter-inputs > .filter-sep + .filter-date-group,
+  .filter-inputs > .filter-date-group + .filter-date-group,
+  .settle-filter-inputs > .settle-filter-sep + .settle-filter-date-group,
+  .settle-filter-inputs > .settle-filter-date-group + .settle-filter-date-group {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+  }
+}
+
+/* 手机端操作按钮：此前 .btn-icon-sm 统一隐藏文字，本意是给标题栏省空间，
+ * 但「新增客户 / 刷新 / 导出 / 备份 / 重置数据库」退化成没有任何文字的色块，
+ * 用户只能猜图标。这里保留文字（图标 + 短标签），只让表格行内的「操作」菜单
+ * 继续纯图标，避免与卡片左侧的「操作」字段名重复。
+ * 标题行允许换行；按钮多时自动落到下一行，不会横向溢出。
+ */
+@media (max-width: 620px) {
+  .btn-sm .btn-label { display: inline; }
+  /* 表格行内的「操作」菜单保持纯图标：卡片左侧已显示「操作」字段名 */
+  table.data-table .overflow-trigger .btn-label { display: none; }
+  .card-title, .card-title-actions, .toolbar, .settle-title { flex-wrap: wrap; }
+  .card-title-actions { row-gap: 6px; }
+  /* 批量新增：公共信息在手机上两列，品牌/型号示例不至于被压成「例如：雅」 */
+  .batch-common-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .modal .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 字典类型页签：窄屏允许换行，六个分组不再挤成一条必须横滑的裁切条 */
+  .dict-type-tabs { flex-wrap: wrap; overflow: visible; }
+  /* 支付配置的只读参数必须能看全：网关地址、回调地址等长 URL 在窄屏
+     不再用省略号截断，改为键值上下排列并允许任意断行。 */
+  .pay-read-row { flex-direction: column; align-items: stretch; gap: 2px; }
+  .pay-read-key { width: auto; }
+  .pay-read-val { white-space: normal; overflow: visible; text-overflow: clip; word-break: break-all; }
 }

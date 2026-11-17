@@ -3,6 +3,7 @@ using ERental.DTOs;
 using ERental.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace ERental.Services;
 
@@ -10,10 +11,14 @@ namespace ERental.Services;
 /// 优惠券：管理员发券、顾客用券、订单取消时退券。
 /// 券模板与顾客持券分表——模板改价不影响已发出去的券，已领的券在有效期内继续可用。
 ///</summary>
-public class CouponService(AppDbContext db, ILogger<CouponService> logger)
+public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConfiguration cfg, IHostEnvironment env)
 {
     private readonly AppDbContext _db = db;
     private readonly ILogger<CouponService> _logger = logger;
+    ///<summary>动态券码签名密钥：复用 JWT 的持久化密钥文件，不在数据库里再存一份明文</summary>
+    private readonly byte[] _qrKey = Encoding.UTF8.GetBytes(SigningKeyProvider.Resolve(cfg, env, out _));
+    private static readonly TimeSpan QrTokenTtl = TimeSpan.FromMinutes(3);
+    private const string QrTokenPrefix = "ERENTAL:COUPON:QT1.";
 
     private static readonly System.Linq.Expressions.Expression<Func<Coupon, CouponDto>> Projection = c => new CouponDto
     {
@@ -212,18 +217,94 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger)
         }
     }
 
-    ///<summary>前台扫码查券：按码值定位到具体顾客的那张券，不做任何写操作</summary>
+    ///<summary>
+    /// 签发短时二维码令牌：只允许券的持有人本人申请，令牌绑定 customer_coupon.id；
+    /// 不把裸券码放进二维码，截图转发也只能在 3 分钟内尝试，且前台仍会核对持券人。
+    ///</summary>
+    public async Task<CouponQrTokenDto> CreateQrTokenAsync(int customerId, int customerCouponId)
+    {
+        var row = await _db.CustomerCoupons.AsNoTracking()
+            .Include(c => c.Coupon)
+            .FirstOrDefaultAsync(c => c.Id == customerCouponId && c.CustomerId == customerId)
+            ?? throw new BusinessException("优惠券不存在，或不属于当前顾客");
+
+        var now = AppClock.Now;
+        if (row.Status != CustomerCoupon.StatusUnused || row.ExpireTime < now)
+            throw new BusinessException("该券已使用或已过期，不能再出示二维码");
+        if (row.Coupon?.Status != "启用")
+            throw new BusinessException("该券所属活动已停用，不能再出示二维码");
+
+        var expires = DateTimeOffset.UtcNow.Add(QrTokenTtl);
+        var payload = $"{row.Id}|{expires.ToUnixTimeSeconds()}|{RandomNumberGenerator.GetHexString(8)}";
+        var payloadBytes = Encoding.UTF8.GetBytes(payload);
+        var signature = HMACSHA256.HashData(_qrKey, payloadBytes);
+        var token = QrTokenPrefix + Base64Url(payloadBytes) + "." + Base64Url(signature);
+        return new CouponQrTokenDto
+        {
+            Token = token,
+            ExpiresAt = expires.ToLocalTime().DateTime,
+        };
+    }
+
+    ///<summary>解析令牌：返回 customer_coupon.id；不是令牌返回 null；令牌过期/签名错误直接拒绝</summary>
+    private int? ReadQrToken(string raw)
+    {
+        var text = (raw ?? string.Empty).Trim();
+        if (text.StartsWith("ERENTAL:COUPON:", StringComparison.OrdinalIgnoreCase))
+            text = text["ERENTAL:COUPON:".Length..].Trim();
+        if (!text.StartsWith("QT1.", StringComparison.OrdinalIgnoreCase)) return null;
+
+        var parts = text.Split('.');
+        if (parts.Length != 3) throw new BusinessException("二维码格式不正确，请刷新后重试");
+        try
+        {
+            var payloadBytes = FromBase64Url(parts[1]);
+            var signature = FromBase64Url(parts[2]);
+            var expected = HMACSHA256.HashData(_qrKey, payloadBytes);
+            if (!CryptographicOperations.FixedTimeEquals(expected, signature))
+                throw new BusinessException("二维码签名无效，请刷新后重试");
+
+            var fields = Encoding.UTF8.GetString(payloadBytes).Split('|');
+            if (fields.Length != 3 || !int.TryParse(fields[0], out var rowId) || !long.TryParse(fields[1], out var expireUnix))
+                throw new BusinessException("二维码内容无效，请刷新后重试");
+            if (expireUnix < DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+                throw new BusinessException("二维码已过期，请让顾客刷新二维码后重试");
+            return rowId;
+        }
+        catch (FormatException)
+        {
+            throw new BusinessException("二维码格式不正确，请刷新后重试");
+        }
+    }
+
+    private static string Base64Url(byte[] bytes) =>
+        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private static byte[] FromBase64Url(string value)
+    {
+        var text = value.Replace('-', '+').Replace('_', '/');
+        text = (text.Length % 4) switch { 2 => text + "==", 3 => text + "=", _ => text };
+        return Convert.FromBase64String(text);
+    }
+
+    ///<summary>前台扫码查券：按码值或短时令牌定位到具体顾客的那张券，不做任何写操作</summary>
     public async Task<CouponVerifyDto> VerifyByCodeAsync(string rawCode)
     {
+        var tokenRowId = ReadQrToken(rawCode);
         //二维码里带前缀（顾客端 buildCouponQrText），扫码枪/手输两种来源都要能吃：
         //这里统一剥前缀再按码值查，避免同一张券在两种入口上表现不一致
         var code = NormalizeScannedCode(rawCode);
-        if (code.Length == 0) throw new BusinessException("请扫码或输入券码");
+        if (tokenRowId is null && code.Length == 0) throw new BusinessException("请扫码或输入券码");
 
-        var row = await _db.CustomerCoupons.AsNoTracking()
-            .Include(c => c.Coupon)
-            .Include(c => c.Customer)
-            .FirstOrDefaultAsync(c => c.Code == code)
+        var row = (tokenRowId is int id
+            ? await _db.CustomerCoupons.AsNoTracking()
+                .Include(c => c.Coupon)
+                .Include(c => c.Customer)
+                .FirstOrDefaultAsync(c => c.Id == id)
+            : await _db.CustomerCoupons.AsNoTracking()
+                .Include(c => c.Coupon)
+                .Include(c => c.Customer)
+                .FirstOrDefaultAsync(c => c.Code == code))
             ?? throw new BusinessException("未找到该券，请确认二维码是否为本系统券码");
 
         var template = row.Coupon ?? throw new BusinessException("券模板已删除，无法核销");
