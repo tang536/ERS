@@ -296,7 +296,7 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
         var code = NormalizeScannedCode(rawCode);
         if (tokenRowId is null && code.Length == 0) throw new BusinessException("请扫码或输入券码");
 
-        var row = tokenRowId is int id
+        var row = (tokenRowId is int id
             ? await _db.CustomerCoupons.AsNoTracking()
                 .Include(c => c.Coupon)
                 .Include(c => c.Customer)
@@ -304,9 +304,8 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
             : await _db.CustomerCoupons.AsNoTracking()
                 .Include(c => c.Coupon)
                 .Include(c => c.Customer)
-                .FirstOrDefaultAsync(c => c.Code == code);
-        if (row is null)
-            throw new BusinessException("未找到该券，请确认二维码是否为本系统券码");
+                .FirstOrDefaultAsync(c => c.Code == code))
+            ?? throw new BusinessException("未找到该券，请确认二维码是否为本系统券码");
 
         var template = row.Coupon ?? throw new BusinessException("券模板已删除，无法核销");
         var now = AppClock.Now;

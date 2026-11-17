@@ -1,5 +1,6 @@
 ﻿using System.Data;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using ERental.Data;
 using ERental.DTOs;
 using ERental.Models;
@@ -9,7 +10,7 @@ using System.Text.Json;
 namespace ERental.Services;
 
 ///<summary>会员自助购买（顾客端）：选等级</summary>
-public class MemberService(AppDbContext db, LogService log, ILogger<MemberService> logger)
+public partial class MemberService(AppDbContext db, LogService log, ILogger<MemberService> logger)
 {
     private readonly AppDbContext _db = db;
     private readonly LogService _log = log;
@@ -299,9 +300,12 @@ public class MemberService(AppDbContext db, LogService log, ILogger<MemberServic
     {
         var text = (desc ?? string.Empty).Replace(" ", string.Empty).Trim();
         if (text.Length == 0) return;
-        if (System.Text.RegularExpressions.Regex.IsMatch(text, @"^无折扣$|^\d+(\.\d+)?折$"))
+        if (DiscountOnlyRegex().IsMatch(text))
             throw new BusinessException("权益说明不要重复写折扣，请填写折扣以外的权益（如免费保养、优先取车）");
     }
+
+    [GeneratedRegex(@"^无折扣$|^\d+(\.\d+)?折$")]
+    private static partial Regex DiscountOnlyRegex();
 
     private static void ValidatePrice(decimal? p)
     {
