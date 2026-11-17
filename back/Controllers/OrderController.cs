@@ -11,10 +11,11 @@ namespace ERental.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 //本控制器按动作分别授权：读接口允许财务只读，写接口仅前台（构造/修改订单是柜台职责）
-public class OrderController(OrderService svc, SettlementService settlement) : ControllerBase
+public class OrderController(OrderService svc, SettlementService settlement, OrderActivityService activity) : ControllerBase
 {
     private readonly OrderService _svc = svc;
     private readonly SettlementService _settlement = settlement;
+    private readonly OrderActivityService _activity = activity;
 
     private bool IsCustomer => User.IsInRole(AuthService.RoleCustomer);
     private int CurrentUserId => int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
@@ -42,6 +43,38 @@ public class OrderController(OrderService svc, SettlementService settlement) : C
     [HttpGet("wait-return")]
     [Authorize(Policy = Policies.AdminOrReception)]
     public Task<IActionResult> GetWaitReturnOrder(string? keyword, DateTime? dateFrom = null, DateTime? dateTo = null, string? sortBy = null, bool sortDesc = true, int page = 0, int pageSize = 0) => QueryOrderInfo("已支付", keyword, dateFrom, dateTo, sortBy, sortDesc, page, pageSize);
+
+    ///<summary>车辆可用日历：员工端按时间窗查看每台车的占用档期（最长 31 天）</summary>
+    [HttpGet("calendar")]
+    [Authorize(Policy = Policies.AnyStaff)]
+    public async Task<IActionResult> GetVehicleCalendar(DateTime? from = null, DateTime? to = null, int? vehicleId = null)
+    {
+        try
+        {
+            return Ok(new ApiResponse<VehicleCalendarResultDto> { Data = await _activity.GetCalendarAsync(from, to, vehicleId) });
+        }
+        catch (Exception ex) when (ErrorText.IsHandled(ex))
+        {
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false });
+        }
+    }
+
+    ///<summary>订单时间线：顾客只能看自己的订单；员工按订单读权限查看</summary>
+    [HttpGet("{id:int}/timeline")]
+    [Authorize(Policy = Policies.OrderRead)]
+    public async Task<IActionResult> GetOrderTimeline(int id)
+    {
+        try
+        {
+            if (IsCustomer && await _svc.GetOwnerCustomerId(id) != CurrentUserId)
+                return StatusCode(403, new ApiResponse<object> { Code = 403, Message = "无权查看该订单", Success = false });
+            return Ok(new ApiResponse<OrderTimelineDto> { Data = await _activity.GetTimelineAsync(id) });
+        }
+        catch (Exception ex) when (ErrorText.IsHandled(ex))
+        {
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false });
+        }
+    }
 
     [HttpGet("{id:int}")]
     [Authorize(Policy = Policies.OrderRead)]

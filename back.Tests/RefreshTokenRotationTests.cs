@@ -27,7 +27,7 @@ public class RefreshTokenRotationTests
 
         return new AuthService(
             db, config,
-            new SessionRegistry(db, new MemoryCache(new MemoryCacheOptions()), NullLogger<SessionRegistry>.Instance),
+            new SessionRegistry(db, new MemoryCache(new MemoryCacheOptions()), TestRedis.Disabled(), NullLogger<SessionRegistry>.Instance),
             new LoginIpGuard(),
             new HttpContextAccessor());
     }

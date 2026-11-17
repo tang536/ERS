@@ -223,8 +223,12 @@ public class MySqlIntegrationTests
             SystemConfig.Create(PayConfigService.KeySandboxAlipayPublicKey, "dummy-public-key", "测试"));
         await db.SaveChangesAsync();
 
-        var payConfig = new PayConfigService(db, Microsoft.Extensions.Options.Options.Create(new ERental.Options.LanOptions()),
-            new SecretProvider(new ConfigurationBuilder().Build()));
+        var payConfig = new PayConfigService(
+            db,
+            Microsoft.Extensions.Options.Options.Create(new ERental.Options.LanOptions()),
+            new SecretProvider(new ConfigurationBuilder().Build()),
+            new ConfigurationBuilder().Build(),
+            new Microsoft.AspNetCore.Http.HttpContextAccessor());
         var service = new PaymentReconcileService(db, null!, null!, null!, payConfig,
             NullLogger<PaymentReconcileService>.Instance);
 

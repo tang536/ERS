@@ -15,6 +15,19 @@ public class RentalOrder
     ///<summary>订单状态机白名单：待支付</summary>
     private static readonly string[] LegalStatuses = ["待支付", "已支付", "租赁中", "已完结", "已取消"];
 
+    ///<summary>
+    /// 合法状态迁移：只允许沿业务方向前进，禁止「已完结 → 租赁中」这类回退。
+    /// 取消单独走 <see cref="Cancel"/>，因为它允许在待支付/已支付阶段发生。
+    /// </summary>
+    private static readonly Dictionary<string, string[]> NextStatuses = new(StringComparer.Ordinal)
+    {
+        ["待支付"] = ["已支付", "已取消"],
+        ["已支付"] = ["租赁中", "已取消"],
+        ["租赁中"] = ["已完结"],
+        ["已完结"] = [],
+        ["已取消"] = [],
+    };
+
     ///<summary>状态值是否在白名单内</summary>
     private static bool IsValidStatus(string? value) => value is not null && Array.IndexOf(LegalStatuses, value) >= 0;
 
@@ -86,6 +99,11 @@ public class RentalOrder
     [Column("create_time")]
     public DateTime CreateTime { get; init; } = AppClock.Now;
 
+    /// <summary>客户端幂等键：同一请求重复提交时命中已有订单，防止双击/网络重试造成重复开单。</summary>
+    [MaxLength(64)]
+    [Column("request_key")]
+    public string? RequestKey { get; private set; }
+
     [MaxLength(200)]
     [Column("cancel_reason")]
     public string? CancelReason { get; private set; }
@@ -136,6 +154,20 @@ public class RentalOrder
         };
     }
 
+    ///<summary>绑定客户端幂等键；空值表示不使用幂等（例如后台脚本导入）。</summary>
+    public void SetRequestKey(string? requestKey)
+    {
+        if (string.IsNullOrWhiteSpace(requestKey))
+        {
+            RequestKey = null;
+            return;
+        }
+
+        var key = requestKey.Trim();
+        if (key.Length > 64) throw new BusinessException("幂等键不能超过 64 位");
+        RequestKey = key;
+    }
+
     ///<summary>写入下单时的优惠与增值服务构成（券+积分只能抵租金，不能超过租金）</summary>
     public void ApplyBenefits(decimal discountAmount, decimal rentDiscount, decimal addonFee, int? customerCouponId, int pointsUsed)
     {
@@ -180,10 +212,14 @@ public class RentalOrder
         if (DiscountAmount > rentOnly) DiscountAmount = rentOnly;
     }
 
-    ///<summary>状态迁移（待支付 → 已支付 → 租赁中 → 已完结/已取消），只接受白名单内的状态值</summary>
+    ///<summary>状态迁移（待支付 → 已支付 → 租赁中 → 已完结/已取消），非法迁移直接拒绝</summary>
     public void ChangeStatus(string status)
     {
         if (!IsValidStatus(status)) throw new BusinessException("订单状态值非法：" + status);
+        if (status == OrderStatus) return;
+        var allowed = NextStatuses.GetValueOrDefault(OrderStatus) ?? [];
+        if (!allowed.Contains(status, StringComparer.Ordinal))
+            throw new BusinessException($"订单不能从「{OrderStatus}」直接变为「{status}」");
         OrderStatus = status;
     }
 

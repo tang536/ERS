@@ -6,6 +6,7 @@ using ERental.Services;
 using ERental.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.RateLimiting;
 
 namespace ERental.Controllers;
@@ -33,17 +34,28 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
     ///<summary>令牌续期：access token 临近过期时用它换一对新令牌，用户无需重新输入密码</summary>
     [AllowAnonymous]
     [HttpPost("refresh")]
-    public async Task<IActionResult> Refresh([FromBody] RefreshTokenDto dto)
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    public async Task<IActionResult> Refresh([FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] RefreshTokenDto? dto)
     {
         try
         {
-            return Ok(new ApiResponse<LoginResponseDto> { Data = await _auth.RefreshAsync(dto.RefreshToken) });
+            // 新客户端把续期令牌放在 HttpOnly Cookie；DTO 仅用于兼容旧版本/自动化测试。
+            var refreshToken = dto?.RefreshToken;
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                refreshToken = Request.Cookies[AuthCookie.RefreshName];
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                return Unauthorized(new ApiResponse<object> { Code = 401, Message = "缺少续期令牌，请重新登录", Success = false });
+
+            var data = await _auth.RefreshAsync(refreshToken);
+            WriteAuthCookies(data);
+            return Ok(new ApiResponse<LoginResponseDto> { Data = data });
         }
         catch (BusinessException ex)
         {
             //只有「令牌无效/已下线」这类业务拒绝才回 401；
             //数据库故障、配置错误等未预期异常交给全局中间件按 500 处理，
             //不能被统一包装成「登录已失效」——那会让用户反复重新登录，掩盖真正的故障。
+            AuthCookie.Clear(Response);
             return Unauthorized(new ApiResponse<object> { Code = 401, Message = ex.Message, Success = false });
         }
     }
@@ -55,7 +67,12 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
     {
         //真实客户端 IP：ForwardedHeaders 中间件已按「仅信任本机反代」还原 X-Forwarded-For
         var ip = ClientIp.Resolve(HttpContext);
-        try { return Ok(new ApiResponse<LoginResponseDto> { Data = await _auth.StaffLogin(dto, ip) }); }
+        try
+        {
+            var data = await _auth.StaffLogin(dto, ip);
+            WriteAuthCookies(data);
+            return Ok(new ApiResponse<LoginResponseDto> { Data = data });
+        }
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
@@ -64,7 +81,12 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
     [EnableRateLimiting(RateLimitPolicies.Auth)]
     public async Task<IActionResult> CustomerLogin([FromBody] CustomerLoginDto dto)
     {
-        try { return Ok(new ApiResponse<LoginResponseDto> { Data = await _auth.CustomerLogin(dto, ClientIp.Resolve(HttpContext)) }); }
+        try
+        {
+            var data = await _auth.CustomerLogin(dto, ClientIp.Resolve(HttpContext));
+            WriteAuthCookies(data);
+            return Ok(new ApiResponse<LoginResponseDto> { Data = data });
+        }
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
@@ -139,6 +161,7 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
         var id = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
         var userType = User.FindFirst("user_type")?.Value ?? UserTypeStaff;
         await _auth.Logout(userType, id, User.FindFirst(Middleware.SingleSessionMiddleware.SessionClaim)?.Value);
+        AuthCookie.Clear(Response);
         return Ok(new ApiResponse<object> { Message = "已退出登录" });
     }
 
@@ -206,5 +229,18 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
 
         var url = $"/uploads/avatars/{fileName}";
         return Ok(new ApiResponse<object> { Data = new { url }, Message = "头像已更新（原图未压缩）" });
+    }
+
+    ///<summary>
+    /// 登录/续期成功后统一写两个 HttpOnly Cookie：
+    /// access 供 &lt;img src&gt; 等 GET 资源使用，refresh 只发往 /api/auth。
+    /// JSON 里仍返回 access token（前端放内存），不返回 refresh token（DTO 已 JsonIgnore）。
+    /// </summary>
+    private void WriteAuthCookies(LoginResponseDto data)
+    {
+        if (!string.IsNullOrWhiteSpace(data.Token))
+            Response.Cookies.Append(AuthCookie.AccessName, data.Token, AuthCookie.Access(Request));
+        if (!string.IsNullOrWhiteSpace(data.RefreshToken))
+            Response.Cookies.Append(AuthCookie.RefreshName, data.RefreshToken, AuthCookie.Refresh(Request));
     }
 }

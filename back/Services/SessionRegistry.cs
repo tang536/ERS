@@ -6,21 +6,22 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace ERental.Services;
 
-///<summary>在线会话登记表</summary>
-public sealed class SessionRegistry(AppDbContext db, IMemoryCache cache, ILogger<SessionRegistry> logger)
+///<summary>在线会话登记表（独立 session_state 表，不再占用 system_config）</summary>
+public sealed class SessionRegistry(AppDbContext db, IMemoryCache cache, RedisState redis, ILogger<SessionRegistry> logger)
 {
     ///<summary>会话键前缀</summary>
     public const string Prefix = "sess.";
 
     ///<summary>
     /// 会话校验的本地短缓存（秒）。单点校验是每个已认证请求的必经读路径，
-    /// 不加缓存等于每个请求多打一次 system_config。取 5 秒：多实例部署时
+    /// 不加缓存等于每个请求多打一次 session_state。取 5 秒：多实例部署时
     /// 「另一台实例强制下线」最多延迟这么久生效，既挡住高频查询又不会让用户等太久。
     /// </summary>
     private const int CacheSeconds = 5;
 
     private readonly AppDbContext _db = db;
     private readonly IMemoryCache _cache = cache;
+    private readonly RedisState _redis = redis;
     private readonly ILogger<SessionRegistry> _logger = logger;
 
     ///<summary>登记表里的一行：当前会话标识 + 绑定的续期令牌 jti（旧数据没有该字段）</summary>
@@ -71,26 +72,18 @@ public sealed class SessionRegistry(AppDbContext db, IMemoryCache cache, ILogger
     public async Task RotateRefreshAsync(string userType, int userId, string sessionToken, string oldJti, string newJti)
     {
         var key = KeyOf(userType, userId);
-        var raw = await DbConcurrency.RetryTransientAsync(
-            async () => await _db.SystemConfigs.AsNoTracking().Where(c => c.ConfigKey == key).Select(c => c.ConfigValue).FirstOrDefaultAsync(),
-            _logger, "刷新令牌轮换");
+        var affected = await _db.Sessions
+            .Where(s => s.SessionKey == key
+                && s.SessionToken == sessionToken
+                && s.RefreshJti == oldJti)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.RefreshJti, newJti)
+                .SetProperty(x => x.UpdateTime, AppClock.Now));
 
-        var entry = Deserialize(raw);
-        if (entry is null
-            || !string.Equals(entry.Token, sessionToken, StringComparison.Ordinal)
-            || !string.Equals(entry.RefreshJti, oldJti, StringComparison.Ordinal))
-        {
-            throw new BusinessException("登录状态已失效，请重新登录");
-        }
-
-        var next = Serialize(entry with { RefreshJti = newJti });
-        var affected = await _db.SystemConfigs
-            .Where(c => c.ConfigKey == key && c.ConfigValue == raw)
-            .ExecuteUpdateAsync(s => s.SetProperty(c => c.ConfigValue, next).SetProperty(c => c.UpdateTime, AppClock.Now));
-        _cache.Remove(CacheKeyOf(key));
-
-        //0 行 = 另一并发请求已先一步轮换（重放），本次必须失败
         if (affected != 1) throw new BusinessException("登录状态已失效，请重新登录");
+
+        _cache.Remove(CacheKeyOf(key));
+        await _redis.RemoveAsync(CacheKeyOf(key));
     }
 
     ///<summary>退出登录：只撤销当前这一个会话</summary>
@@ -98,16 +91,18 @@ public sealed class SessionRegistry(AppDbContext db, IMemoryCache cache, ILogger
     {
         if (string.IsNullOrEmpty(sessionToken)) return;
         var key = KeyOf(userType, userId);
-        var entry = await LoadAsync(key);
-        if (entry is null) return;
-        if (!string.Equals(entry.Token, sessionToken, StringComparison.Ordinal)) return;
-        //主动登出不做墓碑
-        await _db.SystemConfigs.Where(c => c.ConfigKey == key && c.ConfigValue == Serialize(entry)).ExecuteDeleteAsync();
+        var affected = await _db.Sessions
+            .Where(s => s.SessionKey == key && s.SessionToken == sessionToken)
+            .ExecuteDeleteAsync();
+
+        if (affected == 0) return;
         _cache.Remove(CacheKeyOf(key));
+        await _redis.RemoveAsync(CacheKeyOf(key));
     }
 
     ///<summary>强制该账号全部会话下线，并留下原因供中间件提示</summary>
-    public async Task RevokeAllAsync(string userType, int userId, string reason) => await SaveAsync(KeyOf(userType, userId), new Payload(string.Empty, reason));
+    public async Task RevokeAllAsync(string userType, int userId, string reason) =>
+        await SaveAsync(KeyOf(userType, userId), new Payload(string.Empty, reason));
 
     //── 存取 ──
 
@@ -117,39 +112,69 @@ public sealed class SessionRegistry(AppDbContext db, IMemoryCache cache, ILogger
         var cacheKey = CacheKeyOf(key);
         if (useCache && _cache.TryGetValue(cacheKey, out Payload? cached)) return cached;
 
-        //单点登录校验是每个已认证请求都会走的读路径，且位于授权中间件里、没有任何try/catch 兜底
-        var value = await DbConcurrency.RetryTransientAsync(
-            async () => await _db.SystemConfigs.AsNoTracking().Where(c => c.ConfigKey == key).Select(c => c.ConfigValue).FirstOrDefaultAsync(),
+        // 跨实例短缓存：一台实例写入后，其他实例可在 TTL 内直接命中，避免每个已认证请求都查库。
+        // 续期校验必须读库（useCache=false），因此这里只在普通会话校验时启用。
+        if (useCache)
+        {
+            var redisValue = await _redis.GetStringAsync(cacheKey);
+            var redisPayload = Deserialize(redisValue);
+            if (redisPayload is not null)
+            {
+                _cache.Set(cacheKey, redisPayload, TimeSpan.FromSeconds(CacheSeconds));
+                return redisPayload;
+            }
+        }
+
+        var payload = await DbConcurrency.RetryTransientAsync(
+            async () => await _db.Sessions.AsNoTracking()
+                .Where(s => s.SessionKey == key)
+                .Select(s => new Payload(s.SessionToken ?? string.Empty, s.RevokedReason, s.RefreshJti))
+                .FirstOrDefaultAsync(),
             _logger, "会话校验");
 
-        var payload = Deserialize(value);
-        if (payload is not null) _cache.Set(cacheKey, payload, TimeSpan.FromSeconds(CacheSeconds));
+        if (payload is not null)
+        {
+            _cache.Set(cacheKey, payload, TimeSpan.FromSeconds(CacheSeconds));
+            await _redis.SetStringAsync(cacheKey, Serialize(payload), TimeSpan.FromSeconds(CacheSeconds));
+        }
         return payload;
     }
 
     ///<summary>写入（存在则改、不存在则插）</summary>
     private async Task SaveAsync(string key, Payload payload)
     {
-        var json = Serialize(payload);
-        var row = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == key);
+        var row = await _db.Sessions.FirstOrDefaultAsync(s => s.SessionKey == key);
         if (row is null)
         {
-            _db.SystemConfigs.Add(SystemConfig.Create(key, json, "在线会话（系统维护，请勿手工修改）"));
+            row = SessionState.Create(key, payload.Token, payload.RefreshJti, payload.Revoked);
+            _db.Sessions.Add(row);
             try
             {
                 await _db.SaveChangesAsync();
-                _cache.Remove(CacheKeyOf(key));
+                await InvalidateAsync(key);
                 return;
             }
             catch (DbUpdateException)
             {
-                //并发下已被另一实例插入：脱离跟踪，改走更新分支
-                _db.Entry(_db.SystemConfigs.Local.First(c => c.ConfigKey == key)).State = EntityState.Detached;
+                //并发下已被另一实例插入：脱离跟踪，改走条件更新分支
+                _db.Entry(row).State = EntityState.Detached;
             }
         }
 
-        await _db.SystemConfigs.Where(c => c.ConfigKey == key).ExecuteUpdateAsync(s => s.SetProperty(c => c.ConfigValue, json).SetProperty(c => c.UpdateTime, AppClock.Now));
+        await _db.Sessions
+            .Where(s => s.SessionKey == key)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.SessionToken, payload.Token)
+                .SetProperty(x => x.RefreshJti, payload.RefreshJti)
+                .SetProperty(x => x.RevokedReason, payload.Revoked)
+                .SetProperty(x => x.UpdateTime, AppClock.Now));
+        await InvalidateAsync(key);
+    }
+
+    private async Task InvalidateAsync(string key)
+    {
         _cache.Remove(CacheKeyOf(key));
+        await _redis.RemoveAsync(CacheKeyOf(key));
     }
 
     private static string Serialize(Payload p) => JsonSerializer.Serialize(p);

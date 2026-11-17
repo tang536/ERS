@@ -179,17 +179,27 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
     [Authorize(Policy = Policies.AdminOnly)]
     public async Task<IActionResult> GetPayConfig() => Ok(new ApiResponse<PayConfigViewDto> { Data = await _payConfig.GetViewAsync() });
 
-    ///<summary>按需读取单个密钥的明文：管理端「支付配置」弹窗里点「显示」时调用</summary>
+    ///<summary>读取单个密钥的指纹（不回传明文）：管理端只能用指纹确认配置已保存</summary>
     [HttpGet("config/secret")]
     [Authorize(Policy = Policies.AdminOnly)]
     [SkipAudit]
     public async Task<IActionResult> GetPayConfigSecret([FromQuery] string field)
     {
-        var value = await _payConfig.GetSecretAsync(field);
-        if (value is null) return BadRequest(new ApiResponse<object> { Code = 400, Message = "不支持的配置项", Success = false });
+        var fingerprint = await _payConfig.GetSecretFingerprintAsync(field);
+        if (fingerprint is null) return BadRequest(new ApiResponse<object> { Code = 400, Message = "不支持的配置项", Success = false });
 
-        await AuditAsync("查看支付密钥明文", true, $"字段 {field}");
-        return Ok(new ApiResponse<object> { Data = new { field, value } });
+        await AuditAsync("查看支付密钥指纹", true, $"字段 {field}，长度 {fingerprint.Length}");
+        return Ok(new ApiResponse<object>
+        {
+            Data = new
+            {
+                field = fingerprint.Field,
+                fingerprint = fingerprint.Fingerprint,
+                length = fingerprint.Length,
+                set = fingerprint.Length > 0,
+                message = "出于安全考虑，服务端不返回密钥明文；如需更换，请直接在表单输入新值后保存。"
+            }
+        });
     }
 
     ///<summary>保存支付配置</summary>
@@ -223,21 +233,24 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
         }
     }
 
-    ///<summary>支付记录列表：可按状态+时间段（from/to，闭区间）筛选，供报表页区间统计使用</summary>
+    ///<summary>支付记录列表：可按状态+时间段（from/to，闭区间）筛选，并强制分页返回总数</summary>
     [HttpGet]
-    [Authorize(Policy = Policies.FinanceOnly)]
-    public async Task<IActionResult> QueryPaymentRecords(string? status, DateTime? from, DateTime? to)
+    [Authorize(Policy = Policies.AnyStaff)]
+    public async Task<IActionResult> QueryPaymentRecords(string? status, DateTime? from, DateTime? to, int page = 1, int size = 50)
     {
         try
         {
             //读接口对"连接层瞬时故障"整段重试
-            var data = await DbConcurrency.RetryTransientAsync(() => _svc.GetAll(status, from, to), _logger, "支付流水列表");
-            return Ok(new ApiResponse<List<PaymentDto>> { Data = data });
+            var data = await DbConcurrency.RetryTransientAsync(
+                () => _svc.GetAll(status, from, to, page, size),
+                _logger,
+                "支付流水列表");
+            return Ok(new ApiResponse<PagedResult<PaymentDto>> { Data = data });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "支付流水列表查询失败（{ExType}）", ex.GetType().Name);
-            return StatusCode(500, new ApiResponse<List<PaymentDto>> { Code = 500, Success = false, Message = ErrorText.Safe(ex), Data = null });
+            return StatusCode(500, new ApiResponse<PagedResult<PaymentDto>> { Code = 500, Success = false, Message = ErrorText.Safe(ex), Data = null });
         }
     }
 
@@ -279,6 +292,7 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
 
     ///<summary>发起支付：为订单创建支付并返回收银台地址</summary>
     [HttpPost("create")]
+    [Authorize(Policy = Policies.AdminOrReceptionOrCustomer)]
     public async Task<IActionResult> CreatePayment([FromBody] CreatePayDto dto)
     {
         try
@@ -331,7 +345,7 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
                     payUrl = await _alipay.CreatePagePayAsync(
                         order.OrderNo, $"电动车租赁订单 {order.OrderNo}", amount,
                         await BuildReturnUrl(order.OrderNo, "支付宝"),
-                        await _payConfig.BuildNotifyUrlAsync(ClientOrigin, "api/payment/alipay/notify"));
+                        await _payConfig.BuildNotifyUrlAsync("api/payment/alipay/notify"));
                     realPay = realAlipay;
                     break;
 
@@ -640,7 +654,7 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
     }
 
     [HttpPut("{id:int}/refund")]
-    [Authorize(Policy = Policies.ReceptionOrFinance)]
+    [Authorize(Policy = Policies.AnyStaff)]
     public async Task<IActionResult> RefundPayment(int id, [FromBody] decimal amount)
     {
         try

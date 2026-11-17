@@ -596,7 +596,7 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
             Time = h.CreateTime,
             Type = "验车",
             Title = $"{h.Phase}验车 · 订单 #{h.OrderId}",
-            Detail = $"电量 {h.BatteryLevel?.ToString() ?? "—"}%{ (string.IsNullOrWhiteSpace(h.ConditionNote) ? "" : "；" + h.ConditionNote) }{ (string.IsNullOrWhiteSpace(h.PhotoPaths) ? "" : "；照片 " + h.PhotoPaths.Split(',', StringSplitOptions.RemoveEmptyEntries).Length + " 张") }",
+            Detail = $"电量 {h.BatteryLevel?.ToString() ?? "—"}%{(string.IsNullOrWhiteSpace(h.ConditionNote) ? "" : "；" + h.ConditionNote)}{(string.IsNullOrWhiteSpace(h.PhotoPaths) ? "" : "；照片 " + h.PhotoPaths.Split(',', StringSplitOptions.RemoveEmptyEntries).Length + " 张")}",
             Status = h.Phase,
         }));
         events.AddRange(scraps.Select(s => new VehicleArchiveEventDto

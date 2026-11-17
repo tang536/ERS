@@ -474,8 +474,14 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    ///<summary>访问令牌 Cookie 的默认有效期（分钟），与 Jwt:ExpireMinutes 的默认值保持一致</summary>
+    public const int AccessTokenMinutes = 120;
+
+    ///<summary>续期令牌 Cookie 的默认有效期（天），与 Jwt:RefreshExpireDays 的默认值保持一致</summary>
+    public const int RefreshTokenDays = 7;
+
     ///<summary>访问令牌有效期（配置 Jwt:ExpireMinutes，默认 120 分钟）</summary>
-    private TimeSpan AccessLifetime() => TimeSpan.FromMinutes(ReadLifetime("Jwt:ExpireMinutes", 120));
+    private TimeSpan AccessLifetime() => TimeSpan.FromMinutes(ReadLifetime("Jwt:ExpireMinutes", AccessTokenMinutes));
 
     ///<summary>续期令牌有效期（配置 Jwt:RefreshExpireDays，默认 7 天）</summary>
     private TimeSpan RefreshLifetime() => TimeSpan.FromDays(ReadLifetime("Jwt:RefreshExpireDays", 7));

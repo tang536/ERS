@@ -11,10 +11,11 @@ namespace ERental.Services;
 /// 优惠券：管理员发券、顾客用券、订单取消时退券。
 /// 券模板与顾客持券分表——模板改价不影响已发出去的券，已领的券在有效期内继续可用。
 ///</summary>
-public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConfiguration cfg, IHostEnvironment env)
+public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConfiguration cfg, IHostEnvironment env, DbLockService locks)
 {
     private readonly AppDbContext _db = db;
     private readonly ILogger<CouponService> _logger = logger;
+    private readonly DbLockService _locks = locks;
     ///<summary>动态券码签名密钥：复用 JWT 的持久化密钥文件，不在数据库里再存一份明文</summary>
     private readonly byte[] _qrKey = Encoding.UTF8.GetBytes(SigningKeyProvider.Resolve(cfg, env, out _));
     private static readonly TimeSpan QrTokenTtl = TimeSpan.FromMinutes(3);
@@ -72,25 +73,36 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
     ///<summary>发券：不指定顾客则发给全部正常账号；库存与每人限领在同一事务内校验</summary>
     public async Task<int> GrantAsync(GrantCouponInput input)
     {
+        // 发券与“我的券”并发领取共用同一把活动锁：库存与每人限领必须在锁内重新计算。
+        // 旧实现把 held 查询放在事务之前，两个并发请求会同时看到“还没领满”，然后双双插入。
+        await using var guard = await _locks.TryAcquireAsync($"coupon_grant_{input.CouponId}", TimeSpan.FromSeconds(10))
+            ?? throw new BusinessException("该券正在发放，请稍后重试");
+
         var coupon = await _db.Coupons.FindAsync(input.CouponId) ?? throw new BusinessException("优惠券不存在");
         if (coupon.Status != "启用") throw new BusinessException("券已停用，不能继续发放");
 
         var customerIds = input.CustomerIds.Count > 0
-            ? await _db.Customers.Where(c => input.CustomerIds.Contains(c.CustomerId) && c.AccountStatus == "正常").Select(c => c.CustomerId).ToListAsync()
-            : await _db.Customers.Where(c => c.AccountStatus == "正常").Select(c => c.CustomerId).Take(Paging.MaxUnpagedRows).ToListAsync();
+            ? await _db.Customers.Where(c => input.CustomerIds.Contains(c.CustomerId) && c.AccountStatus == "正常")
+                .Select(c => c.CustomerId).ToListAsync()
+            // 全量发券不能再 Take(MaxUnpagedRows)：超过上限的顾客会被静默漏发。
+            // 这里取全部符合条件的顾客，库存与每人限领由后续事务统一校验。
+            : await _db.Customers.Where(c => c.AccountStatus == "正常")
+                .Select(c => c.CustomerId).ToListAsync();
         if (customerIds.Count == 0) throw new BusinessException("没有可发放的顾客");
-
-        //已领数量按顾客统计，超过每人限领的跳过
-        var held = await _db.CustomerCoupons.AsNoTracking()
-            .Where(c => c.CouponId == coupon.CouponId && customerIds.Contains(c.CustomerId))
-            .GroupBy(c => c.CustomerId).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
-
-        var targets = customerIds.Where(id => held.GetValueOrDefault(id) < coupon.PerLimit).ToList();
-        if (targets.Count == 0) throw new BusinessException("所选顾客均已达到领取上限");
 
         await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
         try
         {
+            // 已领数量必须在事务/锁内统计，不能再放到事务外。
+            var held = await _db.CustomerCoupons.AsNoTracking()
+                .Where(c => c.CouponId == coupon.CouponId && customerIds.Contains(c.CustomerId))
+                .GroupBy(c => c.CustomerId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.Count);
+
+            var targets = customerIds.Where(id => held.GetValueOrDefault(id) < coupon.PerLimit).ToList();
+            if (targets.Count == 0) throw new BusinessException("所选顾客均已达到领取上限");
+
             //库存兜底：不限量（total_qty=0）或剩余量足够才放行，避免并发发券超发
             if (coupon.TotalQty > 0)
             {
@@ -166,17 +178,21 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
         if (now < coupon.ValidFrom) throw new BusinessException($"该券 {coupon.ValidFrom:yyyy-MM-dd HH:mm} 才生效，请稍后再领");
         if (now > coupon.ValidTo) throw new BusinessException("该券已过期，无法领取");
 
-        var held = await _db.CustomerCoupons.CountAsync(c => c.CouponId == coupon.CouponId && c.CustomerId == customerId);
-        if (held >= coupon.PerLimit) throw new BusinessException($"该券每人限领 {coupon.PerLimit} 张，你已领满");
-
         var customer = await _db.Customers.FindAsync(customerId) ?? throw new BusinessException("账号不存在");
         if (customer.AccountStatus != "正常") throw new BusinessException("账号状态异常，暂不能领券");
+
+        // 同一顾客对同一活动串行领取；held 的统计移到事务内，避免两个并发请求同时看到“未领满”。
+        await using var guard = await _locks.TryAcquireAsync($"coupon_redeem_{coupon.CouponId}_{customerId}", TimeSpan.FromSeconds(10))
+            ?? throw new BusinessException("领取人数较多，请稍后重试");
 
         var newCode = (await GenerateUniqueCodesAsync(1))[0];
 
         await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
         try
         {
+            var held = await _db.CustomerCoupons.CountAsync(c => c.CouponId == coupon.CouponId && c.CustomerId == customerId);
+            if (held >= coupon.PerLimit) throw new BusinessException($"该券每人限领 {coupon.PerLimit} 张，你已领满");
+
             //库存用条件更新抢：并发兑换时超出总量的那一笔直接失败，不会超发
             if (coupon.TotalQty > 0)
             {

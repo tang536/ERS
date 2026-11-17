@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 
 // 顶层语句只保留「启动流程骨架」：每一步具体做什么，由文件末尾的静态局部函数完成。
@@ -96,9 +97,11 @@ await app.RunAsync();
 // 这样每一步都能单独读懂，也不会因闭包延长顶层变量的生命周期。
 
 // 上传目录必须在 CreateBuilder 之前建好：后面的静态文件中间件会直接使用该目录。
+// 只有 vehicle / avatars 会被静态中间件公开；maintenance / handover / contract / ai
+// 是含个人信息的证据或合同文件，只能经 /api/files 鉴权后读取。
 static void PrepareUploadDirectories()
 {
-    foreach (var sub in new[] { "maintenance", "vehicle" })
+    foreach (var sub in new[] { "maintenance", "vehicle", "handover", "contract", "avatars", "ai" })
     {
         Directory.CreateDirectory(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", sub));
     }
@@ -147,6 +150,20 @@ static void ConfigureJwtAuthentication(IServiceCollection services, IConfigurati
         };
         options.Events = new JwtBearerEvents
         {
+            // 私有上传文件通过 <img src> 加载时无法带 Authorization 头：
+            // 只对安全的 GET/HEAD 请求接受 access Cookie；写请求仍必须用 Bearer，
+            // 这样不会把 Cookie 认证扩大成 CSRF 面。
+            OnMessageReceived = ctx =>
+            {
+                var authorization = ctx.Request.Headers.Authorization.ToString();
+                if (string.IsNullOrWhiteSpace(authorization)
+                    && ctx.Request.Method is "GET" or "HEAD")
+                {
+                    var cookieToken = ctx.Request.Cookies[AuthCookie.AccessName];
+                    if (!string.IsNullOrWhiteSpace(cookieToken)) ctx.Token = cookieToken;
+                }
+                return Task.CompletedTask;
+            },
             // 续期令牌（7 天）与访问令牌（120 分钟）用的是同一把签名密钥，
             // 不区分令牌类型的话，续期令牌就能直接访问业务接口（相当于把访问令牌有效期拉到 7 天）。
             OnTokenValidated = ctx =>
@@ -210,7 +227,10 @@ static string ConfigureCors(IServiceCollection services, IConfiguration configur
                 corsOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase)
                 || corsRegexes.Any(r => r.IsMatch(origin)))
             .AllowAnyMethod()
-            .AllowAnyHeader());
+            .AllowAnyHeader()
+            // 续期令牌改为 HttpOnly Cookie 后，跨端口开发环境必须允许携带凭证。
+            // 来源仍由上面的显式白名单/正则校验，不能与 AllowAnyOrigin 同时使用。
+            .AllowCredentials());
     });
 
     return policyName;
@@ -307,6 +327,9 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     // 单点登录校验的本地短缓存（5 秒）：每个已认证请求都要读会话键，缓存把这次 DB 查询让掉；
     // 写操作（登录/登出/强制下线）会主动失效本机缓存，多实例之间的失效延迟上限即 TTL。
     services.AddMemoryCache();
+    // Redis 可选增强：配置了 ConnectionStrings:Redis（或 Redis:Connection）就启用，
+    // 没配/连接失败时所有调用自动回落到数据库与进程内缓存，门店断网也不会启动失败。
+    services.AddSingleton<RedisState>();
     // 登录 IP 防护闸：按来源 IP 累计登录失败并封锁。进程内单例——封锁记录只在内存，
     services.AddSingleton<LoginIpGuard>();
     // 单点登录登记表：同一账号不允许同时登录。按请求作用域注册即可——会话落在 system_config，
@@ -323,6 +346,7 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     services.AddScoped<CustomerService>();
     services.AddScoped<VehicleService>();
     services.AddScoped<OrderService>();
+    services.AddScoped<OrderActivityService>();
     // 租前信用体检：把「逾期次数/损坏赔付/补缴未清」翻译成押金倍数与租期上限（见 CreditPolicy 注释）
     services.AddScoped<CreditPolicy>();
     // 证据照片归档：超保留期的验车/维保照片移入 uploads/_archive 并回写库内路径
@@ -404,6 +428,7 @@ static void RegisterHostedServices(IServiceCollection services)
     services.AddHostedService<LogRetentionSchedulerService>();
     // 每日支付渠道对账：默认 Payment:ReconcileAt（03:15），补账并记录渠道差异。
     services.AddHostedService<PaymentReconcileSchedulerService>();
+    services.AddHostedService<OrderReminderBackgroundService>();
 }
 
 // 只记来源、不记密钥：排查「为什么重启后令牌失效 / 备份解不开」时，这一行就够定位了
@@ -441,14 +466,43 @@ static void ConfigurePipeline(WebApplication app, string corsPolicyName)
         ctx.Response.Headers.Append("X-Frame-Options", "SAMEORIGIN");
         ctx.Response.Headers.Append("Referrer-Policy", "no-referrer");
         ctx.Response.Headers.Append("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+        // CSP：默认只加载同源资源；样式允许内联（现有 React 内联 style 与二维码 SVG 依赖它），
+        // 脚本不允许内联；图片允许 data/blob（头像预览与二维码）。
+        // Swagger 自带内联脚本，开发调试路径不套用这条策略。
+        if (!ctx.Request.Path.StartsWithSegments("/swagger"))
+        {
+            ctx.Response.Headers.Append(
+                "Content-Security-Policy",
+                "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
+                + "img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+                + "script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; form-action 'self';");
+        }
         // 业务接口响应可能含顾客资料与订单金额，禁止浏览器/代理缓存
         if (ctx.Request.Path.StartsWithSegments("/api"))
             ctx.Response.Headers.CacheControl = "no-store";
         await next();
     });
 
-    // 静态资源：对外提供维保现场照片（wwwroot/uploads/maintenance/**）。
-    app.UseStaticFiles();
+    // 静态资源只公开车辆图片与头像：
+    // 维保、交接、合同签名、AI 成品统一走 /api/files/{category}/{path} 鉴权读取。
+    // 若继续 app.UseStaticFiles() 暴露整个 wwwroot/uploads，等于把顾客合同签名与车况照片
+    // 直接挂到公网，任何人猜到路径即可下载。
+    var uploadsRoot = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "uploads");
+    foreach (var publicDir in new[] { "vehicle", "avatars" })
+    {
+        var physicalPath = Path.Combine(uploadsRoot, publicDir);
+        if (!Directory.Exists(physicalPath)) continue;
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new PhysicalFileProvider(physicalPath),
+            RequestPath = $"/uploads/{publicDir}",
+            OnPrepareResponse = staticCtx =>
+            {
+                // 图片内容不变，允许浏览器缓存 1 天；文件名含随机串，更新后自然换 URL。
+                staticCtx.Context.Response.Headers.CacheControl = "public, max-age=86400";
+            }
+        });
+    }
 
     // 生产部署强制 HTTPS；开发期前端通过 http://localhost:5105 反向代理调用，
     if (!app.Environment.IsDevelopment())
@@ -459,6 +513,8 @@ static void ConfigurePipeline(WebApplication app, string corsPolicyName)
     app.UseCors(corsPolicyName);
 
     // 限流位置很关键：必须排在认证之前，否则未认证请求可以无限次打到认证逻辑上。
+    // Redis 可用时先做跨实例计数，Redis 不在线则由下面的内置本地策略兜底。
+    app.UseMiddleware<RedisRateLimitMiddleware>();
     app.UseRateLimiter();
 
     app.UseAuthentication();

@@ -234,6 +234,19 @@ CREATE TABLE IF NOT EXISTS `system_config` (
   UNIQUE KEY `uk_config_key` (`config_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统配置表';
 
+-- 12.1 登录会话状态表（从 system_config 独立出来，避免会话与业务配置共用一张表）
+CREATE TABLE IF NOT EXISTS `session_state` (
+  `session_id` INT NOT NULL AUTO_INCREMENT,
+  `session_key` VARCHAR(64) NOT NULL COMMENT '账号键：staff.{id} / customer.{id}',
+  `session_token` VARCHAR(64) DEFAULT NULL COMMENT '当前会话 sid（空串=强制下线墓碑）',
+  `refresh_jti` VARCHAR(64) DEFAULT NULL COMMENT '当前续期令牌 jti',
+  `revoked_reason` VARCHAR(100) DEFAULT NULL COMMENT '强制下线原因',
+  `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后更新时间',
+  PRIMARY KEY (`session_id`),
+  UNIQUE KEY `uk_session_key` (`session_key`),
+  KEY `idx_session_update` (`update_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='登录会话状态表';
+
 -- 13. 系统日志表
 CREATE TABLE IF NOT EXISTS `system_log` (
   `log_id` INT NOT NULL AUTO_INCREMENT,

@@ -12,6 +12,7 @@ import Pagination from '@/components/Pagination'
 import SortTh, { type SortDir } from '@/components/SortTh'
 import VehicleQrModal from './components/VehicleQrModal'
 import VehicleArchiveModal from './components/VehicleArchiveModal'
+import VehicleCalendarModal from './components/VehicleCalendarModal'
 import VehicleQrLookup from './components/VehicleQrLookup'
 import VehicleCheckPanel from './components/VehicleCheckPanel'
 import MaintenancePanel from './components/MaintenancePanel'
@@ -107,6 +108,8 @@ export default function Vehicles() {
   /** 车辆档案时间线弹窗 */
   const [archiveVehicle, setArchiveVehicle] = useState<Vehicle | null>(null)  /** 扫码查询弹窗开关 */
   const [showLookup, setShowLookup] = useState(false)
+  /** 车辆可用日历弹窗 */
+  const [showCalendar, setShowCalendar] = useState(false)
   /** 批量操作：勾选的车辆主键集合（仅在车辆档案页签、管理员可见） */
   const [selected, setSelected] = useState<number[]>([])
   /** 批量新增 / 批量编辑弹窗开关 */
@@ -510,6 +513,7 @@ export default function Vehicles() {
               <OverflowMenu
                 items={[
                   { key: 'lookup', label: '扫码查询', icon: 'qrcode', onClick: () => setShowLookup(true) },
+                  { key: 'calendar', label: '档期日历', icon: 'reports', onClick: () => setShowCalendar(true) },
                   { key: 'batch-create', label: '批量新增', icon: 'create-order', onClick: () => setShowBatchCreate(true) },
                 ]}
               />
@@ -891,6 +895,8 @@ export default function Vehicles() {
           onClose={() => setArchiveVehicle(null)}
         />
       )}
+
+      {showCalendar && <VehicleCalendarModal onClose={() => setShowCalendar(false)} />}
 
       {/* 扫码查询：扫码枪直接扫，或手工输入车辆编号 */}
       {showLookup && <VehicleQrLookup onClose={() => setShowLookup(false)} />}

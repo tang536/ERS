@@ -49,7 +49,7 @@ public class MemberController(MemberService svc, AlipayService alipay, PayConfig
             {
                 //回跳地址按顾客此刻的访问源生成（与订单/补缴同一口径）：不传就只能用配置里的 pay.return_url
                 var returnUrl = await _payConfig.BuildReturnUrlAsync(ClientOrigin, "pay-result");
-                var notifyUrl = await _payConfig.BuildNotifyUrlAsync(ClientOrigin, "api/payment/alipay/notify");
+                var notifyUrl = await _payConfig.BuildNotifyUrlAsync("api/payment/alipay/notify");
                 //CreatePagePayAsync 内部自带三级降级：凭证不全时自动返回模拟收银台地址
                 payUrl = await _alipay.CreatePagePayAsync(tradeNo, $"会员购买 {dto.MemberLevel}", price, returnUrl, notifyUrl);
             }

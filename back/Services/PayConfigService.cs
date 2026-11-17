@@ -1,4 +1,6 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using ERental.Data;
 using ERental.DTOs;
 using ERental.Models;
@@ -9,10 +11,31 @@ using Microsoft.Extensions.Options;
 namespace ERental.Services;
 
 ///<summary>支付凭证的存取与「三级自动降级」判定</summary>
-public partial class PayConfigService(AppDbContext db, IOptions<LanOptions> lan, SecretProvider secrets)
+public partial class PayConfigService(
+    AppDbContext db,
+    IOptions<LanOptions> lan,
+    SecretProvider secrets,
+    IConfiguration configuration,
+    IHttpContextAccessor httpContext)
 {
     private readonly AppDbContext _db = db;
     private readonly SecretProvider _secrets = secrets;
+    private readonly IHttpContextAccessor _httpContext = httpContext;
+
+    ///<summary>允许作为支付回跳源的显式白名单：优先 Payment:AllowedOrigins，兼容 Cors:AllowedOrigins</summary>
+    private readonly string[] _allowedReturnOrigins =
+        configuration.GetSection("Payment:AllowedOrigins").Get<string[]>()
+        ?? configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+        ?? [];
+
+    ///<summary>允许的回跳源正则：与 CORS 共用一套内网/本机规则</summary>
+    private readonly Regex[] _allowedReturnOriginPatterns =
+    [
+        .. (configuration.GetSection("Payment:AllowedOriginPatterns").Get<string[]>()
+            ?? configuration.GetSection("Cors:AllowedOriginPatterns").Get<string[]>()
+            ?? [])
+            .Select(p => new Regex(p, RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromMilliseconds(200)))
+    ];
 
     ///<summary>局域网回环地址识别：整段 localhost/127</summary>
     [GeneratedRegex(@"^https?://(localhost|127\.0\.0\.1)(:|/|$)")]
@@ -133,7 +156,7 @@ public partial class PayConfigService(AppDbContext db, IOptions<LanOptions> lan,
         return Uri.TryCreate(referer.Trim(), UriKind.Absolute, out var uri) ? $"{uri.Scheme}://{uri.Authority}" : null;
     }
 
-    ///<summary>构建「支付完成后回跳的前端地址」</summary>
+    ///<summary>构建「支付完成后回跳的前端地址」：只接受白名单/同源/本机来源，否则回落到配置值</summary>
     public async Task<string> BuildReturnUrlAsync(string? origin, string path)
     {
         var normalized = NormalizeOrigin(origin);
@@ -144,26 +167,61 @@ public partial class PayConfigService(AppDbContext db, IOptions<LanOptions> lan,
         return FallbackChannelUrl(configured, path);
     }
 
-    ///<summary>构建「支付平台异步通知地址」</summary>
-    public async Task<string> BuildNotifyUrlAsync(string? origin, string path)
+    ///<summary>
+    /// 构建「支付平台异步通知地址」：通知地址必须由服务端配置或局域网兜底决定，
+    /// 绝不能再由客户端 Origin 拼接——否则攻击者可以把 notify_url 指向自己的服务器，
+    /// 从而接收支付平台回调里的验签前参数并做重放/钓鱼。
+    /// </summary>
+    public async Task<string> BuildNotifyUrlAsync(string path)
     {
-        var normalized = NormalizeOrigin(origin);
-        if (normalized != null) return $"{normalized}/{path.TrimStart('/')}";
-
         var raw = await GetRawAsync();
         var configured = raw.TryGetValue(KeyNotifyUrl, out var v) ? v.Trim() : "";
         return FallbackChannelUrl(configured, path);
     }
 
-    ///<summary>校验并规范化浏览器传来的 origin</summary>
-    private static string? NormalizeOrigin(string? origin)
+    ///<summary>校验并规范化浏览器传来的 origin：协议、路径、用户信息之外，还必须通过来源白名单</summary>
+    private string? NormalizeOrigin(string? origin)
     {
         if (string.IsNullOrWhiteSpace(origin)) return null;
         if (!Uri.TryCreate(origin.Trim(), UriKind.Absolute, out var uri)) return null;
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return null;
         if (uri.AbsolutePath != "/" || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment)) return null;
         if (!string.IsNullOrEmpty(uri.UserInfo)) return null;
-        return uri.GetLeftPart(UriPartial.Authority);
+
+        var normalized = uri.GetLeftPart(UriPartial.Authority);
+        return IsAllowedOrigin(normalized, uri) ? normalized : null;
+    }
+
+    ///<summary>
+    /// 回跳源白名单：
+    ///   ① 配置里的精确来源；
+    ///   ② 配置里的正则（本机/内网段）；
+    ///   ③ 当前请求自身的源（生产同源反代场景）；
+    ///   ④ 本机回环地址（Vite 开发调试）；
+    ///   ⑤ 开启局域网模式时的前端入口。
+    /// </summary>
+    private bool IsAllowedOrigin(string normalized, Uri uri)
+    {
+        if (_allowedReturnOrigins.Contains(normalized, StringComparer.OrdinalIgnoreCase)) return true;
+        if (_allowedReturnOriginPatterns.Any(r => r.IsMatch(normalized))) return true;
+
+        var request = _httpContext.HttpContext?.Request;
+        if (request is not null)
+        {
+            var requestOrigin = $"{request.Scheme}://{request.Host}";
+            if (string.Equals(normalized, requestOrigin, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        if (uri.IsLoopback) return true;
+
+        if (_lan.Enabled)
+        {
+            var host = string.IsNullOrWhiteSpace(_lan.Host) ? NetworkHelper.ResolveLanIp() : _lan.Host.Trim();
+            var frontOrigin = $"{NormalizeFrontScheme(_lan.FrontScheme)}://{host}:{_lan.CustomerPort}";
+            if (string.Equals(normalized, frontOrigin, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        return false;
     }
 
     ///<summary>敏感项分层解析的公开入口（env＞secrets＞db），供各支付服务复用同一套优先级</summary>
@@ -401,14 +459,20 @@ public partial class PayConfigService(AppDbContext db, IOptions<LanOptions> lan,
         ["bankSignKey"] = KeyBankSignKey,
     };
 
-    ///<summary>读取单个密钥项的明文，只给管理员在「支付配置」弹窗里点「显示」时按需取用</summary>
-    public async Task<string?> GetSecretAsync(string? field)
+    ///<summary>密钥指纹：只返回 SHA-256 前 12 位与长度，管理端据此确认“值确实存在”，但无法还原明文</summary>
+    public sealed record SecretFingerprint(string Field, string Fingerprint, int Length);
+
+    ///<summary>读取单个密钥项的指纹，绝不回传明文；不再提供任何“显示密钥”接口</summary>
+    public async Task<SecretFingerprint?> GetSecretFingerprintAsync(string? field)
     {
         var name = (field ?? "").Trim();
         if (!SecretFieldKeys.TryGetValue(name, out var key)) return null;
 
         var raw = await GetRawAsync();
-        return raw.TryGetValue(key, out var v) ? (v ?? "").Trim() : "";
+        var value = raw.TryGetValue(key, out var v) ? (v ?? "").Trim() : "";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+        var fingerprint = value.Length == 0 ? "" : $"{hash[..12]}…";
+        return new SecretFingerprint(name, fingerprint, value.Length);
     }
 
     ///<summary>把已存的值脱敏后返回（私钥/公钥只留首尾几位），供管理员端表单回显</summary>

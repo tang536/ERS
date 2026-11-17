@@ -17,10 +17,15 @@ public class SessionRegistryCacheTests
         var registry = new SessionRegistry(
             testDb.Db,
             new MemoryCache(new MemoryCacheOptions()),
+            TestRedis.Disabled(),
             NullLogger<SessionRegistry>.Instance);
 
         var first = await registry.IssueAsync("customer", 7);
         Assert.True((await registry.CheckAsync("customer", 7, first)).Current);
+
+        // 会话落到独立 session_state，不再占用 system_config。
+        Assert.Contains(testDb.Db.Sessions, s => s.SessionKey == "sess.customer.7");
+        Assert.DoesNotContain(testDb.Db.SystemConfigs, c => c.ConfigKey.StartsWith("sess."));
         //第二次走缓存，仍应返回同一结论
         Assert.True((await registry.CheckAsync("customer", 7, first)).Current);
 

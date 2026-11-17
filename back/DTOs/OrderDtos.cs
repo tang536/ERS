@@ -35,6 +35,12 @@ public class CreateOrderDto
     public int PointsUsed { get; init; }
     /// <summary>勾选的增值服务（addon_item.addon_id）</summary>
     public List<int> AddonIds { get; init; } = [];
+
+    /// <summary>
+    /// 客户端幂等键（建议 UUID）：同一请求因双击/网络重试重复提交时，服务端返回首次创建的订单，
+    /// 不会重复扣券、扣积分或占车。不传时保持旧行为。
+    /// </summary>
+    public string? RequestId { get; init; }
 }
 
 /// <summary>线上下单入参（顾客自助）。客户身份取自 Token，前端不得传客户 ID。</summary>
@@ -55,6 +61,9 @@ public class OnlineOrderDto
     public int PointsUsed { get; init; }
     /// <summary>勾选的增值服务（addon_item.addon_id）</summary>
     public List<int> AddonIds { get; init; } = [];
+
+    /// <summary>客户端幂等键（建议 UUID）：重复提交时返回首次创建的订单。</summary>
+    public string? RequestId { get; init; }
 }
 
 public class SettleOrderDto
