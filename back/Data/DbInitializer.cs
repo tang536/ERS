@@ -347,7 +347,7 @@ public static class DbInitializer
         EnsureTable(db, TableSessionState, """
         CREATE TABLE IF NOT EXISTS `session_state` (
         `session_id` INT NOT NULL AUTO_INCREMENT,
-        `session_key` VARCHAR(64) NOT NULL COMMENT '账号键：staff.{id} / customer.{id}',
+        `session_key` VARCHAR(64) NOT NULL COMMENT '账号键：staff.<id> / customer.<id>',
         `session_token` VARCHAR(64) DEFAULT NULL COMMENT '当前会话 sid（空串=强制下线墓碑）',
         `refresh_jti` VARCHAR(64) DEFAULT NULL COMMENT '当前续期令牌 jti',
         `revoked_reason` VARCHAR(100) DEFAULT NULL COMMENT '强制下线原因',
