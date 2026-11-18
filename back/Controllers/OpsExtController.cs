@@ -277,7 +277,7 @@ public class OpsExtController(OpsExtService svc) : ControllerBase
     [Authorize(Roles = "管理员,前台")]
     public async Task<IActionResult> RedeemVoucher(string code, [FromBody] VoucherRedeemInput input)
     {
-        try { return Ok(new ApiResponse<GroupVoucherDto> { Data = await _svc.RedeemGroupVoucherAsync(code, input.OrderId, CurrentUserId), Message = "团购码已核销" }); }
+        try { return Ok(new ApiResponse<GroupVoucherDto> { Data = await _svc.RedeemGroupVoucherAsync(code, input.OrderId), Message = "团购码已核销" }); }
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(Fail(ex)); }
     }
 
@@ -323,7 +323,7 @@ public class OpsExtController(OpsExtService svc) : ControllerBase
     [Authorize(Roles = "管理员,前台")]
     public async Task<IActionResult> CreateDamage([FromBody] DamageInput input)
     {
-        try { return Ok(new ApiResponse<DamageAssessmentDto> { Data = await _svc.CreateDamageAssessmentAsync(input, CurrentUserId), Message = "车损评估已生成" }); }
+        try { return Ok(new ApiResponse<DamageAssessmentDto> { Data = await _svc.CreateDamageAssessmentAsync(input), Message = "车损评估已生成" }); }
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(Fail(ex)); }
     }
 

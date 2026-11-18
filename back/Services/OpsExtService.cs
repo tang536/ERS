@@ -405,7 +405,8 @@ public class OpsExtService(AppDbContext db, MessageService messages)
     public async Task BindReferralAsync(int inviteeId, string? code)
     {
         if (string.IsNullOrWhiteSpace(code)) return;
-        var referrer = await _db.CustomerCreditProfiles.FirstOrDefaultAsync(p => p.ReferralCode == code.Trim().ToUpperInvariant());
+        var normalizedCode = code.Trim().ToUpperInvariant();
+        var referrer = await _db.CustomerCreditProfiles.FirstOrDefaultAsync(p => p.ReferralCode == normalizedCode);
         if (referrer is null || referrer.CustomerId == inviteeId) return;
         if (await _db.Referrals.AnyAsync(r => r.InviteeId == inviteeId)) return;
         var profile = await _db.CustomerCreditProfiles.FirstOrDefaultAsync(p => p.CustomerId == inviteeId);
@@ -520,8 +521,8 @@ public class OpsExtService(AppDbContext db, MessageService messages)
         int? customerId = null;
         if (input.OrderId is > 0)
         {
-            var order = await _db.RentalOrders.AsNoTracking().FirstOrDefaultAsync(o => o.OrderId == input.OrderId);
-            if (order is null) throw new BusinessException("关联订单不存在");
+            var order = await _db.RentalOrders.AsNoTracking().FirstOrDefaultAsync(o => o.OrderId == input.OrderId)
+                ?? throw new BusinessException("关联订单不存在");
             customerId = order.CustomerId;
         }
         var entity = new AccidentRecord
@@ -764,9 +765,10 @@ public class OpsExtService(AppDbContext db, MessageService messages)
         return (await ListGroupVouchersAsync()).First(v => v.VoucherId == entity.VoucherId);
     }
 
-    public async Task<GroupVoucherDto> RedeemGroupVoucherAsync(string code, int? orderId, int operatorId)
+    public async Task<GroupVoucherDto> RedeemGroupVoucherAsync(string code, int? orderId)
     {
-        var entity = await _db.GroupVouchers.FirstOrDefaultAsync(v => v.Code == code.Trim().ToUpperInvariant())
+        var normalizedCode = code.Trim().ToUpperInvariant();
+        var entity = await _db.GroupVouchers.FirstOrDefaultAsync(v => v.Code == normalizedCode)
             ?? throw new BusinessException("团购码不存在");
         if (entity.Status == "已核销") throw new BusinessException("团购码已核销");
         if (entity.ValidTo < AppClock.Now) throw new BusinessException("团购码已过期");
@@ -877,12 +879,12 @@ public class OpsExtService(AppDbContext db, MessageService messages)
     }
 
     /// <summary>车损评估：按严重度给出可复算估价；后续接视觉模型时只替换这一处。</summary>
-    public async Task<DamageAssessmentDto> CreateDamageAssessmentAsync(DamageInput input, int operatorId)
+    public async Task<DamageAssessmentDto> CreateDamageAssessmentAsync(DamageInput input)
     {
         var order = await _db.RentalOrders.AsNoTracking().FirstOrDefaultAsync(o => o.OrderId == input.OrderId)
             ?? throw new BusinessException("订单不存在");
         if (input.Severity is < 1 or > 5) throw new BusinessException("车损严重度必须是 1~5");
-        var cost = input.EstimatedCost ?? input.Severity * 200m;
+        var cost = input.EstimatedCost ?? (input.Severity * 200m);
         var findings = NullIfEmpty(input.Findings) ?? $"系统初判：{input.Severity} 级车损，预计维修 ¥{cost:F2}，请人工复核照片。";
         var entity = new DamageAssessment
         {
@@ -929,8 +931,8 @@ public class OpsExtService(AppDbContext db, MessageService messages)
 
     public async Task<List<StaffPerformanceDto>> PerformanceAsync(DateTime? from, DateTime? to)
     {
-        var start = (from ?? AppClock.Now.Date.AddDays(-30));
-        var end = (to ?? AppClock.Now.Date.AddDays(1));
+        var start = from ?? AppClock.Now.Date.AddDays(-30);
+        var end = to ?? AppClock.Now.Date.AddDays(1);
         var orders = await _db.RentalOrders.AsNoTracking()
             .Where(o => o.CreateTime >= start && o.CreateTime < end && o.OperatorId != null).ToListAsync();
         var settles = await _db.SettleRecords.AsNoTracking()
