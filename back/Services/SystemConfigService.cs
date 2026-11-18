@@ -82,7 +82,7 @@ public class SystemConfigService(AppDbContext db)
         {
             ["site.name"] = map.GetValueOrDefault("site.name", "途电驿站租赁系统"),
             ["login.modes"] = map.GetValueOrDefault("login.modes", "staff,customer"),
-            ["theme.options"] = map.GetValueOrDefault("theme.options", "light,dark"),
+            ["theme.options"] = map.GetValueOrDefault("theme.options", "light,dark,pink"),
             ["daily_rent"] = map.GetValueOrDefault("daily_rent", "30"),
             ["deposit"] = map.GetValueOrDefault("deposit", "500"),
             ["overdue_multiplier"] = map.GetValueOrDefault("overdue_multiplier", "1.5"),

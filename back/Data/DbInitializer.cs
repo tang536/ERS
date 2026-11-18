@@ -1355,7 +1355,7 @@ public static class DbInitializer
             // 键必须真实存在于库里，否则 GetPublic 永远返回代码兜底值，管理员在配置页也改不动
             ("site.name", "途电驿站", "站点名称（登录页与侧边栏标题；留空则用系统默认）"),
             ("login.modes", "staff,customer", "登录方式（逗号分隔：staff=员工入口，customer=顾客入口）"),
-            ("theme.options", "light,dark", "可用主题（逗号分隔，登录页主题切换在这些值之间轮换）")
+            ("theme.options", "light,dark,pink", "可用主题（逗号分隔，登录页主题切换在这些值之间轮换）")
             // 各会员类型的实际购买价存 member_rights.purchase_price，由管理员在会员管理中逐类型定价
         };
         var existKeys = db.SystemConfigs.Select(c => c.ConfigKey).ToList();
@@ -1363,6 +1363,16 @@ public static class DbInitializer
         if (missing.Count > 0)
         {
             db.SystemConfigs.AddRange(missing.Select(c => SystemConfig.Create(c.Key, c.Value, c.Desc)));
+            db.SaveChanges();
+        }
+
+        // 粉色主题上线时的存量迁移：旧版本默认写的是 "light,dark"，
+        // 老库若原样保留，前端 setThemeOptions 会把 pink 过滤掉，新主题等于不可见。
+        // 只在值恰好等于旧默认时升级，管理员自定义过的组合（例如只留 "light"）一律不动。
+        var themeRow = db.SystemConfigs.FirstOrDefault(c => c.ConfigKey == "theme.options");
+        if (themeRow != null && themeRow.ConfigValue == "light,dark")
+        {
+            themeRow.SetValue("light,dark,pink");
             db.SaveChanges();
         }
 

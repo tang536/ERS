@@ -7,6 +7,8 @@ public class StaffLoginDto
     public string LoginAccount { get; init; } = string.Empty;
     public string Password { get; init; } = string.Empty;
     public string RoleType { get; init; } = string.Empty; // admin / reception / finance
+    /// <summary>滑动验证通过后签发的一次性票据（POST /api/auth/slider-captcha/verify 返回）</summary>
+    public string SliderTicket { get; init; } = string.Empty;
 }
 
 /// <summary>顾客登录：**仅支持注册用户名 + 密码**（已移除身份证号登录）</summary>
@@ -14,6 +16,15 @@ public class CustomerLoginDto
 {
     public string Account { get; init; } = string.Empty;
     public string Password { get; init; } = string.Empty;
+    /// <summary>滑动验证通过后签发的一次性票据</summary>
+    public string SliderTicket { get; init; } = string.Empty;
+}
+
+/// <summary>滑动拼图校验：id 来自 GET /api/auth/slider-captcha，offset 为拼图块横向偏移</summary>
+public class SliderVerifyDto
+{
+    public string Id { get; init; } = string.Empty;
+    public int Offset { get; init; }
 }
 
 /// <summary>令牌续期：只凭续期令牌本身，不需要再传账号密码</summary>

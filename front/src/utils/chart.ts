@@ -48,8 +48,24 @@ export default echarts
  * 这里只放「结构色」（轴、网格、文字、描边），系列主色（品牌红 / 橙）两个主题共用，
  * 因为品牌色本身在深浅底上都够辨识，换掉反而不统一。
  */
-export function chartTheme(isDark: boolean) {
-  return isDark
+export function chartTheme(theme: boolean | 'light' | 'dark' | 'pink') {
+  // 兼容旧的布尔调用：true=深色，false=浅色；新调用点直接传 useTheme().theme
+  const t = typeof theme === 'boolean' ? (theme ? 'dark' : 'light') : theme
+  if (t === 'pink') {
+    return {
+      axisLine: '#e8c5d0',
+      axisLabel: '#7b5f68',      // 粉底上按 4.5:1 反推的灰玫瑰
+      nameText: '#8a6b75',
+      splitLine: 'rgba(201, 75, 110, 0.12)',
+      tooltipBg: '#fffafb',
+      tooltipText: '#33232a',
+      tooltipBorder: '#e2bcc7',
+      barLabel: '#33232a',
+      gap: '#fffdfd',            // 取粉主题卡片底色，饼图扇区才是「切开」
+      pieText: '#7b5f68',
+    }
+  }
+  return t === 'dark'
     ? {
       axisLine: '#334155',      // 轴线：比背景亮一档，但不抢戏
       axisLabel: '#94a3b8',     // 刻度文字：深底上对比约 5.3:1

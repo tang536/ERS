@@ -98,8 +98,8 @@ export default function Reports() {
   const { toast, confirm, prompt } = useUI()
   const { hasRole } = useAuth()
   /** 图表画在 canvas 上，CSS 变量管不到，只能把主题色显式塞进 option（与看板同一套 chartTheme） */
-  const { isDark } = useTheme()
-  const tc = chartTheme(isDark)
+  const { theme } = useTheme()
+  const tc = chartTheme(theme)
   /**
    * 角色口径（这是本页最重要的约定，查看范围：财务 > 管理员）：
    *   财务 → 全量视角：资金指标 + 运营指标都看，可下钻到逐笔明细与金额构成，

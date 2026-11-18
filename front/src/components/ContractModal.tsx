@@ -151,8 +151,8 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
                   whiteSpace: 'pre-wrap',
                   maxHeight: 320,
                   overflow: 'auto',
-                  background: 'var(--bg-subtle, #f8fafc)',
-                  border: '1px solid var(--border-color, #e5e7eb)',
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
                   borderRadius: 8,
                   padding: '12px 16px',
                   fontSize: 13,
@@ -169,7 +169,7 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
                     <img
                       src={contract.signatureUrl}
                       alt="承租方签名"
-                      style={{ maxWidth: 280, maxHeight: 120, border: '1px solid var(--border-color, #e5e7eb)', borderRadius: 8, background: '#fff' }}
+                      style={{ maxWidth: 280, maxHeight: 120, border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }}
                     />
                   ) : (
                     <div className="field-hint">签名图缺失</div>
@@ -192,7 +192,7 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
                       width: '100%',
                       height: 180,
                       background: '#fff',
-                      border: '1px dashed var(--border-color, #94a3b8)',
+                      border: '1px dashed var(--border-strong)',
                       borderRadius: 8,
                       touchAction: 'none',
                       cursor: 'crosshair',

@@ -11,7 +11,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace ERental.Services;
 
-public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry sessions, LoginIpGuard ipGuard, IHttpContextAccessor http)
+public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry sessions, LoginIpGuard ipGuard, IHttpContextAccessor http, SliderCaptchaService? sliderCaptcha = null)
 {
     ///<summary>用户类型：顾客</summary>
     private const string UserTypeCustomer = "customer";
@@ -24,6 +24,12 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
     private readonly SessionRegistry _sessions = sessions;
     private readonly LoginIpGuard _ipGuard = ipGuard;
     private readonly IHttpContextAccessor _http = http;
+
+    /// <summary>
+    /// 滑动验证票据。单元测试直接 new AuthService 时允许为 null（跳过人机校验），
+    /// 生产环境由 DI 注入，任何登录都必须先过这一关。
+    /// </summary>
+    private readonly SliderCaptchaService? _sliderCaptcha = sliderCaptcha;
 
     //角色名常量：与 DTOs/AuthDtos 的 RoleType（admin/reception/finance）、数据库 Roles.RoleName 种子值、[Authorize(Roles="...")] 三处保持同源
     private const string RoleAdmin = "管理员";
@@ -47,6 +53,9 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
     public async Task<LoginResponseDto> StaffLogin(StaffLoginDto dto, string? clientIp = null)
     {
         var ip = string.IsNullOrWhiteSpace(clientIp) ? "unknown" : clientIp;
+
+        // 人机校验先于账号/密码：滑动验证未完成不消耗密码尝试次数，也不写失败日志
+        VerifySliderTicket(dto.SliderTicket, ip);
 
         //阈值读系统配置：登录是低频操作，一次 ToList 的代价可忽略
         var (maxFail, lockMinutes) = await LoadLoginGuardAsync();
@@ -174,6 +183,9 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
     public async Task<LoginResponseDto> CustomerLogin(CustomerLoginDto dto, string? clientIp = null)
     {
         var ip = string.IsNullOrWhiteSpace(clientIp) ? "unknown" : clientIp;
+
+        // 员工与顾客共用同一套滑动验证；先验票据再验密码
+        VerifySliderTicket(dto.SliderTicket, ip);
         if (string.IsNullOrWhiteSpace(dto.Account)) throw new BusinessException("请输入用户名");
 
         var account = dto.Account.Trim();
@@ -594,5 +606,18 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         return principal.FindFirst(TokenTypeClaim)?.Value == TokenTypeRefresh
             ? principal
             : throw new BusinessException("该令牌不能用于续期，请重新登录");
+    }
+
+    /// <summary>
+    /// 登录人机校验。注入的 SliderCaptchaService 为空时（单元测试直连服务）跳过；
+    /// 生产环境 DI 一定注入，因此不存在“验证关掉就裸奔”的路径。
+    /// </summary>
+    private void VerifySliderTicket(string? ticket, string ip)
+    {
+        if (_sliderCaptcha is null) return;
+        if (string.IsNullOrWhiteSpace(ticket))
+            throw new BusinessException("请先完成滑动验证");
+        if (!_sliderCaptcha.ConsumeTicket(ticket, ip))
+            throw new BusinessException("滑动验证已失效，请重新验证");
     }
 }

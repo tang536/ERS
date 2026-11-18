@@ -2,10 +2,11 @@
 import { flushSync } from 'react-dom'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth, homePathOf, ROLE } from '../hooks/useAuth'
-import { setTheme, useTheme, type Theme } from '../hooks/useTheme'
+import { setTheme, type Theme } from '../hooks/useTheme'
 import { ROUTE_ROLES, canAccess } from '../permissions'
 import { useUI } from './UIProvider'
 import Icon, { type IconName } from './Icon'
+import ThemeMenu from './ThemeMenu'
 import Avatar from './Avatar'
 import { authApi, customerApi, orderApi, reportApi, vehicleApi, messageApi } from '../api'
 import { logoutEverywhere } from '../utils/session'
@@ -143,8 +144,9 @@ export default function Layout() {
       flushSync(() => setTheme(back))
     }
     const onBefore = () => {
-      if (document.documentElement.dataset.theme !== 'dark') return
-      saved = 'dark'
+      const active = (document.documentElement.dataset.theme || 'light') as Theme
+      if (active === 'light') return
+      saved = active
       flushSync(() => setTheme('light'))
       fallback = window.setTimeout(restore, 4000)
     }
@@ -208,7 +210,6 @@ export default function Layout() {
 
   const roleName = user?.roleName || ''
   const isCustomer = user?.userType === 'customer'
-  const { isDark, canToggle: canToggleTheme, toggleTheme } = useTheme()
 
   /**
    * 顶栏全局搜索按角色限制数据源，避免出现「搜得到但点进去没权限」：
@@ -674,17 +675,8 @@ export default function Layout() {
               </button>
             )}
 
-            {/* 深浅主题切换：sun/moon 与 IDE 端一致，偏好持久化到 localStorage。
-                theme.options 只配了一种主题时按钮隐藏——配置项写了「只允许浅色」就该真正锁住。 */}
-            {canToggleTheme && (
-              <button
-                className="header-icon-btn"
-                title={isDark ? '切换为浅色主题' : '切换为深色主题'}
-                onClick={toggleTheme}
-              >
-                <Icon name={isDark ? 'sun' : 'moon'} size={19} />
-              </button>
-            )}
+            {/* 界面主题：浅色 / 深色 / 粉色。theme.options 只配一种时组件自己隐藏 */}
+            <ThemeMenu />
 
             {/* GitHub 直达：作者/源码入口。顾客端是消费场景，不展示开发相关入口，只在员工端保留 */}
             {!isCustomer && (

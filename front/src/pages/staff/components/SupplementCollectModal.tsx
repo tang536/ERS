@@ -30,8 +30,8 @@ const POLL_MAX = 40
 /** 现金是"人工确认"，不属于通道；和三个线上渠道并排放，前台不必再找第二个按钮 */
 const CASH_META: PayChannelMeta = {
   icon: 'refund',
-  color: '#64748b',
-  tint: '#F1F5F9',
+  color: 'var(--text-muted)',
+  tint: 'var(--surface-2)',
   desc: '当场收到现金后点确认，直接落账',
 }
 
