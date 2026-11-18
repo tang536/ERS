@@ -101,7 +101,7 @@ await app.RunAsync();
 // 是含个人信息的证据或合同文件，只能经 /api/files 鉴权后读取。
 static void PrepareUploadDirectories()
 {
-    foreach (var sub in new[] { "maintenance", "vehicle", "handover", "contract", "avatars", "ai" })
+    foreach (var sub in new[] { "maintenance", "vehicle", "handover", "contract", "avatars", "ai", "coupon", "addon" })
     {
         Directory.CreateDirectory(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", sub));
     }
@@ -373,6 +373,8 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     services.AddScoped<SupplementService>();
     services.AddScoped<SettlementService>();
     services.AddScoped<MaintenanceService>();
+    services.AddScoped<OpsCenterService>();
+    services.AddScoped<OpsExtService>();
     services.AddScoped<ReportService>();
     // 员工实时预警作为「通知来源」注入 MessageService：MessageService 只认接口，
     services.AddScoped<INotificationSource>(sp => sp.GetRequiredService<ReportService>());
@@ -498,12 +500,12 @@ static void ConfigurePipeline(WebApplication app, string corsPolicyName)
         await next();
     });
 
-    // 静态资源只公开车辆图片与头像：
+    // 静态资源只公开车辆、头像与营销图片（券/增值服务）：
     // 维保、交接、合同签名、AI 成品统一走 /api/files/{category}/{path} 鉴权读取。
     // 若继续 app.UseStaticFiles() 暴露整个 wwwroot/uploads，等于把顾客合同签名与车况照片
     // 直接挂到公网，任何人猜到路径即可下载。
     var uploadsRoot = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "uploads");
-    foreach (var publicDir in new[] { "vehicle", "avatars" })
+    foreach (var publicDir in new[] { "vehicle", "avatars", "coupon", "addon" })
     {
         var physicalPath = Path.Combine(uploadsRoot, publicDir);
         if (!Directory.Exists(physicalPath)) continue;

@@ -79,7 +79,15 @@ public class ImageStorage(IWebHostEnvironment env)
     }
 
     ///<summary>保存图片并返回可直接引用的相对路径</summary>
-    public async Task<string> SaveAsync(IFormFile? file, string subDir) => await SaveAsync(file, subDir, null);
+    public async Task<string> SaveAsync(IFormFile? file, string subDir) => await SaveAsync(file, subDir, null, MaxImageBytes);
+
+    ///<summary>判断 URL 是否属于指定上传目录，防止把任意外链写进数据库</summary>
+    public static bool IsOwnedUrl(string? url, string subDir)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        var prefix = $"/uploads/{subDir.Trim().Trim('/')}/";
+        return url.Trim().StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
 
     ///<summary>
     /// 保存图片并返回可引用的相对路径。
@@ -89,10 +97,14 @@ public class ImageStorage(IWebHostEnvironment env)
     /// 备份、迁移、清理都要 `ls` 上万行；按月分桶后，找「上个月的还车照」是点目录而不是翻列表。
     /// 前缀由调用方给（例如 Handover_197_还车），文件名自带业务线索，出事时不用反查数据库。
     ///</summary>
-    public async Task<string> SaveAsync(IFormFile? file, string subDir, string? namePrefix)
+    public async Task<string> SaveAsync(IFormFile? file, string subDir, string? namePrefix, long maxBytes = MaxImageBytes)
     {
         if (file == null || file.Length == 0) throw new BusinessException("请选择要上传的图片");
-        if (file.Length > MaxImageBytes) throw new BusinessException("图片不能超过 5MB，请压缩后再上传");
+        if (file.Length > maxBytes)
+        {
+            var limitMb = Math.Max(1, maxBytes / (1024 * 1024));
+            throw new BusinessException($"图片不能超过 {limitMb}MB，请压缩后再上传");
+        }
 
         //扩展名白名单 + 文件头魔数双重校验：只认扩展名的话，把脚本改名为 .jpg 也能落到 wwwroot 下
         var ext = await ValidateImageAsync(file, AllowedImageExt);

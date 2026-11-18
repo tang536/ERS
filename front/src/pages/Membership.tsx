@@ -77,6 +77,10 @@ export default function Membership() {
   // 已发起支付的 HY 交易号：模拟收银台在新窗口付款，当前页轮询感知结果
   const [payingTradeNo, setPayingTradeNo] = useState<string | null>(null)
   const [points, setPoints] = useState<PointSummary | null>(null)
+  /** 升级会员 / 购买记录 / 积分流水：都从主页面右上角按钮进入弹窗，主页面只留当前状态 */
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [pointsOpen, setPointsOpen] = useState(false)
   const timerRef = useRef<number>(0)
 
   const load = useCallback(async () => {
@@ -230,30 +234,34 @@ export default function Membership() {
 
   return (
     <div>
-      <div className="toolbar">
+      <div className="page-heading-row">
         <h3 className="page-heading"><Icon name="profile" size={18} chip />会员中心</h3>
+        <div className="page-heading-actions">
+          <button className="btn-sm btn-sm-default" onClick={() => setHistoryOpen(true)}>
+            <Icon name="orders" size={14} />购买记录
+          </button>
+          {points && (
+            <button className="btn-sm btn-sm-default" onClick={() => setPointsOpen(true)}>
+              <Icon name="points" size={14} />积分流水
+            </button>
+          )}
+          <button className="btn-sm btn-sm-primary" onClick={() => setUpgradeOpen(true)}>
+            <Icon name="profile" size={14} color="#fff" />升级会员
+          </button>
+        </div>
       </div>
 
-      <div className="card">
-        <div className="card-title">
-          <Icon name="profile" size={16} chip />当前等级
-          <span className="estimate-subject">{data.memberLevel}</span>
-        </div>
-        <div className="stats-grid">
-          <div className="stat-card tone-indigo">
-            <div className="label">当前折扣</div>
-            <div className="value">{discountText(data.memberDiscount)}</div>
-            <div className="icon-bg"><Icon name="settlements" size={24} chip /></div>
+      <div className="card member-current-card">
+        <div className="member-current-line">
+          <div>
+            <span>当前会员</span>
+            <strong>{data.memberLevel}</strong>
           </div>
-          <div className="stat-card tone-amber">
-            <div className="label">可购买等级</div>
-            <div className="value">{data.options.filter(o => o.canBuy).length} 个</div>
-            <div className="icon-bg"><Icon name="profile" size={24} chip /></div>
+          <div>
+            <span>当前折扣</span>
+            <strong>{discountText(data.memberDiscount)}</strong>
           </div>
         </div>
-        <p className="field-hint">
-          折扣下单自动生效；小时价 = 日租金 ÷ 24。
-        </p>
       </div>
 
       {points && (
@@ -262,107 +270,127 @@ export default function Membership() {
             <Icon name="settlements" size={16} chip />我的积分
             <span className="card-title-count">当前 {points.balance} 分</span>
           </div>
-          <div className="stats-grid">
-            <div className="stat-card tone-emerald">
-              <div className="label">积分余额</div>
-              <div className="value">{points.balance}</div>
-            </div>
-            <div className="stat-card tone-sky">
-              <div className="label">本单最多可抵</div>
-              <div className="value">{points.maxRedeem} 分</div>
-            </div>
+          <div className="member-points-row">
+            <div><span>积分余额</span><strong>{points.balance}</strong></div>
+            <div><span>下一单最多可抵</span><strong>{points.maxRedeem} 分</strong></div>
           </div>
-          <p className="field-hint">{points.rule}</p>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr><th>时间</th><th>来源</th><th className="num">变动</th><th className="num">余额</th><th>说明</th></tr>
-              </thead>
-              <tbody>
-                {points.logs.map((l, i) => (
-                  <tr key={i}>
-                    <td className="cell-time">{fmtDT(l.createTime)}</td>
-                    <td>{l.source}</td>
-                    <td className="num" style={{ color: l.changeAmount < 0 ? 'var(--danger-text, #C0392B)' : 'var(--success-text, #15803d)' }}>
-                      {l.changeAmount > 0 ? '+' : ''}{l.changeAmount}
-                    </td>
-                    <td className="num">{l.balance}</td>
-                    <td>{l.remark || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {points.logs.length === 0 && (
-            <div className="empty"><Icon name="empty" size={36} chip /><div>暂无积分流水，完成租车结算后自动获得积分</div></div>
-          )}
         </div>
       )}
 
-      <div className="card">
-        <div className="card-title"><Icon name="settlements" size={16} chip />购买会员</div>
+      {payingTradeNo && (
+        <div className="callout callout-info">
+          <Icon name="refresh" size={18} chip />
+          <span>交易 {payingTradeNo} 正在确认中，请在弹出窗口完成支付；付款成功后本页会自动刷新等级。</span>
+        </div>
+      )}
 
-        <div className="member-grid">
-          {data.options.map(o => (
-            <div key={o.memberLevel} className={`member-card ${o.isCurrent ? 'current' : ''}`}>
-              <div className="member-level">
-                {o.memberLevel}
-                {o.isCurrent && <span className="status-tag status-success">当前</span>}
+      {upgradeOpen && (
+        <div className="modal-overlay" onClick={() => setUpgradeOpen(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>升级会员</span>
+              <button className="close-btn" onClick={() => setUpgradeOpen(false)}><Icon name="close" size={15} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="member-grid">
+                {data.options.map(o => (
+                  <div key={o.memberLevel} className={`member-card ${o.isCurrent ? 'current' : ''}`}>
+                    <div className="member-level">
+                      {o.memberLevel}
+                      {o.isCurrent && <span className="status-tag status-success">当前</span>}
+                    </div>
+                    <div className="member-discount">{discountText(o.discount)}</div>
+                    {displayRightsDesc(o.rightsDesc, o.discount) && (
+                      <div className="member-desc">{displayRightsDesc(o.rightsDesc, o.discount)}</div>
+                    )}
+                    <div className="member-price">{o.isCurrent ? '已拥有' : `¥${o.price}`}</div>
+                    {o.canBuy ? (
+                      <button
+                        className="btn-sm btn-sm-primary"
+                        onClick={() => { setUpgradeOpen(false); openBuy(o) }}
+                        disabled={buying !== null || payingTradeNo !== null}
+                      >
+                        {buying === o.memberLevel ? '发起支付中…' : '立即购买'}
+                      </button>
+                    ) : (
+                      <button className="btn-sm btn-sm-default" disabled>
+                        {o.isCurrent ? '使用中' : '不可购买'}
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
-              <div className="member-discount">{discountText(o.discount)}</div>
-              {displayRightsDesc(o.rightsDesc, o.discount) && (
-                <div className="member-desc">{displayRightsDesc(o.rightsDesc, o.discount)}</div>
-              )}
-              <div className="member-price">
-                {o.isCurrent ? '已拥有' : `¥${o.price}`}
-              </div>
-              {o.canBuy ? (
-                <button
-                  className="btn-sm btn-sm-primary"
-                  onClick={() => openBuy(o)}
-                  disabled={buying !== null || payingTradeNo !== null}
-                >
-                  {buying === o.memberLevel ? '发起支付中…' : `立即购买`}
-                </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {historyOpen && (
+        <div className="modal-overlay" onClick={() => setHistoryOpen(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>购买记录</span>
+              <button className="close-btn" onClick={() => setHistoryOpen(false)}><Icon name="close" size={15} /></button>
+            </div>
+            <div className="modal-body">
+              {(data.history || []).length === 0 ? (
+                <div className="empty"><Icon name="empty" size={36} chip /><div>暂无购买记录</div></div>
               ) : (
-                <button className="btn-sm btn-sm-default" disabled>
-                  {o.isCurrent ? '使用中' : '不可购买'}
-                </button>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead><tr><th>操作内容</th><th>时间</th></tr></thead>
+                    <tbody>
+                      {data.history.map((h, i) => (
+                        <tr key={i}>
+                          <td>{h.action}</td>
+                          <td className="cell-time">{fmtDT(h.logTime)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
-          ))}
+          </div>
         </div>
-        {payingTradeNo && (
-          <p className="field-hint">
-            交易 {payingTradeNo} 正在确认中，请在弹出窗口完成支付；付款成功后本页会自动刷新等级。
-          </p>
-        )}
-      </div>
+      )}
 
-      <div className="card">
-        <div className="card-title">
-          <Icon name="orders" size={16} chip />购买记录
-          <span className="card-title-count">最近 {data.history.length} 条</span>
+      {pointsOpen && points && (
+        <div className="modal-overlay" onClick={() => setPointsOpen(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>积分流水</span>
+              <button className="close-btn" onClick={() => setPointsOpen(false)}><Icon name="close" size={15} /></button>
+            </div>
+            <div className="modal-body">
+              {points.logs.length === 0 ? (
+                <div className="empty"><Icon name="empty" size={36} chip /><div>暂无积分流水，完成租车结算后自动获得积分</div></div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr><th>时间</th><th>来源</th><th className="num">变动</th><th className="num">余额</th><th>说明</th></tr>
+                    </thead>
+                    <tbody>
+                      {points.logs.map((l, i) => (
+                        <tr key={i}>
+                          <td className="cell-time">{fmtDT(l.createTime)}</td>
+                          <td>{l.source}</td>
+                          <td className="num" style={{ color: l.changeAmount < 0 ? 'var(--danger-text, #C0392B)' : 'var(--success-text, #15803d)' }}>
+                            {l.changeAmount > 0 ? '+' : ''}{l.changeAmount}
+                          </td>
+                          <td className="num">{l.balance}</td>
+                          <td>{l.remark || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr><th>操作内容</th><th>时间</th></tr>
-            </thead>
-            <tbody>
-              {data.history.map((h, i) => (
-                <tr key={i}>
-                  <td>{h.action}</td>
-                  <td className="cell-time">{fmtDT(h.logTime)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {data.history.length === 0 && (
-          <div className="empty"><Icon name="empty" size={36} chip /><div>暂无购买记录</div></div>
-        )}
-      </div>
+      )}
 
       {/* 点「立即购买」后弹出的支付方式选择：与租车下单后再选渠道同构 */}
       {buyTarget && (

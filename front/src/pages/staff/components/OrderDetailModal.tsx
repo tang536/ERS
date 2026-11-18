@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { orderApi, renewalApi } from '@/api'
+import { orderApi, renewalApi, opsApi } from '@/api'
 import type { Order } from '@/types'
 import Icon from '@/components/Icon'
+import InvoiceModal from './InvoiceModal'
 import { fmtDT } from '@/utils/datetime'
-
+import { DamagePanel } from './OpsExtAssets'
 /**
  * 订单详情弹窗。
  *
@@ -46,6 +47,10 @@ export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetai
   const [renewals, setRenewals] = useState<RenewalRecord[]>([])
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [contracts, setContracts] = useState<any[]>([])
+  const [verifying, setVerifying] = useState<number | null>(null)
+  const [verifyError, setVerifyError] = useState('')
+  const [invoiceOpen, setInvoiceOpen] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -58,6 +63,10 @@ export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetai
       orderApi.timeline(order.orderId)
         .then((res: any) => { if (alive) setTimeline(Array.isArray(res?.data?.events) ? res.data.events : []) })
         .catch(() => { if (alive) setTimeline([]) }),
+      // 合同存证是按订单号反查的，查不到就整块不渲染，不在订单详情里塞空区块
+      opsApi.contracts(order.orderNo)
+        .then((res: any) => { if (alive) setContracts(Array.isArray(res?.data) ? res.data : []) })
+        .catch(() => { if (alive) setContracts([]) }),
     ]
     Promise.allSettled(jobs).finally(() => { if (alive) setLoading(false) })
     return () => {
@@ -67,6 +76,21 @@ export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetai
 
   const renewalTotal = renewals.reduce((s, r) => s + Number(r.renewalFee || 0), 0)
   const renewalDays = renewals.reduce((s, r) => s + Number(r.renewalDays || 0), 0)
+
+  /** 重新对合同正文算 SHA-256，和落库的 content_hash 比对；只比哈希，不改合同内容 */
+  const verifyContract = async (contractId: number) => {
+    setVerifying(contractId)
+    setVerifyError('')
+    try {
+      const res: any = await opsApi.verifyContract(contractId)
+      const valid = !!res?.data?.valid
+      setContracts(prev => prev.map(c => c.contractId === contractId ? { ...c, hashValid: valid } : c))
+    } catch (e: any) {
+      setVerifyError(e?.message || '合同存证校验失败')
+    } finally {
+      setVerifying(null)
+    }
+  }
 
   const statusTone =
     order.orderStatus === '已完结' || order.orderStatus === '已完成'
@@ -78,6 +102,7 @@ export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetai
           : 'status-primary'
 
   return (
+    <>
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
@@ -209,11 +234,42 @@ export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetai
               </table>
             </div>
           )}
+
+          {contracts.length > 0 && (
+            <>
+              <div className="qr-orders-title">合同存证（{contracts.length}）</div>
+              <div className="contract-evidence">
+                {contracts.map(c => (
+                  <div className="contract-row" key={c.contractId}>
+                    <div>
+                      <strong>{c.contractNo}</strong>
+                      <div className="field-hint">
+                        版本 {c.version || '—'} · 签署 {c.signTime ? fmtDT(c.signTime) : '未记录'}
+                        {c.contentLength ? ` · 正文 ${c.contentLength} 字` : ''}
+                      </div>
+                      {c.contentHash && <div className="hash-text">SHA-256 {c.contentHash}</div>}
+                    </div>
+                    <div className="contract-row-side">
+                      {c.hashValid
+                        ? <span className="badge badge-success">哈希一致</span>
+                        : <span className="badge badge-muted">未校验</span>}
+                      {c.signatureUrl && <a href={c.signatureUrl} target="_blank" rel="noreferrer">查看签名</a>}
+                      <button className="btn-sm btn-sm-default" onClick={() => verifyContract(c.contractId)} disabled={verifying === c.contractId}>
+                        {verifying === c.contractId ? '校验中…' : '校验'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {verifyError && <div className="field-error">{verifyError}</div>}
+              </div>
+            </>
+          )}
+          <DamagePanel orderId={order.orderId} />
         </div>
 
         <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={onClose}>
-            关闭
+          <button className="btn-sm btn-sm-default" onClick={() => setInvoiceOpen(true)}>
+            申请发票
           </button>
           {onPrint && (
             <button
@@ -230,5 +286,7 @@ export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetai
         </div>
       </div>
     </div>
+    {invoiceOpen && <InvoiceModal order={order} onClose={() => setInvoiceOpen(false)} />}
+    </>
   )
 }

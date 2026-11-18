@@ -9,10 +9,21 @@ import type {
   OpenShiftPayload, CloseShiftPayload,
   ChangeVehiclePayload, ReschedulePayload, SignContractPayload,
 } from '../types'
-import { clearAuth } from '../hooks/useAuth'
+import { clearAuth, setAuth } from '../hooks/useAuth'
 import { getAccessToken, setAccessToken } from '../hooks/authToken'
 
 const api = axios.create({ baseURL: '/api', timeout: 15000, withCredentials: true })
+
+/** 统一图片上传：所有图片接口都返回 /uploads/… 相对 URL */
+async function uploadImage(url: string, file: File) {
+  // 上传是 multipart，体积可能到 5MB；401 后由拦截器重放整个 FormData 在部分浏览器会
+  // 因请求体已被消费而失败。这里先确保拿到有效 access token，避免大图走「先 401 再重放」。
+  const token = getAccessToken()
+  if (!token || secondsLeft(token) < 60) await refreshAccessToken()
+  const fd = new FormData()
+  fd.append('file', file)
+  return api.post(url, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
 
 /**
  * 从 JWT 读出剩余有效秒数。
@@ -49,9 +60,12 @@ function refreshAccessToken(): Promise<string | null> {
     try {
       // 用裸 axios 而不是 api 实例：避免刷新请求再次进入本拦截器，形成递归
       const res = await axios.post('/api/auth/refresh', {}, { withCredentials: true })
-      const token = res.data?.data?.token
+      const data = res.data?.data
+      const token = data?.token
       if (!token) return null
       setAccessToken(token)
+      //续期响应带完整资料：同步登录态，头像等字段不会因为只更新令牌而变旧
+      if (data?.userId && data?.roleName) setAuth(data)
       return token as string
     } catch {
       return null
@@ -164,7 +178,7 @@ export const authApi = {
   /** 登录只认「用户名 + 密码」，已移除身份证号登录 */
   customerLogin: (data: { account: string; password: string; sliderTicket: string }) =>
     api.post('/auth/customer-login', data),
-  customerRegister: (data: { loginAccount: string; password: string }) =>
+  customerRegister: (data: { loginAccount: string; password: string; referralCode?: string }) =>
     api.post('/auth/customer-register', data),
   updateCustomerProfile: (data: { fullName?: string; idCard?: string; contactPhone?: string }) =>
     api.post('/auth/customer-profile', data),
@@ -181,24 +195,29 @@ export const authApi = {
    * 只注销本设备这一条会话，不会影响该账号在别处的登录。
    */
   logout: () => api.post('/auth/logout'),
-  /** 上传个人头像：同名覆盖旧图，无需数据库字段 */
-  uploadAvatar: (file: File) => {
-    const fd = new FormData()
-    fd.append('file', file)
-    return api.post('/auth/avatar', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
-  }
+  /** 上传个人头像：标准 URL 落库，不再按用户 ID 命名文件 */
+  uploadAvatar: (file: File) => uploadImage('/auth/avatar', file)
 }
 
 // 用户管理
 export const userApi = {
   list: () => api.get('/user'),
-  create: (data: CreateUserPayload) => api.post('/user', data),
-  update: (id: number, data: UpdateUserPayload) => api.put(`/user/${id}`, data),
+  /**
+   * 账号管理的写操作一律带当前管理员密码：
+   * 后端按 X-Admin-Password 逐次校验，不能靠前端“弹过窗”就默认可信。
+   */
+  create: (data: CreateUserPayload, adminPassword: string) =>
+    api.post('/user', data, { headers: { 'X-Admin-Password': adminPassword } }),
+  update: (id: number, data: UpdateUserPayload, adminPassword: string) =>
+    api.put(`/user/${id}`, data, { headers: { 'X-Admin-Password': adminPassword } }),
   /** 管理员生成一次性临时密码（明文只返回一次） */
-  resetPassword: (id: number) => api.post(`/user/${id}/reset-password`),
+  resetPassword: (id: number, adminPassword: string) =>
+    api.post(`/user/${id}/reset-password`, null, { headers: { 'X-Admin-Password': adminPassword } }),
   /** 停用账号（系统操作「停用员工账号」）：后端同时吊销该账号全部在线会话 */
-  disable: (id: number) => api.put(`/user/${id}/disable`),
-  remove: (id: number) => api.delete(`/user/${id}`)
+  disable: (id: number, adminPassword: string) =>
+    api.put(`/user/${id}/disable`, null, { headers: { 'X-Admin-Password': adminPassword } }),
+  remove: (id: number, adminPassword: string) =>
+    api.delete(`/user/${id}`, { headers: { 'X-Admin-Password': adminPassword } })
 }
 
 // 客户
@@ -552,6 +571,116 @@ export const configApi = {
   comfyuiTest: (url: string) => api.post('/config/comfyui/test', { url }),
 }
 
+// 运营中心：待办、审批、发票、预防保养、合同存证
+export const opsApi = {
+  tasks: () => api.get('/ops/tasks'),
+  approvals: (status?: string) => api.get('/ops/approvals', { params: { status } }),
+  createApproval: (data: { bizType: string; amount: number; reason: string; orderId?: number | null; refType?: string; refId?: string }) =>
+    api.post('/ops/approvals', data),
+  decideApproval: (id: number, approve: boolean, note?: string) =>
+    api.post(`/ops/approvals/${id}/decide`, { approve, note }),
+  invoices: (status?: string) => api.get('/ops/invoices', { params: { status } }),
+  createInvoice: (data: { orderId: number; title: string; taxNo: string; invoiceType: string; amount: number; email: string; remark?: string }) =>
+    api.post('/ops/invoices', data),
+  issueInvoice: (id: number) => api.post(`/ops/invoices/${id}/issue`),
+  rejectInvoice: (id: number, note?: string) => api.post(`/ops/invoices/${id}/reject`, { note }),
+  redInvoice: (id: number) => api.post(`/ops/invoices/${id}/red`),
+  plans: () => api.get('/ops/plans'),
+  createPlan: (data: { vehicleId: number; planName: string; triggerType: string; triggerValue: number; lastServiceTime?: string | null; lastMileage: number; currentMileage: number; remark?: string }) =>
+    api.post('/ops/plans', data),
+  updatePlan: (id: number, data: { vehicleId?: number; planName: string; triggerType: string; triggerValue: number; lastServiceTime?: string | null; lastMileage: number; currentMileage: number; remark?: string }) =>
+    api.put(`/ops/plans/${id}`, data),
+  setPlanStatus: (id: number, status: string) => api.post(`/ops/plans/${id}/status`, { note: status }),
+  generatePlan: (id: number) => api.post(`/ops/plans/${id}/generate`),
+  contracts: (q?: string) => api.get('/ops/contracts', { params: { q } }),
+  verifyContract: (id: number) => api.get(`/ops/contracts/${id}/verify`),
+}
+
+// 第二批运营扩展：预约、还车、评价、客服、信用、资产、定价、团购、API、GPS
+export const extApi = {
+  stores: () => api.get('/ext/stores'),
+  createStore: (data: Record<string, unknown>) => api.post('/ext/stores', data),
+  updateStore: (id: number, data: Record<string, unknown>) => api.put(`/ext/stores/${id}`, data),
+  bindVehicleStore: (storeId: number, vehicleId: number) => api.post(`/ext/stores/${storeId}/bind-vehicle/${vehicleId}`),
+
+  appointments: (status?: string) => api.get('/ext/appointments', { params: { status } }),
+  setAppointmentStatus: (id: number, status: string) => api.post(`/ext/appointments/${id}/status`, { status }),
+
+  returns: (status?: string) => api.get('/ext/returns', { params: { status } }),
+  setReturnStatus: (id: number, status: string) => api.post(`/ext/returns/${id}/status`, { status }),
+
+  reviews: (vehicleId?: number) => api.get('/ext/reviews', { params: { vehicleId } }),
+  replyReview: (id: number, reply: string) => api.post(`/ext/reviews/${id}/reply`, { reply }),
+
+  tickets: (status?: string) => api.get('/ext/tickets', { params: { status } }),
+  replyTicket: (id: number, reply: string, close = false) => api.post(`/ext/tickets/${id}/reply`, { reply, close }),
+
+  credit: (customerId: number) => api.get(`/ext/customers/${customerId}/credit`),
+  saveCredit: (customerId: number, data: Record<string, unknown>) => api.put(`/ext/customers/${customerId}/credit`, data),
+
+  batteries: () => api.get('/ext/batteries'),
+  createBattery: (data: Record<string, unknown>) => api.post('/ext/batteries', data),
+  updateBattery: (id: number, data: Record<string, unknown>) => api.put(`/ext/batteries/${id}`, data),
+
+  insurance: () => api.get('/ext/insurance'),
+  createInsurance: (data: Record<string, unknown>) => api.post('/ext/insurance', data),
+  updateInsurance: (id: number, data: Record<string, unknown>) => api.put(`/ext/insurance/${id}`, data),
+
+  accidents: () => api.get('/ext/accidents'),
+  createAccident: (data: Record<string, unknown>) => api.post('/ext/accidents', data),
+
+  vehicleCosts: (vehicleId?: number) => api.get('/ext/vehicle-costs', { params: { vehicleId } }),
+  createVehicleCost: (data: Record<string, unknown>) => api.post('/ext/vehicle-costs', data),
+
+  parts: () => api.get('/ext/parts'),
+  createPart: (data: Record<string, unknown>) => api.post('/ext/parts', data),
+  updatePart: (id: number, data: Record<string, unknown>) => api.put(`/ext/parts/${id}`, data),
+
+  gps: () => api.get('/ext/gps'),
+  createGps: (data: Record<string, unknown>) => api.post('/ext/gps', data),
+  updateGps: (id: number, data: Record<string, unknown>) => api.put(`/ext/gps/${id}`, data),
+
+  pricing: () => api.get('/ext/pricing'),
+  createPricing: (data: Record<string, unknown>) => api.post('/ext/pricing', data),
+  updatePricing: (id: number, data: Record<string, unknown>) => api.put(`/ext/pricing/${id}`, data),
+  setPricingStatus: (id: number, status: string) => api.post(`/ext/pricing/${id}/status`, { status }),
+
+  campaigns: () => api.get('/ext/campaigns'),
+  createCampaign: (data: Record<string, unknown>) => api.post('/ext/campaigns', data),
+
+  vouchers: () => api.get('/ext/vouchers'),
+  createVoucher: (data: Record<string, unknown>) => api.post('/ext/vouchers', data),
+  redeemVoucher: (code: string, orderId?: number | null) => api.post(`/ext/vouchers/${encodeURIComponent(code)}/redeem`, { orderId }),
+
+  apiKeys: () => api.get('/ext/api-keys'),
+  createApiKey: (name: string) => api.post('/ext/api-keys', { name }),
+  revokeApiKey: (id: number) => api.post(`/ext/api-keys/${id}/revoke`),
+
+  notifications: (status?: string) => api.get('/ext/notifications', { params: { status } }),
+  markNotificationSent: (id: number) => api.post(`/ext/notifications/${id}/sent`),
+
+  damage: (orderId?: number) => api.get('/ext/damage', { params: { orderId } }),
+  createDamage: (data: Record<string, unknown>) => api.post('/ext/damage', data),
+
+  forecast: (days = 7) => api.get('/ext/forecast', { params: { days } }),
+  performance: (from?: string, to?: string) => api.get('/ext/performance', { params: { from, to } }),
+}
+
+// 顾客侧扩展：我的预约、还车登记、评价、工单、信用、推荐码
+export const myExtApi = {
+  appointments: () => api.get('/my-ext/appointments'),
+  createAppointment: (data: Record<string, unknown>) => api.post('/my-ext/appointments', data),
+  returns: () => api.get('/my-ext/returns'),
+  createReturn: (data: Record<string, unknown>) => api.post('/my-ext/returns', data),
+  reviews: () => api.get('/my-ext/reviews'),
+  createReview: (data: Record<string, unknown>) => api.post('/my-ext/reviews', data),
+  tickets: () => api.get('/my-ext/tickets'),
+  createTicket: (data: Record<string, unknown>) => api.post('/my-ext/tickets', data),
+  credit: () => api.get('/my-ext/credit'),
+  referral: () => api.get('/my-ext/referral'),
+  priceFactor: () => api.get('/my-ext/price-factor'),
+}
+
 // 支付
 export const paymentApi = {
   /** 分页查询支付流水；from/to 为闭区间，page 从 1 开始 */
@@ -704,6 +833,8 @@ export const couponApi = {
   verify: (code: string) => api.get('/coupon/verify', { params: { code } }),
   /** 顾客本人申请短时二维码令牌（绑定当前顾客与券，不暴露裸券码） */
   qr: (id: number) => api.post(`/coupon/${id}/qr`),
+  /** 上传券图片：返回 /uploads/coupon/… 相对 URL */
+  uploadImage: (file: File) => uploadImage('/coupon/image', file),
   /** 前台核销（置为已使用，不可撤销） */
   consume: (code: string) => api.post('/coupon/consume', { code })
 }
@@ -713,7 +844,9 @@ export const addonApi = {
   list: (onlyEnabled = false) => api.get('/addon', { params: { onlyEnabled } }),
   create: (data: AddonInput) => api.post('/addon', data),
   update: (id: number, data: AddonInput) => api.put(`/addon/${id}`, data),
-  setStatus: (id: number, status: string) => api.put(`/addon/${id}/status`, { status })
+  setStatus: (id: number, status: string) => api.put(`/addon/${id}/status`, { status }),
+  /** 上传服务图片：返回 /uploads/addon/… 相对 URL */
+  uploadImage: (file: File) => uploadImage('/addon/image', file)
 }
 
 /** 积分：顾客看自己，工作人员可指定 customerId */

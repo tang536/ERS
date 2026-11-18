@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Security.Claims;
+using ERental.Data;
 using ERental.DTOs;
 using ERental.Models;
 using ERental.Services;
@@ -15,7 +16,7 @@ namespace ERental.Controllers;
 [Route("api/[controller]")]
 [SuppressMessage("Major Code Smell", "S6960:Controllers should have a single responsibility",
     Justification = "员工登录与顾客登录共用 api/auth 前缀，前端登录页/注册页与需求 4.2 接口清单都按这个路径对接；拆成两个控制器必须改路由前缀，对外契约会断。")]
-public class AuthController(AuthService auth, SystemConfigService cfg, SliderCaptchaService sliderCaptcha, IWebHostEnvironment env) : ControllerBase
+public class AuthController(AuthService auth, SystemConfigService cfg, SliderCaptchaService sliderCaptcha, IWebHostEnvironment env, AppDbContext db, ImageStorage images) : ControllerBase
 {
     ///<summary>用户类型默认值：门店员工（JWT 里没有 user_type 声明时按员工处理）</summary>
     private const string UserTypeStaff = "staff";
@@ -27,6 +28,8 @@ public class AuthController(AuthService auth, SystemConfigService cfg, SliderCap
     private readonly SystemConfigService _cfg = cfg;
     private readonly SliderCaptchaService _sliderCaptcha = sliderCaptcha;
     private readonly IWebHostEnvironment _env = env;
+    private readonly AppDbContext _db = db;
+    private readonly ImageStorage _images = images;
 
     ///<summary>登录页公开配置：站点名称、可用登录方式、主题选项</summary>
     [AllowAnonymous]
@@ -253,11 +256,10 @@ public class AuthController(AuthService auth, SystemConfigService cfg, SliderCap
         const long maxAvatarBytes = 10 * 1024 * 1024;
         if (file.Length > maxAvatarBytes) return BadRequest(new ApiResponse<object> { Code = 400, Message = "头像不能超过 10MB；系统不压缩原图，请直接上传原文件", Success = false });
 
-        string ext;
         try
         {
-            //与业务图片同一套魔数校验：内容必须是真实图片，且与扩展名一致
-            ext = await ImageStorage.ValidateImageAsync(file, AvatarImageExt);
+            //头像白名单比通用图片更窄（不含 gif）：这里先单独校验，再交给 ImageStorage 落盘
+            await ImageStorage.ValidateImageAsync(file, AvatarImageExt);
         }
         catch (BusinessException ex)
         {
@@ -265,27 +267,53 @@ public class AuthController(AuthService auth, SystemConfigService cfg, SliderCap
         }
 
         var userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-        var dir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "avatars");
-        Directory.CreateDirectory(dir);
-        //按身份分前缀：员工与顾客 ID 序列互不相干，同号不加前缀会覆盖对方的头像
+        //按身份分前缀：员工与顾客 ID 序列互不相干，前缀只用于文件可读性，真正的归属仍由数据库 avatar_url 决定
         var userType = User.FindFirst("user_type")?.Value ?? UserTypeStaff;
-        var prefix = userType == "customer" ? "cust" : UserTypeStaff;
+        var isCustomer = userType == "customer";
+        var prefix = isCustomer ? "cust" : UserTypeStaff;
 
-        // 旧版本把任何格式都存成 .jpg（WebP/PNG 字节套 JPEG 后缀，MIME 与实际内容不符）。
-        // 这里先清掉同一主体的所有旧后缀，再按原扩展名保存，保证原图字节与 MIME 一致。
-        foreach (var oldExt in new[] { ".jpg", ".jpeg", ".png", ".webp" })
+        string url;
+        try
         {
-            var oldPath = Path.Combine(dir, $"{prefix}_{userId}{oldExt}");
-            if (System.IO.File.Exists(oldPath)) System.IO.File.Delete(oldPath);
+            //统一走 ImageStorage：/uploads/avatars/yyyy-MM/，保留原始扩展名，文件名不再依赖用户 ID
+            url = await _images.SaveAsync(file, "avatars", prefix, maxAvatarBytes);
+        }
+        catch (BusinessException ex)
+        {
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = ex.Message, Success = false });
         }
 
-        var fileName = $"{prefix}_{userId}{ext}";
-        var fullPath = Path.Combine(dir, fileName);
+        string? oldUrl;
+        try
+        {
+            if (isCustomer)
+            {
+                var customer = await _db.Customers.FindAsync(userId)
+                    ?? throw new BusinessException("账号不存在，请重新登录");
+                oldUrl = customer.AvatarUrl;
+                customer.SetAvatar(url);
+            }
+            else
+            {
+                var user = await _db.SystemUsers.FindAsync(userId)
+                    ?? throw new BusinessException("账号不存在，请重新登录");
+                oldUrl = user.AvatarUrl;
+                user.SetAvatar(url);
+            }
+            await _db.SaveChangesAsync();
+        }
+        catch
+        {
+            //数据库写入失败时把刚落的文件删掉，避免产生无主图片
+            _images.Delete(url);
+            throw;
+        }
 
-        using (var stream = System.IO.File.Create(fullPath))
-            await file.CopyToAsync(stream);
+        //保存成功后再删旧图；旧版按「前缀_ID.扩展名」命名的文件也在这里一并清掉
+        if (!string.Equals(oldUrl, url, StringComparison.OrdinalIgnoreCase)) _images.Delete(oldUrl);
+        foreach (var oldExt in AvatarImageExt)
+            _images.Delete($"/uploads/avatars/{prefix}_{userId}{oldExt}");
 
-        var url = $"/uploads/avatars/{fileName}";
         return Ok(new ApiResponse<object> { Data = new { url }, Message = "头像已更新（原图未压缩）" });
     }
 

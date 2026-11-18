@@ -36,6 +36,33 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<OrderChange> OrderChanges => Set<OrderChange>();
     public DbSet<Contract> Contracts => Set<Contract>();
 
+    //运营中心扩展：审批、发票、预防保养
+    public DbSet<OpsApproval> OpsApprovals => Set<OpsApproval>();
+    public DbSet<OpsInvoice> OpsInvoices => Set<OpsInvoice>();
+    public DbSet<MaintenancePlan> MaintenancePlans => Set<MaintenancePlan>();
+
+    //第二批运营扩展：预约、还车、评价、客服、推荐、企业客户、门店、电池、保险/事故、成本、备件、定价、团购、API、GPS、通知、车损
+    public DbSet<Store> Stores => Set<Store>();
+    public DbSet<VehicleStore> VehicleStores => Set<VehicleStore>();
+    public DbSet<Appointment> Appointments => Set<Appointment>();
+    public DbSet<ReturnRequest> ReturnRequests => Set<ReturnRequest>();
+    public DbSet<Review> Reviews => Set<Review>();
+    public DbSet<SupportTicket> SupportTickets => Set<SupportTicket>();
+    public DbSet<Referral> Referrals => Set<Referral>();
+    public DbSet<CustomerCreditProfile> CustomerCreditProfiles => Set<CustomerCreditProfile>();
+    public DbSet<Battery> Batteries => Set<Battery>();
+    public DbSet<InsurancePolicy> InsurancePolicies => Set<InsurancePolicy>();
+    public DbSet<AccidentRecord> AccidentRecords => Set<AccidentRecord>();
+    public DbSet<VehicleCost> VehicleCosts => Set<VehicleCost>();
+    public DbSet<SparePart> SpareParts => Set<SparePart>();
+    public DbSet<PricingRule> PricingRules => Set<PricingRule>();
+    public DbSet<GroupVoucher> GroupVouchers => Set<GroupVoucher>();
+    public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    public DbSet<GpsDevice> GpsDevices => Set<GpsDevice>();
+    public DbSet<CouponCampaign> CouponCampaigns => Set<CouponCampaign>();
+    public DbSet<NotificationOutbox> NotificationOutbox => Set<NotificationOutbox>();
+    public DbSet<DamageAssessment> DamageAssessments => Set<DamageAssessment>();
+
     //数据库视图：只读查询模型，不参与建表
     public DbSet<OrderOverviewView> OrderOverviews => Set<OrderOverviewView>();
     public DbSet<SettlementBillView> SettlementBills => Set<SettlementBillView>();
@@ -170,6 +197,98 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(s => s.OperatorId).HasDatabaseName("idx_shift_operator");
             e.HasIndex(s => s.OpenTime).HasDatabaseName("idx_shift_open_time");
         });
+
+        modelBuilder.Entity<OpsApproval>(e =>
+        {
+            e.HasIndex(a => a.RequestNo).IsUnique().HasDatabaseName("uk_ops_approval_no");
+            e.HasIndex(a => new { a.Status, a.CreateTime }).HasDatabaseName("idx_ops_approval_status");
+            e.HasIndex(a => new { a.BizType, a.RefId }).HasDatabaseName("idx_ops_approval_biz");
+        });
+
+        modelBuilder.Entity<OpsInvoice>(e =>
+        {
+            e.HasIndex(i => i.InvoiceNo).IsUnique().HasDatabaseName("uk_ops_invoice_no");
+            e.HasIndex(i => new { i.Status, i.CreateTime }).HasDatabaseName("idx_ops_invoice_status");
+            e.HasIndex(i => i.OrderId).HasDatabaseName("idx_ops_invoice_order");
+            e.HasOne(i => i.RentalOrder).WithMany().HasForeignKey(i => i.OrderId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<MaintenancePlan>(e =>
+        {
+            e.HasIndex(p => new { p.VehicleId, p.Status }).HasDatabaseName("idx_plan_vehicle_status");
+            e.HasOne(p => p.Vehicle).WithMany().HasForeignKey(p => p.VehicleId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── 第二批扩展表索引 ───────────────────────────────
+        modelBuilder.Entity<VehicleStore>(e =>
+            e.HasIndex(v => v.VehicleId).IsUnique().HasDatabaseName("uk_vehicle_store_vehicle"));
+
+        modelBuilder.Entity<Appointment>(e =>
+            e.HasIndex(a => new { a.Status, a.AppointTime }).HasDatabaseName("idx_appointment_status_time"));
+
+        modelBuilder.Entity<ReturnRequest>(e =>
+        {
+            e.HasIndex(r => new { r.OrderId, r.Status }).HasDatabaseName("idx_return_order_status");
+            e.HasIndex(r => new { r.Status, r.ExpectTime }).HasDatabaseName("idx_return_status_time");
+        });
+
+        modelBuilder.Entity<Review>(e =>
+        {
+            e.HasIndex(r => r.OrderId).IsUnique().HasDatabaseName("uk_review_order");
+            e.HasIndex(r => new { r.VehicleId, r.CreateTime }).HasDatabaseName("idx_review_vehicle_time");
+        });
+
+        modelBuilder.Entity<SupportTicket>(e =>
+            e.HasIndex(t => new { t.Status, t.CreateTime }).HasDatabaseName("idx_ticket_status_time"));
+
+        modelBuilder.Entity<Referral>(e =>
+            e.HasIndex(r => r.InviteeId).IsUnique().HasDatabaseName("uk_referral_invitee"));
+
+        modelBuilder.Entity<CustomerCreditProfile>(e =>
+            e.HasIndex(p => p.CustomerId).IsUnique().HasDatabaseName("uk_credit_customer"));
+        modelBuilder.Entity<CustomerCreditProfile>().HasIndex(p => p.ReferralCode);
+
+        modelBuilder.Entity<Battery>(e =>
+        {
+            e.HasIndex(b => b.VehicleId).HasDatabaseName("idx_battery_vehicle");
+            e.HasIndex(b => b.SerialNo).IsUnique().HasDatabaseName("uk_battery_serial");
+        });
+
+        modelBuilder.Entity<InsurancePolicy>(e =>
+            e.HasIndex(i => new { i.VehicleId, i.EndDate }).HasDatabaseName("idx_insurance_vehicle_end"));
+
+        modelBuilder.Entity<AccidentRecord>(e =>
+            e.HasIndex(a => new { a.VehicleId, a.AccidentTime }).HasDatabaseName("idx_accident_vehicle_time"));
+
+        modelBuilder.Entity<VehicleCost>(e =>
+            e.HasIndex(c => new { c.VehicleId, c.OccurDate }).HasDatabaseName("idx_cost_vehicle_date"));
+
+        modelBuilder.Entity<SparePart>(e =>
+            e.HasIndex(p => p.PartName).HasDatabaseName("idx_part_name"));
+
+        modelBuilder.Entity<PricingRule>(e =>
+            e.HasIndex(r => new { r.Status, r.StartTime, r.EndTime }).HasDatabaseName("idx_pricing_status_time"));
+
+        modelBuilder.Entity<GroupVoucher>(e =>
+            e.HasIndex(v => v.Code).IsUnique().HasDatabaseName("uk_group_voucher_code"));
+
+        modelBuilder.Entity<ApiKey>(e =>
+            e.HasIndex(k => k.KeyHash).IsUnique().HasDatabaseName("uk_api_key_hash"));
+
+        modelBuilder.Entity<GpsDevice>(e =>
+        {
+            e.HasIndex(g => g.VehicleId).IsUnique().HasDatabaseName("uk_gps_vehicle");
+            e.HasIndex(g => g.Imei).IsUnique().HasDatabaseName("uk_gps_imei");
+        });
+
+        modelBuilder.Entity<CouponCampaign>(e =>
+            e.HasIndex(c => new { c.Status, c.StartTime, c.EndTime }).HasDatabaseName("idx_campaign_status_time"));
+
+        modelBuilder.Entity<NotificationOutbox>(e =>
+            e.HasIndex(n => new { n.Status, n.CreateTime }).HasDatabaseName("idx_notify_status_time"));
+
+        modelBuilder.Entity<DamageAssessment>(e =>
+            e.HasIndex(d => new { d.OrderId, d.CreateTime }).HasDatabaseName("idx_damage_order_time"));
 
         //系统日志 — 操作人：日志只增不删，账号删除后置空 user_id，日志内容保留
         modelBuilder.Entity<SystemLog>(e =>

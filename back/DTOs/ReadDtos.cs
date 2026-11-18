@@ -54,6 +54,8 @@ public class CustomerDto
     public string? IdCard { get; init; }
     public string FullName { get; init; } = string.Empty;
     public string? ContactPhone { get; init; }
+    /// <summary>头像地址（/uploads/avatars/…）；未上传为 null</summary>
+    public string? AvatarUrl { get; init; }
     public string MemberLevel { get; init; } = string.Empty;
     /// <summary>会员折扣（[NotMapped]，由服务层按权益表实时填值）</summary>
     public decimal MemberDiscount { get; init; } = 1.00m;
@@ -80,6 +82,7 @@ public class CustomerDto
         IdCard = c.IdCard,
         FullName = c.FullName,
         ContactPhone = c.ContactPhone,
+        AvatarUrl = c.AvatarUrl,
         MemberLevel = c.MemberLevel,
         MemberDiscount = c.MemberDiscount,
         AccountStatus = c.AccountStatus,

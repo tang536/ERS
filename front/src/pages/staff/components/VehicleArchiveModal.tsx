@@ -113,9 +113,6 @@ export default function VehicleArchiveModal({ vehicleId, vehicleNo, onClose }: {
             </>
           ) : null}
         </div>
-        <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={onClose}>关闭</button>
-        </div>
       </div>
     </div>
   )

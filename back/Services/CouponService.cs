@@ -11,11 +11,12 @@ namespace ERental.Services;
 /// 优惠券：管理员发券、顾客用券、订单取消时退券。
 /// 券模板与顾客持券分表——模板改价不影响已发出去的券，已领的券在有效期内继续可用。
 ///</summary>
-public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConfiguration cfg, IHostEnvironment env, DbLockService locks)
+public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConfiguration cfg, IHostEnvironment env, DbLockService locks, ImageStorage images)
 {
     private readonly AppDbContext _db = db;
     private readonly ILogger<CouponService> _logger = logger;
     private readonly DbLockService _locks = locks;
+    private readonly ImageStorage _images = images;
     ///<summary>动态券码签名密钥：复用 JWT 的持久化密钥文件，不在数据库里再存一份明文</summary>
     private readonly byte[] _qrKey = Encoding.UTF8.GetBytes(SigningKeyProvider.Resolve(cfg, env, out _));
     private static readonly TimeSpan QrTokenTtl = TimeSpan.FromMinutes(3);
@@ -36,6 +37,7 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
         CreateTime = c.CreateTime,
         RedeemCode = c.RedeemCode,
         RedeemOpen = c.RedeemOpen,
+        ImageUrl = c.ImageUrl,
     };
 
     public Task<List<CouponDto>> GetAllAsync() =>
@@ -45,6 +47,7 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
     {
         var coupon = Coupon.Create(input.Name, input.Amount, input.MinAmount, input.ValidFrom, input.ValidTo,
             input.TotalQty, input.PerLimit, input.RedeemCode, input.RedeemOpen);
+        coupon.SetImage(input.ImageUrl);
         if (coupon.RedeemCode != null && await _db.Coupons.AnyAsync(c => c.RedeemCode == coupon.RedeemCode))
             throw new BusinessException($"兑换码 {coupon.RedeemCode} 已被其他券占用，请换一个");
         _db.Coupons.Add(coupon);
@@ -55,13 +58,20 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
     public async Task<CouponDto> UpdateAsync(int couponId, CouponInput input)
     {
         var coupon = await _db.Coupons.FindAsync(couponId) ?? throw new BusinessException("优惠券不存在");
+        var oldImage = coupon.ImageUrl;
         coupon.Update(input.Name, input.Amount, input.MinAmount, input.ValidFrom, input.ValidTo,
             input.TotalQty, input.PerLimit, input.RedeemCode, input.RedeemOpen);
+        coupon.SetImage(input.ImageUrl);
         if (coupon.RedeemCode != null && await _db.Coupons.AnyAsync(c => c.RedeemCode == coupon.RedeemCode && c.CouponId != couponId))
             throw new BusinessException($"兑换码 {coupon.RedeemCode} 已被其他券占用，请换一个");
         await _db.SaveChangesAsync();
+        //保存成功后再删旧图：保存失败时旧图仍然有效
+        if (!string.Equals(oldImage, coupon.ImageUrl, StringComparison.OrdinalIgnoreCase)) _images.Delete(oldImage);
         return await _db.Coupons.AsNoTracking().Where(c => c.CouponId == couponId).Select(Projection).FirstAsync();
     }
+
+    ///<summary>上传券图片：统一落盘到 /uploads/coupon/yyyy-MM/，返回相对 URL</summary>
+    public Task<string> SaveImageAsync(IFormFile file) => _images.SaveAsync(file, "coupon", "coupon");
 
     public async Task SetStatusAsync(int couponId, string status)
     {
@@ -161,6 +171,7 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
                 ReceiveTime = c.ReceiveTime,
                 OrderId = c.OrderId,
                 Code = c.Code,
+                ImageUrl = c.Coupon!.ImageUrl,
             }).ToListAsync();
     }
 
@@ -224,6 +235,7 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
                 Status = row.Status,
                 ReceiveTime = row.ReceiveTime,
                 Code = row.Code,
+                ImageUrl = coupon.ImageUrl,
             };
         }
         catch
@@ -338,6 +350,7 @@ public class CouponService(AppDbContext db, ILogger<CouponService> logger, IConf
             Name = template.Name,
             Amount = template.Amount,
             MinAmount = template.MinAmount,
+            ImageUrl = template.ImageUrl,
             Status = effectiveStatus,
             ExpireTime = row.ExpireTime,
             UseTime = row.UseTime,

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useUI } from '@/components/UIProvider'
 import { customerApi, vehicleApi, orderApi, printApi, couponApi, addonApi, pointApi } from '@/api'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import ReceiptModal from '@/components/ReceiptModal'
 import VehicleQrLookup from './VehicleQrLookup'
 import type { VehicleQrDetail, CreateOrderPayload, MyCoupon, AddonItem, PointSummary } from '@/types'
@@ -181,20 +182,13 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
   /** 起租时间早于当前（**「早于」不含等于**，选到当前这一分钟即合法）时**自动改成当前时间**，
    * 并当场说明这次调整——柜台代客开单时前台要能向顾客解释「为什么时间变了」。
    */
-  const applyLeaseStart = (raw: string) => {
-    const value = clampLeaseStart(raw)
-    setForm(f => ({ ...f, leaseStart: value }))
-    setErrors(er => ({ ...er, leaseStart: '' }))
-    if (value !== raw) toast('起租时间不能早于当前时间，已自动调整为当前时间', 'warning')
-  }
-
   const validate = () => {
     const e: Record<string, string> = {}
     if (mode === 'existing' && !form.customerId) e.customer = '请选择客户'
     if (!form.vehicleId) e.vehicle = '请选择租赁车辆'
     if (!form.leaseStart) e.leaseStart = '请选择起租时间'
     if (!form.leaseEnd) e.leaseEnd = '请选择到期时间'
-    // 「起租早于当前」不在这里拦：输入时已自动回落到当前时刻（applyLeaseStart），
+    // 「起租早于当前」不在这里拦：日历选完后已自动回落到当前时刻，
     // 提交前还有一次兜底（页面久开导致选好的时间过期），见 handleSubmit。
     if (form.leaseStart && form.leaseEnd && new Date(form.leaseEnd) < new Date(form.leaseStart)) {
       e.leaseEnd = '到期时间不能早于起租时间'
@@ -451,30 +445,23 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      <div className="form-row">
-        <div className="form-group">
-          <label>起租时间 <span className="req">*</span></label>
-          <input
-            type="datetime-local"
-            className={errors.leaseStart ? 'has-error' : ''}
-            value={form.leaseStart}
-            /* min 从源头置灰过去时间；选了更早的由 applyLeaseStart 回落到当前时刻并提示 */
-            min={nowDatetimeInput()}
-            onChange={e => applyLeaseStart(e.target.value)}
-          />
-          {errors.leaseStart && <div className="field-error">{errors.leaseStart}</div>}
-        </div>
-        <div className="form-group">
-          <label>到期时间 <span className="req">*</span></label>
-          <input
-            type="datetime-local"
-            className={errors.leaseEnd ? 'has-error' : ''}
-            value={form.leaseEnd}
-            min={form.leaseStart || nowDatetimeInput()}
-            onChange={e => setForm({ ...form, leaseEnd: e.target.value })}
-          />
-          {errors.leaseEnd && <div className="field-error">{errors.leaseEnd}</div>}
-        </div>
+      <div className="form-group">
+        <label>租期 <span className="req">*</span></label>
+        <DateRangeCalendar
+          withTime
+          start={form.leaseStart}
+          end={form.leaseEnd}
+          minDate={nowDatetimeInput().slice(0, 10)}
+          placeholder="选择起租与到期时间"
+          onChange={(s, e) => {
+            const startNext = s ? clampLeaseStart(s) : ''
+            if (s && startNext !== s) toast('起租时间不能早于当前时间，已自动调整为当前时间', 'warning')
+            setForm(f => ({ ...f, leaseStart: startNext, leaseEnd: e }))
+            setErrors(er => ({ ...er, leaseStart: '', leaseEnd: '' }))
+          }}
+        />
+        {errors.leaseStart && <div className="field-error">{errors.leaseStart}</div>}
+        {errors.leaseEnd && <div className="field-error">{errors.leaseEnd}</div>}
       </div>
 
       {/* 已有客户但资料未完善 → 租车环节强制补录（实名认证） */}
@@ -636,7 +623,9 @@ export default function CreateOrderPanel({ onBack }: { onBack: () => void }) {
                           checked={checked}
                           onChange={e => setAddonIds(prev => e.target.checked ? [...prev, a.addonId] : prev.filter(x => x !== a.addonId))}
                         />
-                        <span className="addon-item-icon"><Icon name="addon" size={16} /></span>
+                        <span className="addon-item-icon">
+                          {a.imageUrl ? <img src={a.imageUrl} alt="" loading="lazy" /> : <Icon name="addon" size={16} />}
+                        </span>
                         <span className="addon-item-main">
                           <strong>{a.name}</strong>
                           {a.description && <small>{a.description}</small>}

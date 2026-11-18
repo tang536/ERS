@@ -3,13 +3,14 @@ import ReactEChartsCore from 'echarts-for-react/lib/core'
 import echarts, { chartTheme } from '@/utils/chart'
 import { fmtD } from '@/utils/datetime'
 import { useTheme } from '@/hooks/useTheme'
-import { reportApi, orderApi, paymentApi, messageApi } from '@/api'
+import { reportApi, orderApi, paymentApi, messageApi, opsApi } from '@/api'
 import { useUI } from '@/components/UIProvider'
 import { useNavigate } from 'react-router-dom'
 import { useAuth, ROLE } from '@/hooks/useAuth'
 import { canAccess } from '@/permissions'
 import Icon, { type IconName } from '@/components/Icon'
 import type { DashboardStats, NotificationItem } from '@/types'
+import { ForecastPanel, PerformancePanel, FinanceWatchCard } from './components/OpsExtAssets'
 
 interface StatCard {
   label: string
@@ -75,6 +76,8 @@ export default function Dashboard() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [recentOrders, setRecentOrders] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  /** 运营聚合待办：只取预警区没有覆盖的几类，避免同一条告警出现两遍 */
+  const [opsByKind, setOpsByKind] = useState<Record<string, number>>({})
 
   /** 支付账户余额（支付宝 / 微信 / 银行卡）。仅管理员可见——接口本身也只有管理员有权限。 */
   const [balanceBusy, setBalanceBusy] = useState(false)
@@ -230,11 +233,13 @@ export default function Dashboard() {
       reportApi.dashboard(),
       messageApi.list(),
       canViewOrders ? orderApi.list() : Promise.resolve({ data: [] }),
+      opsApi.tasks().catch(() => ({ data: { byKind: {} } })),
     ])
-      .then(([d, n, o]: any[]) => {
+      .then(([d, n, o, t]: any[]) => {
         setStats(d.data)
         setNotifications(n.data?.items || [])
         setRecentOrders((o.data || []).slice(0, 6))
+        setOpsByKind((t?.data?.byKind || {}) as Record<string, number>)
       })
       .catch((e: any) => toast(e?.message || '看板数据加载失败', 'error'))
       .finally(() => setLoading(false))
@@ -280,6 +285,17 @@ export default function Dashboard() {
    */
   const alarmOf = (label: string) => Number(alarms.find(a => a.label === label)?.value ?? 0)
 
+  /**
+   * 只把预警区没覆盖的待办放进来：待收补缴、待审批、待开票、低库存。
+   * 逾期/待支付/维保到期等已在上面的六张预警卡里，不重复堆第二遍。
+   */
+  const opsChips = [
+    { key: 'supplement', label: '待收补缴', link: safeLink('/settlements') },
+    { key: 'approval', label: '待审批', link: safeLink('/operations') },
+    { key: 'invoice', label: '待开票', link: safeLink('/settlements') },
+    { key: 'stock', label: '低库存服务', link: safeLink('/operations') },
+  ].filter(x => Number(opsByKind[x.key] || 0) > 0 && x.link)
+
   const vehicleStatusData = Object.entries(stats?.vehicleStatusStats || {}).map(([name, value]) => ({ name, value }))
   const totalVehicles = vehicleStatusData.reduce((s, d) => s + Number(d.value), 0)
 
@@ -299,7 +315,7 @@ export default function Dashboard() {
       axisLine: { lineStyle: { color: tc.axisLine } },
       // interval:0 强制显示每一天：并排后每张图只有约 380px 宽，
       // 默认的自动间隔会把其中一两天藏掉，看起来像数据缺了几天
-      axisLabel: { color: tc.axisLabel, interval: 0, fontSize: 11 },
+      axisLabel: { color: tc.axisLabel, interval: 0, fontSize: 11, hideOverlap: true },
     },
     yAxis: {
       type: 'value',
@@ -337,7 +353,7 @@ export default function Dashboard() {
       data: revenueKeys,
       boundaryGap: true,
       axisLine: { lineStyle: { color: tc.axisLine } },
-      axisLabel: { color: tc.axisLabel, interval: 0, fontSize: 11 },
+      axisLabel: { color: tc.axisLabel, interval: 0, fontSize: 11, hideOverlap: true },
     },
     yAxis: {
       type: 'value',
@@ -495,9 +511,9 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+          <ForecastPanel />
+          {hasRole([ROLE.ADMIN]) && <PerformancePanel />}
         </div>
-
-        {/* ===== 次区 ===== */}
         <div className="dash-secondary">
           {/* 预警提醒区（对应需求 6.1「预警提醒区」） */}
           <div className="card">
@@ -525,6 +541,15 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
+            {opsChips.length > 0 && (
+              <div className="ops-task-chips">
+                {opsChips.map(x => (
+                  <button key={x.key} className="ops-task-chip" onClick={() => navigate(x.link!)}>
+                    {x.label} <b>{opsByKind[x.key]}</b>
+                  </button>
+                ))}
+              </div>
+            )}
             {notifications.length > 0 && (
               <div className="alarm-list">
                 {notifications.slice(0, 5).map(n => {
@@ -554,6 +579,8 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+
+          <FinanceWatchCard />
 
           {/* 车辆状态分布：次区辅助图表 */}
           <div className="card">

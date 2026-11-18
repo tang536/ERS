@@ -4,9 +4,12 @@ import { useSearchParams } from 'react-router-dom'
 import { customerApi, memberApi, pointApi } from '@/api'
 import type { Customer, MemberRights, PointSummary } from '@/types'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import DictThFilter from '@/components/DictThFilter'
 import Pagination from '@/components/Pagination'
+import RowActions from '@/components/RowActions'
 import { fmtD, fmtDT, recentDateRange } from '@/utils/datetime'
+import { CustomerCreditModal } from './components/OpsExtAssets'
 
 const EMPTY = { idCard: '', fullName: '', contactPhone: '', memberLevel: '普通会员', memberDiscount: 1 }
 
@@ -42,6 +45,8 @@ export default function Customers() {
   const [rights, setRights] = useState<MemberRights[]>([])
   // 客户记录弹窗：一个入口两个页签（消费记录 / 会员记录），避免操作列按钮过密
   const [recordOf, setRecordOf] = useState<{ customer: Customer; tab: 'consume' | 'member' | 'points' } | null>(null)
+  /** 企业月结 / 信用免押：行内小入口打开独立弹窗，避免操作列再加按钮 */
+  const [creditOf, setCreditOf] = useState<Customer | null>(null)
   // 消费记录（需求 4.2.3）：draft 是正在输入的筛选，applied 是已生效的筛选（回车/点查询才发请求）
   const [recordsData, setRecordsData] = useState<any | null>(null)
   const [recordsLoading, setRecordsLoading] = useState(false)
@@ -357,7 +362,7 @@ export default function Customers() {
                   onChange={v => { setLevelFilter(v); setPage(1) }}
                 />
               </th>
-              <th>账号状态</th><th>租车资料</th><th>信用</th><th className="col-hide-lg">注册时间</th><th>操作</th>
+              <th>账号状态</th><th>租车资料</th><th>信用</th><th className="col-hide-lg col-hide-xl">注册时间</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -411,14 +416,18 @@ export default function Customers() {
                     <span className="status-tag status-success" title="无逾期、无损坏赔付、无欠缴">良好</span>
                   )}
                 </td>
-                <td className="cell-time col-hide-lg">{fmtD(c.createTime)}</td>
+                <td className="cell-time col-hide-lg col-hide-xl">{fmtD(c.createTime)}</td>
                 <td>
-                  <div className="btn-group">
-                    {/* 编辑对已注销客户同样开放：档案纠错与会员调整（恢复/迁移等级）都从这里进 */}
-                    <button className="btn-sm btn-sm-default" onClick={() => openEdit(c)}>编辑</button>
-                    <button className="btn-sm btn-sm-default" onClick={() => openRecord(c)} title="查看该客户的消费记录与会员记录">记录</button>
-                    <button className="btn-sm btn-sm-default text-danger" onClick={() => handleDelete(c)} title="删除无租赁订单的客户档案（有订单时请改用注销）">删除</button>
-                  </div>
+                  {/* 操作列统一收进 RowActions：三个按钮裸排会把 1440px 下的表格撑到 1180，
+                      末列「删除」被 .table-wrap 裁掉一半。折叠成「操作」菜单后列宽恒定。 */}
+                  <RowActions
+                    items={[
+                      { key: 'edit', label: '编辑', onClick: () => openEdit(c) },
+                      { key: 'record', label: '记录', onClick: () => openRecord(c) },
+                      { key: 'credit', label: '企业/信用', onClick: () => setCreditOf(c) },
+                      { key: 'delete', label: '删除', tone: 'danger', onClick: () => handleDelete(c) },
+                    ]}
+                  />
                 </td>
               </tr>
             ))}
@@ -566,15 +575,14 @@ export default function Customers() {
               {recordOf.tab === 'consume' ? (
                 <>
                   <div className="filter-row">
-                    <label className="field-inline">
-                      <span>开始日期</span>
-                      <input type="date" value={recordDraft.from}
-                        onChange={e => setRecordDraft({ ...recordDraft, from: e.target.value })} />
-                    </label>
-                    <label className="field-inline">
-                      <span>结束日期</span>
-                      <input type="date" value={recordDraft.to}
-                        onChange={e => setRecordDraft({ ...recordDraft, to: e.target.value })} />
+                    <label className="field-inline field-date-inline">
+                      <span>消费时间段</span>
+                      <DateRangeCalendar
+                        start={recordDraft.from}
+                        end={recordDraft.to}
+                        placeholder="选择消费区间"
+                        onChange={(s, e) => setRecordDraft(d => ({ ...d, from: s, to: e }))}
+                      />
                     </label>
                     <label className="field-inline">
                       <span>订单状态</span>
@@ -737,12 +745,10 @@ export default function Customers() {
                 </>
               )}
             </div>
-            <div className="modal-footer">
-              <button className="btn-sm btn-sm-default" onClick={() => setRecordOf(null)}>关闭</button>
-            </div>
           </div>
         </div>
       )}
+      {creditOf && <CustomerCreditModal customerId={creditOf.customerId} customerName={creditOf.fullName} onClose={() => setCreditOf(null)} />}
     </div>
   )
 }

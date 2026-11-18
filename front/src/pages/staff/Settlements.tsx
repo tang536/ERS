@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useUI } from '@/components/UIProvider'
 import { settleApi, supplementApi, orderApi, printApi } from '@/api'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import PayBrandIcon from '@/components/PayBrandIcon'
 import ReceiptModal from '@/components/ReceiptModal'
 import CopyText from '@/components/CopyText'
@@ -13,6 +14,8 @@ import { fmtDT, recentDateRange } from '@/utils/datetime'
 import { compressImage } from '@/utils/image'
 import VehicleQrLookup from '@/pages/staff/components/VehicleQrLookup'
 import SupplementCollectModal, { SUPPLEMENT_CHANNELS, supplementMeta } from '@/pages/staff/components/SupplementCollectModal'
+import InvoiceQueueModal from '@/pages/staff/components/InvoiceQueueModal'
+import { ReturnRequestPanel } from '@/pages/staff/components/OpsExtPanels'
 
 /**
  * 结算弹窗的初始值：逾期费/损坏费默认 0，备注空。
@@ -25,6 +28,8 @@ import SupplementCollectModal, { SUPPLEMENT_CHANNELS, supplementMeta } from '@/p
 const emptyForm = () => ({
   orderId: 0, overdueFee: 0, damageFee: 0, remark: '', supplementPayMethod: '现金',
   batteryLevel: '' as string, conditionNote: '', hoPhotos: [] as string[],
+  /** 应退金额的前台确认：模拟支付/现金支付没有真实资金流，必须当场确认钱怎么退 */
+  refundConfirmed: false,
 })
 
 export default function Settlements() {
@@ -35,7 +40,9 @@ export default function Settlements() {
    * 页面也不会去请求越权的订单接口、不会露出结算按钮。
    */
   const { hasRole } = useAuth()
-  const canOperate = hasRole([ROLE.RECEPTION])
+  const canOperate = hasRole([ROLE.ADMIN, ROLE.RECEPTION])
+  const canFinance = hasRole([ROLE.ADMIN, ROLE.FINANCE])
+  const [showInvoices, setShowInvoices] = useState(false)
   const [list, setList] = useState<any[]>([])
   /**
    * 服务端分页：原来是一次全量返回 + 前端本地过滤，结算单一年就上千行，
@@ -524,6 +531,9 @@ export default function Settlements() {
       e.conditionNote = '收损坏费需写明车况（划痕位置 / 损坏部位），顾客质疑时这是唯一依据'
     if (form.batteryLevel !== '' && (Number(form.batteryLevel) < 0 || Number(form.batteryLevel) > 100))
       e.batteryLevel = '归还电量只能是 0~100 之间的整数'
+    // 应退金额必须由前台当场确认去向；模拟支付/现金支付没有真实资金流，系统不能替前台做主
+    if (Number(preview?.refund || 0) > 0 && !form.refundConfirmed)
+      e.refundConfirmed = '本单有应退金额，请先确认退款去向'
     setErrors(e)
     if (Object.keys(e).length) return
 
@@ -623,6 +633,13 @@ export default function Settlements() {
             </button>
           </div>
         )}
+        {canFinance && (
+          <div className="toolbar-actions settle-title-actions">
+            <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => setShowInvoices(true)} title="待开票申请">
+              <Icon name="print" size={14} /><span className="btn-label">待开票</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/*
@@ -678,18 +695,13 @@ export default function Settlements() {
             value={filterKw}
             onChange={e => { setFilterKw(e.target.value); setPage(1) }}
           />
-          <span className="settle-filter-sep" />
-          {/* 与订单页同一套结构：标签+日期框成组，手机端两列等宽、标签不丢 */}
-          <span className="settle-filter-date-group">
-            <span className="settle-filter-tilde">结算</span>
-            <input type="date" className="settle-filter-date" value={filterFrom} max={filterTo || undefined}
-                   onChange={e => { setFilterFrom(e.target.value); setPage(1) }} title="结算时间起" />
-          </span>
-          <span className="settle-filter-date-group">
-            <span className="settle-filter-tilde">至</span>
-            <input type="date" className="settle-filter-date" value={filterTo} min={filterFrom || undefined}
-                   onChange={e => { setFilterTo(e.target.value); setPage(1) }} title="结算时间止" />
-          </span>
+          <DateRangeCalendar
+            className="filter-date-range"
+            start={filterFrom}
+            end={filterTo}
+            placeholder="结算日期"
+            onChange={(s, e) => { setFilterFrom(s); setFilterTo(e); setPage(1) }}
+          />
           {hasFilter && (
             <button className="btn-sm btn-sm-default" title="重置筛选条件"
               onClick={() => { setFilterKw(''); setFilterFrom(DEF_FROM); setFilterTo(DEF_TO); setPage(1) }}>
@@ -698,15 +710,17 @@ export default function Settlements() {
           )}
         </div>
         <span className="settle-filter-count">
-          {hasFilter ? `筛选出 ${total} 条` : `共 ${total} 条`}
+          {hasFilter ? `筛选出 ${total} 条` : ''}
         </span>
       </div>
 
       <div className="table-wrap">
-        <table className="data-table">
+        <table className="data-table settlements-table">
           <thead>
             <tr>
-              <th>结算单号</th><th>订单号</th>
+              {/* 1366px 内容区只有 1052px，10 列放不下：结算单号是内部流水号，先收起；
+                  金额与结算时间必须保留，手机卡片模式会自动还原这一格。 */}
+              <th className="col-hide-xl">结算单号</th><th>订单号</th>
               <SortTh label="实际租金" active={sortBy === 'actualRent'} dir={sortDir} onClick={() => toggleSort('actualRent')} className="num" />
               <SortTh label="逾期费" active={sortBy === 'overdueFee'} dir={sortDir} onClick={() => toggleSort('overdueFee')} className="num" />
               <SortTh label="损坏费" active={sortBy === 'damageFee'} dir={sortDir} onClick={() => toggleSort('damageFee')} className="num" />
@@ -721,8 +735,8 @@ export default function Settlements() {
             {loading && list.length === 0 && <SkeletonRows cols={10} rows={6} />}
             {filteredList.map(s => (
               <tr key={s.settleId}>
-                <td className="mono"><CopyText text={`JS${String(s.settleId).padStart(6, '0')}`} label="复制结算单号" /></td>
-                <td className="mono">
+                <td className="mono col-hide-xl"><CopyText text={`JS${String(s.settleId).padStart(6, '0')}`} label="复制结算单号" /></td>
+                <td className="mono settle-order-no">
                   {s.rentalOrder?.orderNo
                     ? <CopyText text={s.rentalOrder.orderNo} label="复制订单号" />
                     : '—'}
@@ -742,7 +756,9 @@ export default function Settlements() {
                   ) : '¥0'}
                 </td>
                 <td className="cell-time">{fmtDT(s.settleTime)}</td>
-                <td className="col-hide-md">{s.remark || '—'}</td>
+                <td className="col-hide-md settle-remark" title={s.remark || ''}>
+                  <span className="settle-remark-text">{s.remark || '—'}</span>
+                </td>
                 <td>
                   {/* 操作列按钮放在同一个 flex 容器里：原来两个按钮靠 marginLeft 分隔，
                       单元格一宽就被拉开一大截，看着像两件不相干的事。
@@ -862,9 +878,8 @@ export default function Settlements() {
               <div className="field-hint" style={{ marginTop: 12 }}>
                 <Icon name="info" size={14} />只列仍在租订单的还车申请；订单结算后申请会一并关闭，不再留在这里等审核。
               </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn-sm btn-sm-default" onClick={() => setShowRequests(false)}>关闭</button>
+              {/* 还车预登记：顾客自己填的到店时间/里程/电量，门店据此提前备车，不等于正式还车申请 */}
+              <div style={{ marginTop: 16 }}><ReturnRequestPanel /></div>
             </div>
           </div>
         </div>
@@ -1002,7 +1017,7 @@ export default function Settlements() {
                       </option>
                     ))}
                   </select>
-                  <button type="button" className="btn-sm btn-sm-default scan-btn" onClick={() => setShowScan(true)}>
+                  <button type="button" className="btn-sm btn-sm-default scan-btn scan-pick-btn" onClick={() => setShowScan(true)}>
                     <Icon name="qrcode" size={15} /><span>扫码选单</span>
                   </button>
                 </div>
@@ -1053,6 +1068,28 @@ export default function Settlements() {
                         ? `算式：${preview.overdueHours} 小时 × 小时租金 ¥${preview.hourlyRent.toFixed(2)} × 超时倍数 ${preview.multiplier}`
                         : '未逾期不收；已逾期的订单由系统按超出小时数 × 小时租金 × 超时倍数自动计收。'}
                     </div>
+                    {Number(preview.refund || 0) > 0 && (
+                      <div className="refund-confirm-box">
+                        <div className="refund-confirm-head">
+                          <Icon name="refund" size={16} chip />
+                          <span>本单应退 <strong>¥{Number(preview.refund).toFixed(2)}</strong></span>
+                          <span className="status-tag status-default">{preview.payType || '原支付方式'}</span>
+                        </div>
+                        <label className="refund-confirm-check">
+                          <input
+                            type="checkbox"
+                            checked={form.refundConfirmed}
+                            onChange={e => { setForm({ ...form, refundConfirmed: e.target.checked }); setErrors({ ...errors, refundConfirmed: '' }) }}
+                          />
+                          <span>
+                            已当面与顾客确认退款去向（{String(preview.payType || '').includes('现金') || String(preview.payType || '').includes('模拟')
+                              ? '当面现金退还'
+                              : '按原支付渠道退回'}），本次结算可以继续
+                          </span>
+                        </label>
+                        {errors.refundConfirmed && <div className="field-error">{errors.refundConfirmed}</div>}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="field-hint" style={{ marginTop: 6 }}>试算失败，可稍后重试或直接结算。</div>
@@ -1357,7 +1394,6 @@ export default function Settlements() {
               <button className="btn-sm btn-sm-default" onClick={() => { loadBills(); }} disabled={billsLoading}>
                 <Icon name="refresh" size={13} />刷新
               </button>
-              <button className="btn-sm btn-sm-default" onClick={() => setShowBills(false)}>关闭</button>
             </div>
           </div>
         </div>
@@ -1376,6 +1412,42 @@ export default function Settlements() {
                 <div className="loading-line"><Icon name="refresh" size={16} />验车记录加载中…</div>
               ) : (
                 <>
+                  {(() => {
+                    const pickup = handoverList.find(h => h.phase === '取车')
+                    const drop = handoverList.find(h => h.phase === '还车')
+                    if (!pickup && !drop) return null
+                    const pPhoto = pickup?.photos?.[0]
+                    const dPhoto = drop?.photos?.[0]
+                    const pBattery = pickup?.batteryLevel
+                    const dBattery = drop?.batteryLevel
+                    const delta = (pBattery != null && dBattery != null) ? Number(dBattery) - Number(pBattery) : null
+                    return (
+                      <div className="ho-compare">
+                        <div className="ho-compare-item">
+                          <div className="ho-compare-label">取车</div>
+                          {pPhoto
+                            ? <a href={pPhoto} target="_blank" rel="noreferrer"><img src={pPhoto} alt="取车对比图" /></a>
+                            : <div className="ho-compare-empty">无照片</div>}
+                          <div className="ho-compare-meta">{pBattery != null ? `电量 ${pBattery}%` : '电量未记录'}</div>
+                        </div>
+                        <div className="ho-compare-mid">
+                          <span className="ho-compare-arrow">→</span>
+                          {delta != null && (
+                            <span className={`ho-compare-delta ${delta < 0 ? 'is-down' : 'is-up'}`}>
+                              {delta > 0 ? '+' : ''}{delta}%
+                            </span>
+                          )}
+                        </div>
+                        <div className="ho-compare-item">
+                          <div className="ho-compare-label">还车</div>
+                          {dPhoto
+                            ? <a href={dPhoto} target="_blank" rel="noreferrer"><img src={dPhoto} alt="还车对比图" /></a>
+                            : <div className="ho-compare-empty">无照片</div>}
+                          <div className="ho-compare-meta">{dBattery != null ? `电量 ${dBattery}%` : '电量未记录'}</div>
+                        </div>
+                      </div>
+                    )
+                  })()}
                   {['取车', '还车'].map(phase => {
                     const rec = handoverList.find(h => h.phase === phase)
                     return (
@@ -1462,7 +1534,6 @@ export default function Settlements() {
                   <Icon name="success" size={13} color="#fff" />{hoSaving ? '保存中…' : '保存验车记录'}
                 </button>
               )}
-              <button className="btn-sm btn-sm-default" onClick={() => setHandover(null)}>关闭</button>
             </div>
           </div>
         </div>
@@ -1477,6 +1548,7 @@ export default function Settlements() {
           onCollected={() => { loadBills(true); load() }}
         />
       )}
+      {showInvoices && <InvoiceQueueModal onClose={() => setShowInvoices(false)} />}
     </div>
   )
 }

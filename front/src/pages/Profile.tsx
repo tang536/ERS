@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type CSSProperties } from 'react'
-import { authApi, customerApi, pointApi } from '@/api'
+import { authApi, customerApi, pointApi, myExtApi, messageApi } from '@/api'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useUI } from '@/components/UIProvider'
@@ -8,7 +8,9 @@ import { fmtD } from '@/utils/datetime'
 import Icon from '@/components/Icon'
 import Avatar from '@/components/Avatar'
 import ImageLightbox from '@/components/ImageLightbox'
-import type { PointSummary } from '@/types'
+import { qrDataUrl } from '@/utils/qrcode'
+import type { PointSummary, ReferralStats, CustomerCredit } from '@/types'
+import { TicketModal } from './components/CustomerExtras'
 
 export default function Profile() {
   const { user, login } = useAuth()
@@ -22,6 +24,15 @@ export default function Profile() {
   const [saving, setSaving] = useState(false)
   /** 积分概要：个人资料卡展示余额，明细跳会员中心 */
   const [points, setPoints] = useState<PointSummary | null>(null)
+  const [referral, setReferral] = useState<ReferralStats | null>(null)
+  const [credit, setCredit] = useState<CustomerCredit | null>(null)
+  const [ticketOpen, setTicketOpen] = useState(false)
+  /** 顾客消息中心未读数：个人中心的「消息通知」按钮上直接显示 */
+  const [unread, setUnread] = useState(0)
+  /** 推荐码二维码（新人扫码后直达注册页并自动填码） */
+  const [refQr, setRefQr] = useState<string | null>(null)
+  /** 邀请与奖励明细弹窗 */
+  const [refDetailOpen, setRefDetailOpen] = useState(false)
 
   const load = () => {
     if (!user?.userId) return
@@ -44,6 +55,20 @@ export default function Profile() {
     pointApi.summary()
       .then((res: any) => setPoints(res.data || null))
       .catch(() => setPoints(null))
+    myExtApi.referral()
+      .then((res: any) => setReferral(res.data || null))
+      .catch(() => setReferral(null))
+    myExtApi.credit()
+      .then((res: any) => setCredit(res.data || null))
+      .catch(() => setCredit(null))
+    messageApi.list()
+      .then((res: any) => setUnread(Number(res.data?.unread || 0)))
+      .catch(() => setUnread(0))
+  }, [])
+
+  // 客服回复消息里的链接带 ticket=1：直接打开工单弹窗，顾客不用再找「联系客服」
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('ticket') === '1') setTicketOpen(true)
   }, [])
 
   const validate = () => {
@@ -120,9 +145,7 @@ export default function Profile() {
   /** 身份证号的明文/遮字开关：顾客改自己的证件号时默认可见（自己核对方便），点眼睛转成圆点 */
   const [idShow, setIdShow] = useState(true)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
-  /** 头像版本号：上传成功后自增，用来破浏览器缓存并清除组件内的失败标记 */
-  const [avatarVer, setAvatarVer] = useState(0)
-  /** 上传接口返回的精确地址；保留原扩展名，避免前端按固定 .jpg 猜错 */
+  /** 上传接口返回的最新地址；用于立即刷新，之后以数据库 avatar_url 为准 */
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null)
   /** 头像大图预览的地址；null 表示没有打开 */
   const [avatarZoom, setAvatarZoom] = useState<string | null>(null)
@@ -172,11 +195,8 @@ export default function Profile() {
         <div className="profile-avatar-wrap">
           <Avatar
             className="profile-avatar"
-            userId={user?.userId}
-            userType={user?.userType}
             name={info?.fullName || user?.userName}
-            version={avatarVer}
-            src={avatarSrc || undefined}
+            src={avatarSrc || info?.avatarUrl || user?.avatarUrl || undefined}
             onOpen={setAvatarZoom}
             onLoaded={() => setAvatarReady(true)}
           />
@@ -195,12 +215,13 @@ export default function Profile() {
               setUploadingAvatar(true)
               try {
                 const res: any = await authApi.uploadAvatar(f)
-                // 后端返回真实扩展名；用它做 src，后续刷新也不必逐个后缀探测
-                setAvatarSrc(res?.data?.url || null)
+                const url = res?.data?.url as string | undefined
+                if (url) {
+                  setAvatarSrc(url)
+                  setInfo({ ...info, avatarUrl: url })
+                  if (user) login({ ...user, avatarUrl: url })
+                }
                 toast('头像已更新（原图未压缩）', 'success')
-                // 推进版本号：破缓存，同时让 Avatar 组件清掉之前的 404 失败标记
-                setAvatarVer(v => v + 1)
-                setInfo({ ...info })
               } catch (err: any) {
                 toast(err?.message || '头像上传失败', 'error')
               } finally { setUploadingAvatar(false) }
@@ -226,22 +247,69 @@ export default function Profile() {
           但日常使用频率全部低于「租车」本身。收成个人中心里的一排小按钮后，
           导航只留租车与个人中心，功能一个不少，入口更集中。 */}
       <div className="profile-services">
-        <button className="profile-service-btn" onClick={() => navigate('/my-orders')}>
-          <span className="profile-service-icon"><Icon name="my-orders" size={20} /></span>
-          <span className="profile-service-text"><strong>我的订单</strong><small>查看租车与支付</small></span>
-          <Icon name="chevron-right" size={14} />
+        <button className="profile-service-btn" onClick={() => navigate('/my-orders')} title="我的订单">
+          <span className="profile-service-icon"><Icon name="my-orders" size={22} /></span>
+          <span className="profile-service-text">我的订单</span>
         </button>
-        <button className="profile-service-btn" onClick={() => navigate('/membership')}>
-          <span className="profile-service-icon"><Icon name="points" size={20} /></span>
-          <span className="profile-service-text"><strong>会员中心</strong><small>{info.memberLevel} · {points ? `${points.balance} 积分` : '积分'}</small></span>
-          <Icon name="chevron-right" size={14} />
+        <button className="profile-service-btn" onClick={() => navigate('/membership')} title="会员中心">
+          <span className="profile-service-icon"><Icon name="points" size={22} /></span>
+          <span className="profile-service-text">会员中心</span>
         </button>
-        <button className="profile-service-btn" onClick={() => navigate('/coupons')}>
-          <span className="profile-service-icon"><Icon name="coupon" size={20} /></span>
-          <span className="profile-service-text"><strong>我的优惠券</strong><small>兑换码领券 · 出示核销码</small></span>
-          <Icon name="chevron-right" size={14} />
+        <button className="profile-service-btn" onClick={() => navigate('/coupons')} title="我的优惠券">
+          <span className="profile-service-icon"><Icon name="coupon" size={22} /></span>
+          <span className="profile-service-text">我的优惠券</span>
+        </button>
+        <button className="profile-service-btn" onClick={() => navigate('/notifications')} title="消息通知">
+          <span className="profile-service-icon">
+            <Icon name="info" size={22} />
+            {unread > 0 && <span className="profile-unread-dot">{unread > 99 ? '99+' : unread}</span>}
+          </span>
+          <span className="profile-service-text">消息通知</span>
+        </button>
+        <button className="profile-service-btn" onClick={() => setTicketOpen(true)} title="联系客服">
+          <span className="profile-service-icon"><Icon name="user" size={22} /></span>
+          <span className="profile-service-text">联系客服</span>
         </button>
       </div>
+
+      {referral && (
+        <div className="card">
+          <div className="card-title"><Icon name="points" size={18} chip />老带新推荐</div>
+          <div className="referral-row">
+            <div>
+              <span className="detail-label">我的推荐码</span>
+              <div className="referral-code mono">{referral.referralCode || '—'}</div>
+            </div>
+            <div className="referral-stats">
+              <div><strong>{referral.invitedCount}</strong><span>已邀请</span></div>
+              <div><strong>¥{Number(referral.rewardTotal || 0).toFixed(0)}</strong><span>累计奖励</span></div>
+            </div>
+            <div className="referral-actions">
+              <button
+                className="btn-sm btn-sm-default"
+                onClick={() => {
+                  if (!referral.referralCode) return
+                  navigator.clipboard?.writeText(referral.referralCode)
+                    .then(() => toast('推荐码已复制', 'success'))
+                    .catch(() => toast('复制失败，请手动选择', 'warning'))
+                }}
+              >复制推荐码</button>
+              <button
+                className="btn-sm btn-sm-primary"
+                onClick={async () => {
+                  if (!referral.referralCode) return
+                  const url = `${window.location.origin}/login?as=customer&ref=${encodeURIComponent(referral.referralCode)}`
+                  try { setRefQr(await qrDataUrl(url, { size: 320 })) }
+                  catch { toast('二维码生成失败，请稍后重试', 'error') }
+                }}
+              ><Icon name="qrcode" size={14} color="#fff" />邀请二维码</button>
+              <button className="btn-sm btn-sm-default" onClick={() => setRefDetailOpen(true)}>
+                邀请明细
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="card-title">
@@ -254,7 +322,7 @@ export default function Profile() {
             <Icon name="warning" size={18} chip />
             <div>
               <strong>尚未完成实名认证</strong>
-              <p>注册时只需用户名和密码；为符合门店实名租车与个人信息最小必要原则，这两项在租车环节采集。补全后即可在线上自助下单租车，到店也可直接开单。</p>
+              <p>姓名与手机号在租车时采集，补全后即可自助下单，到店也能直接开单。</p>
             </div>
           </div>
         )}
@@ -273,6 +341,18 @@ export default function Profile() {
           </div>
         </div>
       </div>
+
+      {credit && (
+        <div className="card">
+          <div className="card-title"><Icon name="shield" size={18} chip />信用与免押</div>
+          <div className="detail-grid">
+            <div className="detail-item"><span className="detail-label">实名状态</span><span className="detail-value"><span className={`status-tag ${credit.realNameStatus === '已认证' ? 'status-success' : 'status-warning'}`}>{credit.realNameStatus}</span></span></div>
+            <div className="detail-item"><span className="detail-label">信用额度</span><span className="detail-value">¥{Number(credit.creditLimit).toFixed(2)}</span></div>
+            <div className="detail-item"><span className="detail-label">免押额度</span><span className="detail-value">¥{Number(credit.depositWaiverLimit).toFixed(2)}</span></div>
+            <div className="detail-item"><span className="detail-label">客户类型</span><span className="detail-value">{credit.isCorporate ? `企业客户 · ${credit.companyName || '—'}` : '个人客户'}</span></div>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="card-title">
@@ -433,6 +513,53 @@ export default function Profile() {
         </div>
       )}
 
+      {refQr && (
+        <div className="modal-overlay" onClick={() => setRefQr(null)}>
+          <div className="modal referral-qr-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>邀请二维码</span>
+              <button className="close-btn" onClick={() => setRefQr(null)}><Icon name="close" size={15} /></button>
+            </div>
+            <div className="modal-body referral-qr-body">
+              <img src={refQr} alt="邀请二维码" />
+              <p>好友扫码后直达注册页，推荐码 <strong className="mono">{referral?.referralCode}</strong> 已自动填好。</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {refDetailOpen && referral && (
+        <div className="modal-overlay" onClick={() => setRefDetailOpen(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>邀请与奖励明细</span>
+              <button className="close-btn" onClick={() => setRefDetailOpen(false)}><Icon name="close" size={15} /></button>
+            </div>
+            <div className="modal-body">
+              {(referral.items || []).length === 0 ? (
+                <div className="empty"><Icon name="empty" size={36} chip /><div>还没有邀请记录</div></div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead><tr><th>受邀用户</th><th>状态</th><th>奖励券</th><th>邀请时间</th></tr></thead>
+                    <tbody>
+                      {referral.items.map(r => (
+                        <tr key={r.referralId}>
+                          <td>{r.inviteeName || `用户 ${r.inviteeId}`}</td>
+                          <td><span className={`status-tag ${r.status === '已完成' ? 'status-success' : 'status-default'}`}>{r.status}</span></td>
+                          <td>{r.rewardCouponId ? `已发放（#${r.rewardCouponId}）` : '待首单完成'}</td>
+                          <td className="cell-time">{fmtD(r.createTime)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {avatarZoom && (
         <ImageLightbox
           src={avatarZoom}
@@ -440,6 +567,7 @@ export default function Profile() {
           onClose={() => setAvatarZoom(null)}
         />
       )}
+      {ticketOpen && <TicketModal onClose={() => setTicketOpen(false)} />}
     </div>
   )
 }

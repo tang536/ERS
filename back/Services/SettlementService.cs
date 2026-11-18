@@ -322,7 +322,8 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
             RentDiff = c.RentDiff,
             RefundAmount = c.Refund,
             DamageMaintenanceThreshold = await DamageThresholdAsync(),
-            SupplementAmount = c.Supplement
+            SupplementAmount = c.Supplement,
+            PayType = await _payment.LatestPayTypeAsync(orderId)
         };
     }
 
@@ -368,6 +369,12 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
                 new SettleSnapshot(order.VehicleId, order.LeaseStart, order.LeaseEnd, order.TotalRent, order.Deposit,
                     order.RentDiscount, order.AddonFee, order.DiscountAmount),
                 dto.DamageFee);
+
+            //应退金额必须先由前台确认去向：模拟支付与现金支付没有真实资金流，
+            //系统无法自动退款，不能只推一条「线下划款」通知就当作已退。
+            if (c.Refund > 0 && !dto.RefundConfirmed)
+                throw new BusinessException($"本单应退 ¥{c.Refund:0.00}，请先确认退款去向（原路退回 / 当面现金退还）后再结算");
+
             var now = AppClock.Now;
 
             //本单成功支付的那条记录
@@ -510,7 +517,7 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
             await _messages.SendAsync(
                 ("customer", order.CustomerId),
                 ("refund", order.OrderNo),
-                ("结算退款通知", $"订单 {order.OrderNo} 已结算，应退 ¥{c.Refund:0.00}，但未找到有效支付记录，门店将线下为您办理退款，请留意门店通知。"));
+                ("结算退款通知", $"订单 {order.OrderNo} 已结算，应退 ¥{c.Refund:0.00}，前台已确认由门店当面退还，请到店领取。"));
             return $"结算完成 · 应退 ¥{c.Refund:0.00}，但无有效支付记录，请联系财务核实";
         }
 
@@ -519,13 +526,13 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         //向顾客说明退款去向：真实通道=原路退回；模拟收银台=直接登记为线下现金退还。
         //模拟支付从未发生真实划款，退款也就不需要前台再「确认是否退回」——登记即生效，
         //前台只需按登记金额把现金交给顾客，不必回系统做二次确认。
-        var dest = r.RealMoney ? $"将按原支付渠道（{paid.PayType}）原路退回，预计到账 1-3 个工作日，请注意查收。" : $"该单为模拟收银台支付、未发生真实划款，退款 ¥{c.Refund:0.00} 已直接登记为「线下现金退还」，到店领取即可，无需再次确认。";
+        var dest = r.RealMoney ? $"将按原支付渠道（{paid.PayType}）原路退回，预计到账 1-3 个工作日，请注意查收。" : $"前台已确认由门店当面退还 ¥{c.Refund:0.00}（模拟收银台未发生真实划款），请凭本单到店领取。";
         await _messages.SendAsync(
             ("customer", order.CustomerId),
             ("refund", order.OrderNo),
             ("结算退款通知", $"订单 {order.OrderNo} 已结算，应退 ¥{c.Refund:0.00}。{dest}"));
 
-        return r.RealMoney ? $"结算完成 · 已退 ¥{c.Refund:0.00} 至原支付渠道（{paid.PayType}）" : $"结算完成 · ¥{c.Refund:0.00} 已登记为线下现金退还（模拟支付未发生真实划款，无需再确认）";
+        return r.RealMoney ? $"结算完成 · 已退 ¥{c.Refund:0.00} 至原支付渠道（{paid.PayType}）" : $"结算完成 · 前台已确认当面退还 ¥{c.Refund:0.00}";
     }
 
     ///<summary>

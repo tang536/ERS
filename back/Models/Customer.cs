@@ -33,6 +33,15 @@ public class Customer
     [Column("contact_phone")]
     public string? ContactPhone { get; private set; }
 
+    ///<summary>头像地址：统一由 ImageStorage 落盘并保存 /uploads/avatars/… 相对 URL，不再按顾客 ID 拼文件名</summary>
+    [MaxLength(255)]
+    [Column("avatar_url")]
+    public string? AvatarUrl { get; private set; }
+
+    ///<summary>设置或清除头像地址（空值表示恢复默认首字符头像）</summary>
+    public void SetAvatar(string? url) =>
+        AvatarUrl = string.IsNullOrWhiteSpace(url) ? null : url.Trim();
+
     ///<summary>登录密码（BCrypt 哈希），任何接口都不允许回传给前端</summary>
     [JsonIgnore]
     [MaxLength(100)]

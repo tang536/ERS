@@ -317,6 +317,15 @@ input::placeholder { color: var(--text-muted); }
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border);
 }
+/* 390px 下五个快捷区间按内容宽度排，前四个占满一行、「全部」孤零零掉到第二行。
+   手机改成五等分网格，每个 pill 同宽，一眼扫完不会以为是两组。 */
+@media (max-width: 620px) {
+  .filter-presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .filter-presets .chip-btn { padding-left: 4px; padding-right: 4px; text-align: center; }
+  /* 「当前区间」原来跟着五个 pill 一起进网格，只分到 1/5 列宽，
+     「当前区间：2026-10-20 ~ 2026-11-18」被拆成竖排单字。让它独占整行。 */
+  .filter-presets .filter-hint { grid-column: 1 / -1; margin-left: 0; }
+}
 .chip-btn {
   padding: 5px 13px; border: 1px solid var(--border); border-radius: 999px;
   background: var(--bg-primary); color: var(--text-secondary);
@@ -1012,11 +1021,17 @@ a.header-icon-btn { color: inherit; text-decoration: none; }
   margin-bottom: 0;
 }
 /* 报表页车辆明细表：主次布局把它挤进约 2/3 宽，九列在窄容器里会把「品牌」
-   压成一字一行。只给识别列（车号 / 品牌 / 状态）加不折行，数字列本来就窄；
-   再留一个下限宽度兜底，真挤不下时由 .table-wrap 的横向滚动接住。 */
-.report-veh-table { min-width: 760px; }
+   压成一字一行。只给识别列（车号 / 品牌 / 状态）加不折行，数字列本来就窄。
+   原来还写死 min-width:760px「兜底」，结果 1366px 下卡片只有 724px，
+   表头「最近租赁」被裁掉 32px；下方再配 6px 单元格内边距，9 列省出的
+   108px 足够让表在卡片内完整放下，真挤不下时仍由 .table-wrap 横向滚动接住。 */
+.report-veh-table { min-width: 0; }
 .report-veh-table tbody td:nth-child(-n+3),
 .report-veh-table thead th:nth-child(-n+3) { white-space: nowrap; }
+@media (min-width: 621px) {
+  .data-table.report-veh-table thead th,
+  .data-table.report-veh-table tbody td { padding-left: 6px; padding-right: 6px; }
+}
 /* 报表页的主次布局：右侧旁注只放指标卡（220px 就够），主区要容纳九列明细表，
    因此比看板的 1.9:1 再往主区偏一点。窄屏仍沿用下方的单列回落规则。 */
 @media (min-width: 1181px) {
@@ -1229,7 +1244,7 @@ a.header-icon-btn { color: inherit; text-decoration: none; }
 .tab-switch {
   display: flex; gap: 4px; padding: 4px;
   background: var(--surface-3, #f1f5f9); border-radius: var(--r-md);
-  flex-wrap: nowrap; overflow-x: auto; max-width: 100%;
+  flex-wrap: wrap; overflow-x: visible; max-width: 100%;
 }
 .tab-btn {
   display: flex; align-items: center; gap: 7px;
@@ -1377,6 +1392,53 @@ a.header-icon-btn { color: inherit; text-decoration: none; }
 /* .num 的特异性 (0,2,1) 高于 `.data-table tbody td` 的 (0,1,2)，
    所以数字列必须在这里显式写回 center，否则会被默认右对齐盖住。 */
 .data-table th.num, .data-table td.num { text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ---- 归还结算表：窄桌面下的列宽收纳 ----
+   这张表比订单表多一列「结算单号」，10 列在 1440px（内容区 1126px）下总宽 1320：
+   「订单号」被 table-layout:auto 摊到 251px，备注列又按 258px 的整段文本撑开，
+   结果备注右侧被 .table-wrap 裁掉。收两处：
+   · 订单号是定长单号，封顶 180px，不要再吃剩余空间；
+   · 备注改成两行折行（150px 内容宽），不再用 nowrap 把整列顶宽；
+   · 本表单元格左右内边距收到 8px，补回 10 列 × 8px 的余量。
+   只在 ≥621px（非手机卡片模式）生效，手机端仍按卡片逐行展示完整备注。 */
+@media (min-width: 621px) {
+  .data-table.settlements-table thead th,
+  .data-table.settlements-table tbody td { padding-left: 8px; padding-right: 8px; }
+  .data-table.settlements-table td.settle-order-no { max-width: 180px; }
+  .data-table.settlements-table td.settle-order-no .copy-text { max-width: 100%; }
+  .settle-remark-text {
+    display: block; max-width: 150px;
+    white-space: normal; word-break: break-word; line-height: 1.5;
+    text-align: left;
+  }
+}
+
+/* ---- 系统配置表：六列在 1366px（内容区 1052px）下总宽 1354 ----
+   撑宽的是「配置说明」：table-layout:auto + 全局 td nowrap，把 638px 的长说明
+   整段排成一行，更新时间/操作列被推到卡片外裁掉。这里固定六列的比例，
+   只让说明列折行；参数名与更新时间仍是单行，但字号降到 12px 以放进各自列宽。
+   手机 ≤620px 走卡片模式，不套用这套固定布局。 */
+@media (min-width: 621px) {
+  .data-table.config-table { table-layout: fixed; }
+  .data-table.config-table th:nth-child(1),
+  .data-table.config-table td:nth-child(1) { width: 20%; }
+  .data-table.config-table th:nth-child(2),
+  .data-table.config-table td:nth-child(2) { width: 17%; }
+  .data-table.config-table th:nth-child(3),
+  .data-table.config-table td:nth-child(3) { width: 11%; }
+  .data-table.config-table th:nth-child(4),
+  .data-table.config-table td:nth-child(4) { width: 31%; }
+  .data-table.config-table th:nth-child(5),
+  .data-table.config-table td:nth-child(5) { width: 12%; }
+  .data-table.config-table th:nth-child(6),
+  .data-table.config-table td:nth-child(6) { width: 9%; }
+  .data-table.config-table td:nth-child(1),
+  .data-table.config-table td:nth-child(5) { font-size: 12px; white-space: nowrap; }
+  .data-table.config-table td:nth-child(2) { white-space: normal; line-height: 1.5; }
+  .data-table.config-table td:nth-child(4) {
+    white-space: normal; word-break: break-word; line-height: 1.55; text-align: left;
+  }
+}
 
 /* ---- 表头级联筛选器（数据字典驱动，DictThFilter.tsx） ---- */
 /* 「列名 + 下拉」必须留在同一行：原来是 display:block，把带筛选的列撑成两行，
@@ -1759,6 +1821,14 @@ html[data-theme="dark"] .cfg-row-dirty td { color: var(--text); }
 .callout-danger { background: var(--danger-bg); border-color: #fecaca; color: var(--danger-text); }
 .callout-info { background: var(--info-bg); border-color: #bae6fd; }
 .callout-head { display: flex; align-items: flex-start; gap: 11px; }
+/* 订单到期预警不是「<strong>标题</strong> + <p>正文</p>」那种两段式提示块，
+   而是一整句摘要 + 一个跳转按钮。原来的 .callout-head 是 flex：
+   句子里的每个文本节点、每个 <strong> 数字都成了独立 flex item，
+   在 390px 下被拆成「1 笔，3 / 天内到期 / 0 笔」几列。
+   这里把摘要包成单个可伸缩的行内块，让文字恢复正常的逐字折行。 */
+.order-warn-head { flex-wrap: wrap; }
+.order-warn-summary { flex: 1 1 240px; min-width: 0; }
+.order-warn-head .link-btn { flex: none; }
 
 .estimate { padding: 18px 20px; border-radius: var(--radius-sm); background: var(--primary-soft); border: 1px solid #fee2e2; }
 .estimate-head { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }
@@ -2088,6 +2158,13 @@ html[data-theme="dark"] .settle-busy { background: rgba(3, 7, 18, 0.68); }
 /* ============================================================
    响应式
    ============================================================ */
+/* 1366×768 笔记本是门店最常见的桌面尺寸：内容区约 1052px，
+   比 1440 少 74px。订单表（到期时间）和客户表（注册时间）在这档会多出
+   32~63px，末列被 .table-wrap 裁掉。1400px 以下先收掉这两列低频信息，
+   1440 及以上仍完整显示。 */
+@media (max-width: 1400px) {
+  .col-hide-xl { display: none !important; }
+}
 @media (max-width: 1280px) {
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stats-grid--5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -2234,6 +2311,10 @@ html[data-theme="dark"] .settle-busy { background: rgba(3, 7, 18, 0.68); }
   .filter-inputs > .filter-sep, .settle-filter-inputs > .settle-filter-sep { display: none; }
   .filter-inputs > .filter-tilde, .settle-filter-inputs > .settle-filter-tilde { display: inline; }
   /* 订单页：第2行 两个日期框并排（搜索框+状态已占第1行） */
+  .filter-inputs > .filter-date-range,
+  .settle-filter-inputs > .filter-date-range {
+    grid-row: 2; grid-column: 1 / -1; width: 100%; flex: none;
+  }
   .filter-inputs > .filter-sep + .filter-date-group { grid-row: 2; grid-column: 1; }
   .filter-inputs > .filter-date-group + .filter-date-group { grid-row: 2; grid-column: 2; }
   /* 手机端：两个日期框强制等长——标签固定宽度、输入框 flex 撑满剩余空间，
@@ -2353,8 +2434,8 @@ html[data-theme="dark"] .settle-busy { background: rgba(3, 7, 18, 0.68); }
   /* 报表页等不需要满宽按钮组的页面：保持紧凑，按钮不拉伸 */
   .toolbar .btn-group.toolbar-compact-actions { flex: 0 0 auto; width: auto; margin-left: auto; }
   .toolbar .btn-group.toolbar-compact-actions .btn-sm { flex: 0 0 auto; justify-content: center; }
-  /* 标题行右侧图标按钮组：窄屏隐藏文字，只保留图标，省空间 */
-  .btn-icon-sm .btn-label { display: none; }
+  /* 标题行右侧图标按钮组：窄屏只在拥挤的成组/表格操作里收起文字，
+     单个主操作仍显示文字（具体规则见文件末尾的移动端收口块）。 */
   .btn-icon-sm { padding: 7px 10px; }
 }
 
@@ -4441,6 +4522,32 @@ a.landing-theme-btn { text-decoration: none; }
   .stage-idle-actions { flex-direction: column; width: 100%; }
   .stage-idle-btn { width: 100%; }
   .stage { --stage-h: 490px; }
+  /* 手机首屏先给登录卡：390×844 下原来「两辆车 148px + 卡片 490px」纵排，
+     卡片要滚到 y≈545 才开始，密码框和登录按钮全在首屏之外。
+     把卡片换到第一行、车辆挪到卡片下方，同时解除固定高度——
+     卡片按内容自然收高，登录按钮无需滚屏即可看到；车辆仍保留作身份装饰。 */
+  .stage {
+    grid-template-areas: 'c c' 'l r';
+    row-gap: 10px;
+    --stage-h: auto;
+    padding-bottom: 30px;
+  }
+  .stage-core { margin: 0 auto; max-width: 100%; }
+  .stage-lit, .stage-idle { min-height: 0; }
+  .stage-lit { padding: 18px 18px 14px; }
+  .lp-head { margin-bottom: 12px; }
+  .lp .form-group { margin-bottom: 10px; }
+  .lp > .btn-primary { margin-top: 12px; min-height: 42px; }
+  .lp-foot { margin-top: 10px; }
+  .scooter { --sc-w: 132px; }
+  /* 首屏文案整体上提 46px：导航 62px 之后原来留 112px 空档，
+     登录卡因此被推到 y≈467、页脚落在 844 之外。只收紧文案间距，
+     不缩小字号，标题与副标题仍保持 32/14px 的可读尺寸。 */
+  .hero { padding-top: 84px; }
+  .hero h1 { margin-top: 8px; }
+  .hero-sub { margin-top: 14px; }
+  .hero-actions { margin-top: 14px; }
+  .hero-meta { margin-top: 12px; }
   /* 页脚转纵排后高度由文案行高决定：顾客卡的 13px 正文比另两面的 12px 提示高 2px，
      三张卡的提交按钮就会错开 2px。锁一个最小高度，按钮重新落到同一条线上。 */
   .lp-foot { flex-direction: column; align-items: flex-start; gap: 8px; min-height: 47px; }
@@ -4651,6 +4758,11 @@ html[data-theme="pink"] {
 }
 
 html[data-theme="pink"] body { background: var(--bg); color: var(--text); }
+/* 粉色主题下选中页签跟着主色走，避免沿用浅色/深色的红黑渐变 */
+html[data-theme="pink"] .tab-btn.active {
+  background: linear-gradient(135deg, var(--solid-primary), var(--primary-dark));
+  box-shadow: 0 3px 10px rgba(201, 75, 110, 0.28);
+}
 /* 侧栏保持深玫瑰，白字才站得住；浅色粉底配白字会掉到 2:1 以下 */
 html[data-theme="pink"] .sidebar {
   background: linear-gradient(180deg, #8f2949 0%, #a83658 55%, #bd4566 100%);
@@ -6006,10 +6118,34 @@ textarea,
 .points-toggle.disabled { opacity: .55; cursor: not-allowed; }
 .points-toggle.disabled input { cursor: not-allowed; }
 
+/* —— 图片上传与表格缩略图 —— */
+.image-picker { display: flex; align-items: flex-start; gap: 12px; }
+.image-picker-preview {
+  position: relative; width: 88px; height: 88px; flex: none; padding: 0;
+  border: 1px dashed var(--border-strong); border-radius: 10px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2, var(--surface)); color: var(--text-muted); cursor: pointer;
+}
+.image-picker-preview:hover { border-color: var(--primary); color: var(--primary-text); }
+.image-picker-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.image-picker-loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px;
+}
+.image-picker-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.image-picker-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.name-with-thumb { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.name-with-thumb strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-thumb {
+  width: 34px; height: 34px; flex: none; border-radius: 8px; object-fit: cover;
+  background: var(--primary-bg); border: 1px solid var(--border);
+}
+.table-thumb-empty { display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); }
+
 /* —— 增值服务 —— */
 .addon-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .addon-item {
-  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: 18px 36px minmax(0, 1fr) auto;
   align-items: center; gap: 9px; padding: 10px 12px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface); cursor: pointer; font-weight: 400;
@@ -6018,6 +6154,12 @@ textarea,
 .addon-item:hover { border-color: var(--primary-light); }
 .addon-item.active { border-color: var(--primary); background: var(--primary-bg); }
 .addon-item input { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
+.addon-item-icon {
+  width: 36px; height: 36px; border-radius: 9px; overflow: hidden; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--primary-text); background: var(--primary-bg); border: 1px solid var(--border);
+}
+.addon-item-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .addon-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .addon-item-main strong { display: flex; align-items: center; gap: 5px; font-size: 13.5px; }
 .addon-item-main small { font-size: 11.5px; color: var(--text-muted); }
@@ -6060,6 +6202,12 @@ textarea,
   padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
 }
 .coupon-card.disabled { opacity: .62; }
+.coupon-card.has-image { grid-template-columns: 64px 96px minmax(0, 1fr) auto; }
+.coupon-cover {
+  width: 64px; height: 64px; border-radius: 10px; overflow: hidden;
+  background: var(--primary-bg); border: 1px solid var(--border); flex: none;
+}
+.coupon-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .coupon-stub {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   padding: 10px 6px; border-radius: 10px; color: var(--primary-text);
@@ -6105,21 +6253,28 @@ textarea,
 .kv-grid strong { font-weight: 600; word-break: break-all; }
 
 /* —— 个人中心的三个小按钮 —— */
-.profile-services { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.profile-services {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 132px));
+  justify-content: start;
+  gap: 8px; margin-bottom: 16px;
+}
 .profile-service-btn {
-  display: flex; align-items: center; gap: 11px; padding: 12px 14px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  padding: 12px 4px; min-height: 78px;
   border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
-  cursor: pointer; text-align: left; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+  cursor: pointer; text-align: center; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
 .profile-service-btn:hover { border-color: #fecaca; box-shadow: var(--shadow-xs); transform: translateY(-1px); }
 .profile-service-icon {
+  position: relative;
   width: 38px; height: 38px; flex: none; border-radius: 11px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--primary-bg); border: 1px solid #fecaca;
 }
-.profile-service-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.profile-service-text strong { font-size: 14px; }
-.profile-service-text small { font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-service-text { display: block; width: 100%; font-size: 12px; font-weight: 600; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.profile-service-text strong { font-size: 12px; }
+.profile-service-text small { display: none; }
 
 /* 券模板表格里的兑换码单元格 */
 .redeem-code-cell { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px; }
@@ -6142,7 +6297,10 @@ textarea,
   .vehicle-hero { grid-template-columns: 1fr; gap: 12px; }
   .vehicle-hero-photo { height: 180px; }
   .vehicle-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .profile-services { grid-template-columns: 1fr; }
+  .profile-services { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .profile-service-btn { min-height: 72px; padding: 10px 2px; gap: 6px; }
+  .profile-service-icon { width: 34px; height: 34px; }
+  .profile-service-text { font-size: 11.5px; }
   .kv-grid { grid-template-columns: 1fr; }
   .estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -6168,7 +6326,14 @@ textarea,
   .rent-search input { font-size: 12px; }
   .rent-refresh { width: 36px; height: 36px; }
   .coupon-card { grid-template-columns: 76px minmax(0, 1fr); }
-  .coupon-actions { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
+  .coupon-card.has-image { grid-template-columns: 54px 70px minmax(0, 1fr); gap: 9px; }
+  .coupon-cover { width: 54px; height: 54px; }
+  .coupon-card > .coupon-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    justify-content: flex-end;
+    justify-self: stretch;
+  }
   .coupon-stub strong { font-size: 16px; }
   .detail-grid { grid-template-columns: 1fr; }
   .estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -6253,3 +6418,1125 @@ textarea,
   .calendar-slot { flex-direction: column; align-items: flex-start; }
   .timeline-head { flex-direction: column; gap: 2px; }
 }
+
+/* 维保页签内的「工单 / 保养计划」小切换，不新增侧边栏菜单 */
+.maint-subtabs {
+  margin: 0 0 12px;
+}
+.plan-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.plan-row-due td {
+  background: color-mix(in srgb, var(--warning-bg, #fff7e6) 55%, transparent);
+}
+@media (max-width: 720px) {
+  .plan-panel-head { align-items: flex-start; flex-direction: column; }
+  .maint-subtabs { width: 100%; }
+  .maint-subtabs .tab-btn { flex: 1; }
+}
+
+/* 取还车照片并排对比：只放在验车弹窗顶部，不新增独立页面 */
+.ho-compare {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2, var(--surface));
+}
+.ho-compare-item { min-width: 0; }
+.ho-compare-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+.ho-compare-item img {
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  background: var(--surface-3, var(--surface));
+}
+.ho-compare-empty {
+  height: 130px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+.ho-compare-meta {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.ho-compare-mid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+}
+.ho-compare-arrow { font-size: 20px; line-height: 1; }
+.ho-compare-delta { font-size: 12px; font-weight: 700; }
+.ho-compare-delta.is-down { color: var(--danger-text); }
+.ho-compare-delta.is-up { color: var(--success-text, #15803d); }
+@media (max-width: 560px) {
+  .ho-compare { grid-template-columns: 1fr; }
+  .ho-compare-mid { flex-direction: row; }
+  .ho-compare-item img, .ho-compare-empty { height: 110px; }
+}
+
+/* 合同存证：嵌在订单详情底部，只有查到合同才显示 */
+.contract-evidence { display: grid; gap: 8px; }
+.contract-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2, var(--surface));
+}
+.contract-row-side { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hash-text {
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-3);
+  word-break: break-all;
+}
+@media (max-width: 560px) {
+  .contract-row { flex-direction: column; }
+}
+
+/* 金额审批：运营配置页第三个页签 */
+.approval-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.approval-reason {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .approval-reason { max-width: none; white-space: normal; }
+}
+
+/* 数据看板：预警卡下面的一行紧凑运营待办，不新增卡片/菜单 */
+.ops-task-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.ops-task-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2, var(--surface));
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ops-task-chip b { color: var(--danger-text); }
+.ops-task-chip:hover { border-color: var(--primary); color: var(--primary); }
+
+/* 发票队列：去掉类型/时间列，压成 5 列，避免 718px 下横向滚动 */
+.invoice-table .invoice-apply-no,
+.invoice-table .invoice-order-no {
+  max-width: 150px;
+  word-break: break-all;
+  white-space: normal;
+}
+.invoice-table td { vertical-align: top; }
+
+/* ===== 第二批扩展功能：紧凑面板 ===== */
+.ext-panel-title {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: 14px; margin-bottom: 8px;
+}
+.ext-count {
+  margin-left: 4px; padding: 0 6px; border-radius: 999px;
+  background: var(--bg-soft); color: var(--text-2);
+  font-size: 11px; font-weight: 500;
+}
+.ext-list { display: flex; flex-direction: column; gap: 6px; }
+.ext-list-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg-soft);
+}
+.ext-list-main { flex: 1; min-width: 0; }
+.ext-list-main strong { font-size: 13px; }
+.ext-list-main small { display: block; color: var(--text-2); font-size: 12px; margin-top: 2px; }
+.ext-list-main p { margin: 4px 0 0; font-size: 12px; color: var(--text-2); line-height: 1.6; }
+.ext-reply { color: var(--primary) !important; }
+.inline-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px; align-items: center;
+  margin-bottom: 8px;
+}
+.inline-form input, .inline-form select { width: 100%; min-width: 0; height: 34px; font-size: 13px; }
+.inline-form > .btn-sm { width: 100%; justify-content: center; }
+.inline-form > .btn-group { grid-column: 1 / -1; }
+@media (max-width: 620px) {
+  .inline-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .inline-form > .btn-sm:last-child { grid-column: 1 / -1; }
+}
+.compact-table th, .compact-table td { padding: 6px 8px; font-size: 12px; }
+.compact-table .cell-note { max-width: 180px; white-space: normal; word-break: break-all; }
+.row-warning td { background: var(--warning-bg, rgba(245,158,11,.08)); }
+
+/* 看板底部：需求预测与员工绩效，沿用看板分块，不新增一级卡片 */
+.dash-sub-block { margin-top: 12px; }
+.dash-sub-title {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: 13px; margin-bottom: 8px;
+}
+.dash-sub-title .text-muted { font-weight: 400; font-size: 12px; }
+.forecast-strip {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px;
+}
+.forecast-day {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 4px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg-soft);
+}
+.forecast-day strong { font-size: 16px; color: var(--primary); }
+.forecast-day small { font-size: 11px; color: var(--text-2); }
+@media (max-width: 520px) {
+  .forecast-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.finance-watch { display: flex; flex-direction: column; gap: 6px; }
+.finance-watch-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-soft); cursor: pointer; text-align: left; color: inherit;
+}
+.finance-watch-row span { flex: 1; font-size: 12px; color: var(--text-2); }
+.finance-watch-row strong { font-size: 15px; }
+.finance-watch-row small { font-size: 11px; color: var(--text-2); }
+.finance-watch-row:hover { border-color: var(--primary); }
+
+
+
+/* 老带新推荐码卡片 */
+.referral-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.referral-code {
+  font-size: 20px; font-weight: 700; letter-spacing: 2px;
+  color: var(--primary); margin-top: 2px;
+}
+.referral-stats { display: flex; gap: 18px; margin-left: auto; }
+.referral-stats div { text-align: center; }
+.referral-stats strong { display: block; font-size: 18px; }
+.referral-stats span { font-size: 11px; color: var(--text-2); }
+
+/* 评价星级 */
+.rating-row { display: flex; align-items: center; gap: 2px; }
+.rating-star {
+  border: none; background: none; cursor: pointer;
+  font-size: 22px; line-height: 1; color: var(--border-strong, #cbd5e1);
+  padding: 0 2px; transition: color .15s, transform .15s;
+}
+.rating-star.active { color: #f59e0b; }
+.rating-star:hover { transform: scale(1.12); }
+
+/* ==================================================================
+   本轮新增：弹窗常显关闭、顾客订单卡片、结算单、会员/邀请、通知、
+   签名全屏、车辆图片主视觉、退款确认等
+   全部使用主题变量，深色与粉色主题随变量自动切换。
+   ================================================================== */
+
+/* 弹窗头吸顶：内容再长，右上角 X 始终在屏幕可视范围内 */
+.modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: var(--surface, #fff);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.modal-header .close-btn { flex: none; }
+.modal-footer { flex-wrap: wrap; }
+
+/* 动作行统一右对齐：一行内按钮靠右收口，主按钮放最后 */
+.form-actions { justify-content: flex-end; }
+.card-title-actions > .btn-sm { white-space: nowrap; }
+.page-heading-row {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.page-heading-actions {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; margin-left: auto;
+}
+
+/* 复制按钮：flex 父级里允许收缩，长编号不再把手机页面顶宽 */
+.copy-text { min-width: 0; }
+.copy-text-value { flex: 1 1 auto; }
+
+/* 运营扩展面板里的小表单：输入框沿用系统控件的边框、底色与焦点环 */
+.inline-form input,
+.inline-form select {
+  height: 34px;
+  padding: 0 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface, #fff);
+  color: var(--text);
+  font-size: 13px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.inline-form input:focus,
+.inline-form select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, .12);
+}
+.inline-form .btn-sm { flex: none; white-space: nowrap; }
+
+/* 面板标题下的一句话说明：门店人员看不懂「资产档案 / 备件库存」时先看这里 */
+.panel-help {
+  display: block;
+  margin: -2px 0 10px;
+  padding-left: 8px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* 返回按钮：子页面不在侧边栏时，顶栏给一个明确的返回入口 */
+.header-back-btn {
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 30px; padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.header-back-btn:hover { color: var(--primary); border-color: var(--primary); }
+
+/* 账号管理：头像 + 姓名，一眼分辨是哪个工作人员 */
+.staff-user-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.staff-avatar {
+  width: 28px; height: 28px; flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--primary-bg);
+}
+.staff-avatar .avatar-initial {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600;
+  color: var(--primary);
+}
+.staff-avatar.is-empty {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-muted);
+}
+
+/* 批量编辑弹窗：Portal 到 body 后必须压在所有页面容器之上 */
+.batch-edit-overlay { z-index: 1200; }
+.batch-edit-overlay .modal { width: 560px; }
+
+/* ── 退款前台确认 ── */
+.refund-confirm-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+}
+.refund-confirm-head {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text);
+}
+.refund-confirm-head strong { color: var(--warning-text); font-size: 15px; }
+.refund-confirm-head .status-tag { margin-left: auto; }
+.refund-confirm-check {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin-top: 9px;
+  font-size: 12.5px; line-height: 1.6;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.refund-confirm-check input { flex: none; margin-top: 2px; accent-color: var(--primary); }
+
+/* ── 顾客「我的租赁订单」卡片：车辆图片为主视觉 ── */
+.my-order-list { display: flex; flex-direction: column; gap: 12px; }
+.my-order-card {
+  display: flex; gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.my-order-media {
+  position: relative;
+  width: 172px; flex: none;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--surface-3);
+}
+.my-order-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.my-order-media-fallback {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  color: var(--text-muted);
+  background:
+    radial-gradient(circle at 50% 38%, var(--surface) 0%, transparent 62%),
+    linear-gradient(135deg, var(--surface-3), var(--surface-2));
+}
+.my-order-media-fallback em {
+  font-style: normal; font-weight: 600; font-size: 12.5px; letter-spacing: .5px;
+  color: var(--text-secondary);
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.order-status-chip {
+  position: absolute; top: 8px; left: 8px;
+  backdrop-filter: blur(4px);
+}
+.my-order-main {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.my-order-head {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.my-order-no {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  max-width: 100%;
+}
+.my-order-vehicle { font-weight: 700; font-size: 14px; }
+.my-order-brand { color: var(--text-muted); font-size: 12px; }
+.my-order-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+.my-order-meta div { min-width: 0; }
+.my-order-meta span { display: block; color: var(--text-muted); font-size: 11px; }
+.my-order-meta strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.my-order-actions {
+  flex: none;
+  width: 150px;
+  display: flex; flex-direction: column; align-items: stretch;
+  gap: 7px;
+}
+.my-order-actions .btn-sm { justify-content: center; white-space: nowrap; }
+.my-order-actions:empty { display: none; }
+
+/* ── 归还结算单独立页 ── */
+/* 顾客端「我的订单」与「归还结算单」同一页并列：两个独立卡片、各自滚动，
+   不是先订单后结算的步骤关系。窄屏再上下堆叠，两块内容仍然同时可见。 */
+.my-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+  gap: 16px;
+  align-items: start;
+}
+/* 桌面上两表同屏；窄屏用两个并列页签切换，避免「先看完 6 张订单才看到结算单」 */
+.my-board-tabs { display: none; }
+@media (max-width: 1180px) {
+  .my-board { grid-template-columns: 1fr; }
+  .my-board-tabs {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px; margin-bottom: 12px;
+  }
+  .my-board-tab {
+    height: 40px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text-secondary);
+    font-size: 13px; cursor: pointer;
+  }
+  .my-board-tab span { margin-left: 4px; color: var(--text-muted); font-size: 11.5px; }
+  .my-board-tab.is-active {
+    border-color: var(--primary); background: var(--primary-bg); color: var(--primary); font-weight: 600;
+  }
+  .my-board .is-hidden-mobile { display: none; }
+}
+@media (min-width: 1181px) {
+  .my-board .my-order-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.settle-extra { margin-top: 12px; padding-top: 4px; border-top: 1px dashed var(--border); }
+.settle-extra-title { font-size: 12.5px; color: var(--text-muted); margin: 8px 0; }
+
+.settle-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.settle-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+  padding-bottom: 9px;
+  border-bottom: 1px dashed var(--border);
+}
+.settle-card-head > div { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; min-width: 0; }
+.settle-vehicle { color: var(--text-secondary); font-size: 12px; }
+.settle-money-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.settle-money-grid div {
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.settle-money-grid span { display: block; color: var(--text-muted); font-size: 11px; }
+.settle-money-grid strong {
+  display: block; margin-top: 2px;
+  font-size: 14px; font-variant-numeric: tabular-nums;
+}
+.settle-money-grid .highlight strong { color: var(--success-text); }
+.settle-money-grid .warn strong { color: var(--warning-text); }
+.settle-card-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.settle-card-foot > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.settle-remark { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+
+/* ── 会员中心：当前等级 + 折扣一行 ── */
+.member-current-line {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.member-current-line div {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.member-current-line span { display: block; color: var(--text-muted); font-size: 11.5px; }
+.member-current-line strong { display: block; margin-top: 3px; font-size: 19px; color: var(--primary); }
+.member-points-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.member-points-row div {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.member-points-row span { display: block; color: var(--text-muted); font-size: 11.5px; }
+.member-points-row strong { display: block; margin-top: 2px; font-size: 16px; }
+
+/* ── 个人中心：消息未读红点 / 邀请操作 ── */
+.profile-unread-dot {
+  position: absolute; top: -6px; right: -8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 5px;
+  border-radius: 999px;
+  background: var(--solid-danger, #dc2626);
+  color: #fff;
+  font-size: 10px; font-weight: 600;
+}
+.referral-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ── 消息通知页 ── */
+.notify-list-item {
+  display: flex; align-items: stretch; gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  margin-bottom: 8px;
+}
+.notify-list-item.is-unread {
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+.notify-list-item.is-unread .notify-item-text strong::after {
+  content: ''; display: inline-block;
+  width: 6px; height: 6px; margin-left: 6px; vertical-align: 2px;
+  border-radius: 50%; background: var(--primary);
+}
+.notify-item-main {
+  flex: 1; min-width: 0;
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 0; border: 0; background: none;
+  color: inherit; text-align: left; cursor: pointer;
+}
+.notify-item-icon {
+  flex: none;
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.notify-item-text { min-width: 0; }
+.notify-item-text strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.notify-item-text span {
+  display: block; margin-top: 2px;
+  color: var(--text-secondary); font-size: 12px; line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.notify-item-text small { display: block; margin-top: 4px; color: var(--text-muted); font-size: 11px; }
+.notify-item-del { flex: none; align-self: center; }
+
+/* 消息中心：顶部未读概览 + 分类筛选 + 按日期分组 */
+.notify-summary {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 14px; margin-bottom: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.notify-summary-count {
+  display: flex; align-items: baseline; gap: 5px;
+  flex: none;
+}
+.notify-summary-count strong { font-size: 26px; line-height: 1; color: var(--primary); font-variant-numeric: tabular-nums; }
+.notify-summary-count span { font-size: 12px; color: var(--text-muted); }
+.notify-summary-text { flex: 1; min-width: 0; }
+.notify-summary-text strong { display: block; font-size: 13.5px; }
+.notify-summary-text small { display: block; margin-top: 2px; color: var(--text-muted); font-size: 11.5px; }
+.notify-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.notify-day { margin-bottom: 14px; }
+.notify-day-title {
+  margin: 0 0 7px; padding-left: 2px;
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+}
+.notify-item-go { flex: none; align-self: center; margin-left: 2px; color: var(--text-muted); }
+@media (min-width: 1000px) {
+  /* 消息正文单行过长会难读，桌面上把列表收到 980px；删除按钮也就不会悬在屏幕最右 */
+  .notify-summary, .notify-filters, .notify-day { max-width: 980px; }
+}
+@media (max-width: 620px) {
+  .notify-summary { flex-wrap: wrap; gap: 10px; padding: 11px 12px; }
+  .notify-summary-text { flex-basis: calc(100% - 80px); }
+  .notify-summary > .btn-sm { width: 100%; justify-content: center; }
+  .notify-filters { gap: 5px; }
+  .notify-day-title { margin-top: 2px; }
+}
+
+/* ── 日期区间日历 ── */
+.date-range { position: relative; width: 100%; min-width: 0; }
+.date-range-trigger {
+  width: 100%; height: 40px; padding: 0 11px;
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text);
+  font-size: 13px; text-align: left; cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.date-range-trigger:hover { border-color: var(--primary); }
+.date-range-trigger:focus-visible { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-bg); }
+.date-range-trigger.is-empty { color: var(--text-muted); }
+.date-range-trigger > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.date-range-caret { flex: none; color: var(--text-muted); transform: rotate(90deg); }
+.date-range-popover {
+  position: fixed; z-index: 3000;
+  padding: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg, 0 18px 50px rgba(15, 23, 42, .18));
+  max-height: calc(100vh - 24px); overflow: auto;
+}
+.date-range-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.date-range-head strong { font-size: 13.5px; }
+.dr-nav {
+  width: 30px; height: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text-secondary); cursor: pointer;
+}
+.dr-nav:hover { border-color: var(--primary); color: var(--primary); }
+.date-range-week, .date-range-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.date-range-week { gap: 2px; margin-bottom: 4px; }
+.date-range-week span { text-align: center; font-size: 11px; color: var(--text-muted); padding: 3px 0; }
+.date-range-grid { gap: 2px; }
+.dr-day {
+  height: 34px; padding: 0; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text);
+  font-size: 12.5px; cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.dr-day:hover { background: var(--surface-3); }
+.dr-day.is-outside { color: var(--text-muted); opacity: .55; }
+.dr-day.is-disabled { opacity: .3; cursor: not-allowed; }
+.dr-day.in-range { background: var(--primary-bg); color: var(--primary); }
+.dr-day.is-start, .dr-day.is-end { background: var(--primary); color: #fff; font-weight: 600; }
+.date-range-times { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.date-range-times label { display: flex; flex-direction: column; gap: 3px; }
+.date-range-times span { font-size: 11px; color: var(--text-muted); }
+.date-range-times input { height: 32px; font-size: 12.5px; }
+.date-range-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border); }
+@media (max-width: 620px) {
+  .date-range-trigger { height: 42px; }
+  .dr-day { height: 36px; }
+  .filter-date-range { width: 100%; flex: 1 1 100%; }
+  .field-date-inline { flex: 1 1 100% !important; }
+  .field-inline .date-range { min-width: 0; }
+}
+
+/* 筛选栏里的日期区间：固定一档宽度，不抢占搜索框 */
+.filter-date-range { width: 240px; max-width: 100%; flex: 0 1 240px; }
+.field-inline .date-range { min-width: 220px; }
+.field-grow { flex: 1 1 240px; min-width: 0; }
+
+/* ── 日期区间日历结束 ── */
+
+.choice-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.choice-chip {
+  height: 32px; padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12.5px; cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.choice-chip:hover { border-color: var(--primary); color: var(--primary); }
+.choice-chip.is-active {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+  color: var(--primary);
+  font-weight: 600;
+}
+@media (max-width: 620px) {
+  .choice-chip { height: 34px; padding: 0 10px; }
+}
+
+/* ── 手写签名：按钮贴签名区，全屏覆盖 ── */
+.sign-pad-box {
+  position: relative;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.sign-pad-canvas {
+  display: block;
+  width: 100%;
+  height: 180px;
+  background: #fff;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  touch-action: none;
+  cursor: crosshair;
+}
+.sign-pad-box.is-fullscreen { flex: 1; min-height: 0; }
+.sign-pad-box.is-fullscreen .sign-pad-canvas {
+  height: calc(100vh - 190px);
+  min-height: 320px;
+  border-radius: var(--r-md);
+}
+.sign-pad-actions {
+  position: absolute;
+  right: 8px; bottom: 8px;
+  display: flex; gap: 6px;
+  padding: 4px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-xs);
+}
+.sign-pad-btn {
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.sign-pad-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.sign-pad-btn:disabled { opacity: .45; cursor: not-allowed; }
+.sign-fullscreen-overlay {
+  position: fixed; inset: 0; z-index: 1500;
+  display: flex; flex-direction: column;
+  padding: 12px;
+  background: var(--bg);
+}
+.sign-fullscreen-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+  padding: 8px 6px 12px;
+  font-size: 14px; font-weight: 600;
+  color: var(--text);
+}
+.sign-fullscreen-body {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  gap: 8px;
+}
+.sign-fullscreen-body .field-hint { padding: 0 4px; }
+
+/* ── 工单历史与客服回复 ── */
+.ticket-history { margin-bottom: 12px; }
+.ticket-history-title { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.ticket-history-item {
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  margin-bottom: 7px;
+}
+.ticket-history-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap;
+  font-size: 12px;
+}
+.ticket-history-q { margin: 5px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-secondary); overflow-wrap: anywhere; }
+.ticket-history-reply {
+  margin-top: 7px; padding: 7px 9px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--primary-soft);
+  font-size: 12px; line-height: 1.65;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.ticket-history-wait { margin-top: 6px; color: var(--warning-text); font-size: 12px; }
+.ticket-modal-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.ticket-reply-quote {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 12px; line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* ── 车辆：图片占据主要视觉，字段名不再单独占一列 ── */
+.vehicle-name-cell {
+  display: flex; align-items: center; justify-content: flex-start; gap: 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.vehicle-name-cell .vehicle-thumb,
+.vehicle-name-cell .vehicle-thumb-placeholder {
+  width: 92px; height: 66px;
+  flex: none;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+}
+.vehicle-name-text { min-width: 0; }
+.vehicle-name-text strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.vehicle-name-text small { display: block; color: var(--text-muted); font-size: 11.5px; margin-top: 2px; }
+.vehicle-cell-thumb { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.vehicle-thumb-sm {
+  width: 52px; height: 38px; flex: none;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  background: var(--surface-3);
+}
+.vehicle-thumb-sm.is-empty {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-muted);
+}
+.vehicle-cell-text { min-width: 0; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.vehicle-cell-text .vehicle-brand-sub { color: var(--text-muted); font-size: 12px; }
+
+/* 结算页扫码选单按钮：恢复可点击的尺寸，不与图标按钮一起被压小 */
+.scan-pick-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  font-size: 13.5px;
+}
+.scan-pick-btn .btn-label { white-space: nowrap; }
+
+/* ==================================================================
+   手机端排版收口（本轮）
+   目标：页签不横向裁切；带图标按钮在窄屏退化为图标；
+   长单号可折行；看板预测与绩效不再错位。
+   本块必须保持在文件末尾，用于覆盖前面各断点的历史规则。
+   ================================================================== */
+@media (max-width: 620px) {
+  /* 页签：原来 nowrap + overflow-x:auto 只能露出前半段，尾部被裁。
+     改为换行后每一行自动均分宽度，5～6 个页签也能全部看到。 */
+  .tab-switch,
+  .toolbar .tab-switch,
+  .dict-type-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    max-width: 100%;
+  }
+  .tab-switch .tab-btn {
+    flex: 1 1 30%;
+    min-width: max-content;
+    justify-content: center;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  /* 五个页签时稳定排成 3+2，不再因文字长短变成 2+3 */
+  .tab-switch { row-gap: 6px; }
+  /* 维保 4 个子页签在手机上固定一行四等分，避免第 4 个被挤到下一行拉成通栏 */
+  .maint-subtabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .maint-subtabs .tab-btn { flex: none; min-width: 0; padding-left: 4px; padding-right: 4px; font-size: 12px; }
+
+  /* 明确标记为“图标按钮”的控件（btn-icon-sm）：只在这些确实拥挤的位置
+     收起文字——表格操作列、成组的工具栏按钮（btn-group / toolbar-actions）。
+     标题栏里的单个主操作（新增账号、新增客户、新增优惠券等）仍有整行空间，
+     继续显示文字，避免变成看不懂的孤立图标。
+     标签用视觉隐藏而不是 display:none，保证读屏仍能读出按钮名称。 */
+  :is(td, .btn-group, .toolbar-actions, .row-actions) .btn-icon-sm > .btn-label {
+    position: absolute;
+    display: inline;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  :is(td, .btn-group, .toolbar-actions, .row-actions) .btn-icon-sm:not(:has(> .btn-label)) { font-size: 0; }
+  .btn-icon-sm {
+    min-width: 34px;
+    height: 34px;
+    padding-left: 9px;
+    padding-right: 9px;
+  }
+  /* 「更多」类菜单同时带 menu 与 chevron 两个图标：收起箭头，只留菜单图标 */
+  .btn-icon-sm .overflow-caret { display: none; }
+
+  /* 订单号 / 结算单号过长时允许折行，避免 320px 下把卡片顶破 */
+  table.data-table tbody td .copy-text {
+    min-width: 0;
+    max-width: 100%;
+  }
+  table.data-table tbody td .copy-text-value {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    text-align: right;
+  }
+  table.data-table tbody td[data-label='订单号'],
+  table.data-table tbody td[data-label='结算单号'] {
+    align-items: flex-start;
+  }
+  /* 到期预警里的订单号是整段超长无空格字符串；inline-flex 不会折行，320px 下会顶出卡片 */
+  .order-warn-no {
+    display: inline;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    vertical-align: top;
+    text-align: left;
+  }
+
+  /* 看板：7 天预测保持一行 7 格，不再 4+3 换行 */
+  .forecast-strip {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .forecast-day { padding: 8px 2px; }
+  .forecast-day strong { font-size: 16px; }
+  .forecast-day small { font-size: 10px; }
+
+  /* 小屏操作按钮组：统一右对齐，图标按钮之间等距 */
+  table.data-table tbody td .btn-group,
+  .ext-list-row .btn-group {
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  /* 顾客订单卡：图片在手机上占满宽度，按钮到底部右侧 */
+  .my-order-card { flex-direction: column; gap: 10px; padding: 10px; }
+  .my-order-media { width: 100%; aspect-ratio: 16 / 9; max-height: 210px; }
+  .my-order-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .my-order-actions {
+    width: 100%;
+    flex-direction: row; flex-wrap: wrap;
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  .my-order-actions .btn-sm { width: auto; flex: 0 1 auto; }
+
+  /* 结算单金额块：两列，金额不挤成一条 */
+  .settle-money-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settle-money-grid .highlight,
+  .settle-money-grid .warn { grid-column: span 1; }
+  .settle-card-foot { justify-content: flex-end; }
+  .settle-card-foot > div { justify-content: flex-end; }
+
+  /* 页头动作：手机上占满一行、靠右排列 */
+  .page-heading-row { row-gap: 8px; }
+  .page-heading-actions { width: 100%; margin-left: 0; justify-content: flex-end; }
+  .referral-actions { width: 100%; margin-left: 0; justify-content: flex-end; }
+
+  /* 会员两栏在窄屏仍保持一行两项，文字不挤 */
+  .member-current-line strong { font-size: 17px; }
+
+  /* 通知条目：删除按钮换到右上角下方仍保持可点 */
+  .notify-list-item { padding: 9px 10px; }
+  .notify-item-icon { width: 30px; height: 30px; }
+
+  /* 车辆缩略图在手机上稍收，给车牌留出空间 */
+  .vehicle-name-cell {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
+  .vehicle-name-cell .vehicle-thumb,
+  .vehicle-name-cell .vehicle-thumb-placeholder { width: 62px; height: 46px; }
+  .vehicle-thumb-sm { width: 44px; height: 32px; }
+
+  /* 签名全屏：手机安全边距与画布高度 */
+  .sign-fullscreen-overlay {
+    padding: max(8px, env(safe-area-inset-top)) 10px max(8px, env(safe-area-inset-bottom));
+  }
+  .sign-pad-box.is-fullscreen .sign-pad-canvas { height: calc(100vh - 190px); }
+
+  /* 复制按钮：窄屏也不允许把内容顶出卡片 */
+  .copy-text { max-width: 100%; }
+  .copy-text-value { min-width: 0; flex: 1 1 auto; }
+}
+
+@media (max-width: 380px) {
+  /* 320/360 下页签继续保留图标会只能排成 2+2+1，最后一项孤零零占满整行。
+     隐藏页签图标、收紧内边距后可以稳定排成 3+2，文字和计数仍然完整。 */
+  .tab-switch .tab-btn {
+    flex: 1 1 30%;
+    gap: 4px;
+    padding: 8px 4px;
+    font-size: 12px;
+  }
+  .tab-switch .tab-btn > svg { display: none !important; }
+  .tab-switch .tab-count { font-size: 10px; padding: 0 4px; }
+
+  /* 车辆等页面的「搜索框 + 状态下拉」：320px 下输入框只剩半个占位符，
+     改为上下两行各自占满，输入内容不再被压扁。 */
+  .toolbar .search-box { flex-wrap: wrap; }
+  .toolbar .search-box input { flex: 1 1 100%; }
+  .toolbar .search-box select { flex: 1 1 100%; min-width: 0; }
+}
+
+@media (max-width: 360px) {
+  /* 时间范围快捷键在 320px 下 5 等分会把「近 7 天」挤成两行；改 3 列并禁止折行 */
+  .filter-presets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .filter-presets .chip-btn { white-space: nowrap; padding-left: 6px; padding-right: 6px; }
+
+  /* 车辆等「搜索框 + 状态下拉」的单行筛选：320px 下改为上下两行，
+     否则输入框会被压缩到只显示半个占位符。 */
+  .filter-inputs:not(:has(.filter-date-group)) { grid-template-columns: 1fr; }
+  .filter-inputs:not(:has(.filter-date-group)) > .filter-kw,
+  .filter-inputs:not(:has(.filter-date-group)) > select {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  /* 分页：320px 下 7 个翻页控件按原尺寸会顶出屏幕，
+     收紧按钮尺寸后刚好一行放得下；万一仍放不下则允许换行而不是横向溢出。 */
+  .pagination { row-gap: 8px; gap: 4px; }
+  .pagination-pages { justify-content: center; overflow-x: visible; flex-wrap: wrap; }
+  .pagination-btn { min-width: 28px; height: 30px; padding: 0 5px; font-size: 12px; }
+  .pagination-size { justify-content: flex-start; }
+}
+
+@media (max-width: 620px) {
+  /* 员工绩效：手机上不要「一人一张五行的长卡」，改成姓名一行 + 2×2 指标，
+     六位员工从约 1500px 压到两屏内，指标仍然对得齐。 */
+  table.data-table.performance-table:not(.batch-table):not(.dict-table) tbody tr {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 14px;
+    padding: 10px 12px;
+  }
+  table.data-table.performance-table:not(.batch-table):not(.dict-table) tbody td {
+    display: flex !important; align-items: baseline; justify-content: space-between; gap: 8px;
+    padding: 3px 0; border: 0; font-size: 12.5px;
+    width: auto;
+  }
+  table.data-table.performance-table:not(.batch-table):not(.dict-table) tbody td::before {
+    content: attr(data-label) !important;
+    color: var(--text-muted); font-size: 11px; font-weight: 400;
+  }
+  table.data-table.performance-table:not(.batch-table):not(.dict-table) tbody td:first-child {
+    grid-column: 1 / -1;
+    display: block !important;
+    padding: 0 0 7px;
+    margin-bottom: 3px;
+    border-bottom: 1px dashed var(--border);
+    font-size: 13px;
+    text-align: left;
+  }
+  table.data-table.performance-table:not(.batch-table):not(.dict-table) tbody td:first-child::before { content: none !important; }
+  .perf-role { margin-left: 6px; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
+
+  /* 手机端欢迎横幅不需要 64px 装饰图标，文字独占一行，避免大块留白 */
+  .welcome-banner { padding: 18px 20px; }
+  .welcome-icon { display: none; }
+  .welcome-text h2 { font-size: 20px; }
+  .welcome-text p { font-size: 13px; }
+  table.data-table.vehicle-table:not(.batch-table):not(.dict-table) tbody td.col-hide-sm {
+    display: none !important;
+  }
+
+  /* 车辆档案卡片：图片是主视觉，不再缩成 62×46 挂在文字右侧 */
+  table.data-table.vehicle-table tbody td:has(.vehicle-name-cell) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+    padding-top: 9px;
+    padding-bottom: 10px;
+  }
+  table.data-table.vehicle-table tbody td:has(.vehicle-name-cell)::before { align-self: flex-start; }
+  table.data-table.vehicle-table .vehicle-name-cell {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  table.data-table.vehicle-table .vehicle-name-cell .vehicle-thumb,
+  table.data-table.vehicle-table .vehicle-name-cell .vehicle-thumb-placeholder {
+    width: 116px; height: 84px;
+  }
+  table.data-table.vehicle-table .vehicle-name-text strong { font-size: 15px; }
+  table.data-table.vehicle-table .vehicle-name-text small { font-size: 12px; }
+}
+

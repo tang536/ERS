@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useUI } from '@/components/UIProvider'
 import { vehicleApi } from '@/api'
 import type { BatchVehicleUpdatePayload } from '@/types'
@@ -88,8 +89,8 @@ export default function BatchEditModal({ ids, onClose, onDone }: {
     onClose()
   }
 
-  return (
-    <div className="modal-overlay" onClick={handleClose}>
+  return createPortal(
+    <div className="modal-overlay batch-edit-overlay" onClick={handleClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <span><Icon name="vehicles" size={16} chip />批量编辑车辆</span>
@@ -177,12 +178,12 @@ export default function BatchEditModal({ ids, onClose, onDone }: {
           )}
         </div>
         <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={handleClose}>关闭</button>
           <button className="btn-sm btn-sm-primary" onClick={handleSubmit} disabled={submitting}>
             <Icon name="save" size={14} color="#fff" />{submitting ? '提交中…' : `更新 ${ids.length} 辆`}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

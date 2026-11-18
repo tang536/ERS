@@ -78,7 +78,7 @@ public class CreditPolicy(AppDbContext db)
         if (unpaid > 0)
         {
             return new CreditVerdict(overdue, damage, unpaid, 1m, 0,
-                $"该客户还有 {unpaid} 笔补缴款未收清，请先结清后再开单", null);
+                $"有 {unpaid} 笔补缴款未结清，请先结清后再开单", null);
         }
 
         //② 逾期多 / 损坏多：押金加倍 + 限租期。押金是门店唯一的对冲手段，
@@ -87,11 +87,9 @@ public class CreditPolicy(AppDbContext db)
         var riskyByDamage = damage >= DamageRiskLine;
         if (riskyByOverdue || riskyByDamage)
         {
-            var reasons = new List<string>();
-            if (riskyByOverdue) reasons.Add($"历史逾期 {overdue} 次（阈值 {threshold} 次）");
-            if (riskyByDamage) reasons.Add($"累计损坏赔付 ¥{damage:0.00}");
-
-            var note = $"该客户 {string.Join("、", reasons)}：押金按 {multiplier:0.##} 倍收取";
+            // Note 会随试算结果返回给顾客端，不能暴露内部信用统计；
+            // 员工侧在「客户管理」仍可看到逾期次数与损坏金额。
+            var note = $"根据信用记录，押金按 {multiplier:0.##} 倍收取";
             if (maxDays > 0) note += $"，单次租期不超过 {maxDays} 天";
             return new CreditVerdict(overdue, damage, unpaid, multiplier,
                 maxDays > 0 ? maxDays : 0, null, note);

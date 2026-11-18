@@ -21,6 +21,8 @@ public class CouponDto
     public string? RedeemCode { get; init; }
     ///<summary>是否开放兑换</summary>
     public bool RedeemOpen { get; init; }
+    ///<summary>券图片（/uploads/coupon/…）；无图为 null</summary>
+    public string? ImageUrl { get; init; }
 }
 
 public class CouponInput
@@ -37,6 +39,8 @@ public class CouponInput
     public string? RedeemCode { get; init; }
     ///<summary>是否开放顾客自助兑换</summary>
     public bool RedeemOpen { get; init; }
+    ///<summary>券图片：先调 /api/coupon/image 上传，再回传 /uploads/coupon/… 地址</summary>
+    public string? ImageUrl { get; init; }
 }
 
 ///<summary>顾客输入兑换码领券</summary>
@@ -72,6 +76,8 @@ public class CouponVerifyDto
     public string? ContactPhone { get; init; }
     public string? IdCardMasked { get; init; }
     public string MemberLevel { get; init; } = string.Empty;
+    ///<summary>券图片（/uploads/coupon/…）；无图为 null</summary>
+    public string? ImageUrl { get; init; }
     ///<summary>此刻能否核销（未使用且在有效期内）</summary>
     public bool Usable { get; init; }
 }
@@ -97,6 +103,8 @@ public class MyCouponDto
     public int? OrderId { get; init; }
     ///<summary>单张券唯一码值：顾客端据此生成核销二维码</summary>
     public string? Code { get; init; }
+    ///<summary>券图片（/uploads/coupon/…）；无图为 null</summary>
+    public string? ImageUrl { get; init; }
 }
 
 // ── 增值服务 ────────────────────────────────────────────
@@ -110,6 +118,13 @@ public class AddonDto
     public string? Description { get; init; }
     public string Status { get; init; } = string.Empty;
     public int SortNo { get; init; }
+    ///<summary>服务图片（/uploads/addon/…）；无图为 null</summary>
+    public string? ImageUrl { get; init; }
+    ///<summary>库存：-1 表示不限库存</summary>
+    public int StockQty { get; init; }
+    ///<summary>低库存提醒阈值，0 表示不提醒</summary>
+    public int LowStockThreshold { get; init; }
+    public bool LowStock { get; init; }
 }
 
 public class AddonInput
@@ -119,6 +134,11 @@ public class AddonInput
     [JsonRequired] public string Unit { get; init; } = "一次性";
     public string? Description { get; init; }
     public int SortNo { get; init; }
+    ///<summary>服务图片：先调 /api/addon/image 上传，再回传 /uploads/addon/… 地址</summary>
+    public string? ImageUrl { get; init; }
+    ///<summary>库存：-1 表示不限库存；实物类服务填实际数量</summary>
+    public int StockQty { get; init; } = -1;
+    public int LowStockThreshold { get; init; }
 }
 
 public class OrderAddonDto

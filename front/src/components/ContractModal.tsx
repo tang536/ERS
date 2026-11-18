@@ -21,11 +21,15 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
   const [loading, setLoading] = useState(true)
   const [signing, setSigning] = useState(false)
   const [hasInk, setHasInk] = useState(false)
+  /** 签名区全屏：小屏手写时笔迹更稳，按钮始终贴在签名区右下角 */
+  const [signFullscreen, setSignFullscreen] = useState(false)
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const drawing = useRef(false)
   const last = useRef<{ x: number; y: number } | null>(null)
   const dirty = useRef(false)
+  /** 切换全屏前先留一份笔迹：画布尺寸变化会清空位图 */
+  const inkSnapshot = useRef<string | null>(null)
 
   const signed = contract?.status === '已签署'
 
@@ -40,26 +44,37 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId, toast])
 
-  // 签名板初始化：只做一次，按 DPR 放大画布避免笔迹发虚
+  // 签名板初始化：每次进入全屏/退出全屏都按 DPR 重建，并把原笔迹等比还原
   useEffect(() => {
     if (loading || signed) return
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
+    const cssHeight = signFullscreen ? Math.max(320, window.innerHeight - 190) : 180
     canvas.width = Math.max(1, Math.floor(rect.width * dpr))
-    canvas.height = Math.max(1, Math.floor(180 * dpr))
+    canvas.height = Math.max(1, Math.floor(cssHeight * dpr))
     const ctx = canvas.getContext('2d')
     if (ctx) {
       ctx.scale(dpr, dpr)
-      ctx.lineWidth = 2.5
+      ctx.lineWidth = signFullscreen ? 3.2 : 2.5
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
       ctx.strokeStyle = '#111827'
     }
-    dirty.current = false
-    setHasInk(false)
-  }, [loading, signed])
+    const shot = inkSnapshot.current
+    if (ctx && shot) {
+      const img = new Image()
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, rect.width, cssHeight)
+      }
+      img.src = shot
+      inkSnapshot.current = null
+    } else {
+      dirty.current = false
+      setHasInk(false)
+    }
+  }, [loading, signed, signFullscreen])
 
   const pointOf = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -100,9 +115,21 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
+    // 画布位图按 DPR 放大过，clearRect 必须先回到设备像素坐标系再整块清
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.restore()
     dirty.current = false
+    inkSnapshot.current = null
     setHasInk(false)
+  }
+
+  /** 全屏切换前留笔迹；退出全屏后按钮回到签名区内部 */
+  const toggleFullscreen = () => {
+    const canvas = canvasRef.current
+    if (canvas && dirty.current) inkSnapshot.current = canvas.toDataURL('image/png')
+    setSignFullscreen(v => !v)
   }
 
   const submitSign = async () => {
@@ -122,6 +149,41 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
       setSigning(false)
     }
   }
+
+  const renderPad = () => (
+    <div className={`sign-pad-box ${signFullscreen ? 'is-fullscreen' : ''}`}>
+      <canvas
+        ref={canvasRef}
+        onPointerDown={startDraw}
+        onPointerMove={moveDraw}
+        onPointerUp={endDraw}
+        onPointerLeave={endDraw}
+        onPointerCancel={endDraw}
+        className="sign-pad-canvas"
+      />
+      <div className="sign-pad-actions">
+        <button
+          type="button"
+          className="sign-pad-btn"
+          title={signFullscreen ? '退出全屏' : '全屏手写签名'}
+          aria-label={signFullscreen ? '退出全屏' : '全屏手写签名'}
+          onClick={toggleFullscreen}
+        >
+          <Icon name={signFullscreen ? 'zoom-out' : 'zoom-in'} size={16} />
+        </button>
+        <button
+          type="button"
+          className="sign-pad-btn"
+          title="重写签名"
+          aria-label="重写签名"
+          onClick={clearInk}
+          disabled={!hasInk || signing}
+        >
+          <Icon name="refresh" size={16} />
+        </button>
+      </div>
+    </div>
+  )
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -175,31 +237,24 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
                     <div className="field-hint">签名图缺失</div>
                   )}
                 </div>
+              ) : signFullscreen ? (
+                <div className="sign-fullscreen-overlay" onClick={e => e.stopPropagation()}>
+                  <div className="sign-fullscreen-head">
+                    <span>手写签名 · {orderNo}</span>
+                    <button className="close-btn" onClick={toggleFullscreen}><Icon name="close" size={15} /></button>
+                  </div>
+                  <div className="sign-fullscreen-body">
+                    <div className="field-hint">请在下方空白区域签名；右上角按钮退出全屏后笔迹会保留。</div>
+                    {renderPad()}
+                  </div>
+                </div>
               ) : (
                 <div style={{ marginTop: 16 }}>
                   <div className="field-hint" style={{ marginBottom: 6 }}>
                     请在下方签名区手写签名；签署后合同正文与签名将一并留档，不可修改。
                   </div>
-                  <canvas
-                    ref={canvasRef}
-                    onPointerDown={startDraw}
-                    onPointerMove={moveDraw}
-                    onPointerUp={endDraw}
-                    onPointerLeave={endDraw}
-                    onPointerCancel={endDraw}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      height: 180,
-                      background: '#fff',
-                      border: '1px dashed var(--border-strong)',
-                      borderRadius: 8,
-                      touchAction: 'none',
-                      cursor: 'crosshair',
-                    }}
-                  />
+                  {renderPad()}
                   <div className="form-actions" style={{ marginTop: 10 }}>
-                    <button className="btn-sm btn-sm-default" onClick={clearInk} disabled={!hasInk || signing}>重写</button>
                     <button className="btn-sm btn-sm-primary" onClick={submitSign} disabled={!hasInk || signing}>
                       {signing ? '签署中…' : '确认签署'}
                     </button>
@@ -208,9 +263,6 @@ export default function ContractModal({ orderId, orderNo, onClose }: {
               )}
             </>
           ) : null}
-        </div>
-        <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={onClose}>关闭</button>
         </div>
       </div>
     </div>

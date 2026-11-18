@@ -319,10 +319,13 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
     public async Task<string?> SetImage(int id, IFormFile? file)
     {
         var v = await _db.Vehicles.FindAsync(id) ?? throw new BusinessException(MsgVehicleNotFound);
+        var oldUrl = v.ImageUrl;
         var url = file is { Length: > 0 } ? await _images.SaveAsync(file, "vehicle") : null;
         v.SetImage(url);
 
         await _db.SaveChangesAsync();
+        //保存成功后再删旧图：保存失败时旧图仍然有效
+        if (!string.Equals(oldUrl, v.ImageUrl, StringComparison.OrdinalIgnoreCase)) _images.Delete(oldUrl);
         return v.ImageUrl;
     }
 
@@ -335,13 +338,12 @@ public class VehicleService(AppDbContext db, ImageStorage images, LogService log
         if (!string.IsNullOrEmpty(trimmed) && !trimmed.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase)) throw new BusinessException("车辆图片只支持本站已上传的图片（/uploads/ 路径）");
         v.SetImage(trimmed);
 
-        //替换图片后删除旧文件
+        await _db.SaveChangesAsync();
+        //保存成功后再删旧文件，避免保存失败时把仍然有效的旧图删掉
         if (!string.Equals(oldUrl, trimmed, StringComparison.OrdinalIgnoreCase))
         {
             _images.Delete(oldUrl);
         }
-
-        await _db.SaveChangesAsync();
     }
 
     ///<summary>最近热销车辆：按近 days 天的成单量排名，供顾客线上租车页展示</summary>

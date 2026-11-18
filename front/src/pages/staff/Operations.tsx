@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useUI } from '@/components/UIProvider'
 import { addonApi, couponApi, customerApi } from '@/api'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import { fmtD, nowDatetimeInput, afterDaysDatetimeInput } from '@/utils/datetime'
 import type { AddonItem, Coupon, Customer } from '@/types'
+import ApprovalPanel from './components/ApprovalPanel'
+import { TicketPanel, PricingPanel } from './components/OpsExtPanels'
+import { CouponCampaignPanel, GroupVoucherPanel } from './components/OpsExtAssets'
 
-type Tab = 'coupon' | 'addon'
+type Tab = 'coupon' | 'addon' | 'approval' | 'ticket' | 'pricing'
 
 /** 优惠券表单：时间为 datetime-local 值，提交时原样传后端（后端按本地时间解析） */
 interface CouponForm {
@@ -20,6 +24,8 @@ interface CouponForm {
   redeemCode: string
   /** 是否开放兑换 */
   redeemOpen: boolean
+  /** 券图片（/uploads/coupon/…）；空串表示无图 */
+  imageUrl: string
 }
 
 const emptyCouponForm = (): CouponForm => ({
@@ -32,9 +38,62 @@ const emptyCouponForm = (): CouponForm => ({
   perLimit: '1',
   redeemCode: '',
   redeemOpen: false,
+  imageUrl: '',
 })
 
-const emptyAddonForm = () => ({ name: '', price: '', unit: '一次性', description: '', sortNo: '0' })
+const emptyAddonForm = () => ({ name: '', price: '', unit: '一次性', description: '', sortNo: '0', imageUrl: '', stockQty: '-1', lowStockThreshold: '0' })
+
+/** 图片选择器：上传接口返回 /uploads/… 相对 URL，表单只保存这个地址 */
+function ImagePicker({
+  value, uploading, hint, onPick, onClear,
+}: {
+  value: string
+  uploading: boolean
+  hint: string
+  onPick: (file: File) => void
+  onClear: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  return (
+    <div className="form-group">
+      <label>图片</label>
+      <div className="image-picker">
+        <button
+          type="button"
+          className="image-picker-preview"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          title={value ? '点击更换图片' : '点击上传图片'}
+        >
+          {value ? <img src={value} alt="图片预览" /> : <Icon name="image" size={26} />}
+          {uploading && <span className="image-picker-loading">上传中…</span>}
+        </button>
+        <div className="image-picker-meta">
+          <div className="image-picker-actions">
+            <button type="button" className="btn-sm btn-sm-default" onClick={() => inputRef.current?.click()} disabled={uploading}>
+              {value ? '更换图片' : '上传图片'}
+            </button>
+            {value && (
+              <button type="button" className="btn-sm btn-sm-default" onClick={onClear} disabled={uploading}>移除</button>
+            )}
+          </div>
+          <div className="field-hint">{hint}</div>
+        </div>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        style={{ display: 'none' }}
+        onChange={e => {
+          const file = e.target.files?.[0]
+          e.target.value = ''
+          if (file) onPick(file)
+        }}
+      />
+    </div>
+  )
+}
 
 /**
  * 运营配置（券 + 增值服务）。
@@ -54,6 +113,7 @@ export default function Operations() {
   const [editCouponId, setEditCouponId] = useState<number | null>(null)
   const [couponForm, setCouponForm] = useState<CouponForm>(emptyCouponForm())
   const [couponErrors, setCouponErrors] = useState<Record<string, string>>({})
+  const [couponUploading, setCouponUploading] = useState(false)
 
   // 发券
   const [grantCoupon, setGrantCoupon] = useState<Coupon | null>(null)
@@ -68,6 +128,7 @@ export default function Operations() {
   const [editAddonId, setEditAddonId] = useState<number | null>(null)
   const [addonForm, setAddonForm] = useState(emptyAddonForm())
   const [addonErrors, setAddonErrors] = useState<Record<string, string>>({})
+  const [addonUploading, setAddonUploading] = useState(false)
 
   const loadCoupons = async () => {
     try {
@@ -126,9 +187,24 @@ export default function Operations() {
       perLimit: String(c.perLimit),
       redeemCode: c.redeemCode || '',
       redeemOpen: !!c.redeemOpen,
+      imageUrl: c.imageUrl || '',
     })
     setCouponErrors({})
     setCouponModal(true)
+  }
+
+  const uploadCouponImage = async (file: File) => {
+    setCouponUploading(true)
+    try {
+      const res: any = await couponApi.uploadImage(file)
+      const url = res?.data?.url
+      if (url) setCouponForm(prev => ({ ...prev, imageUrl: url }))
+      toast('券图片已上传', 'success')
+    } catch (e: any) {
+      toast(e?.message || '图片上传失败', 'error')
+    } finally {
+      setCouponUploading(false)
+    }
   }
 
   const saveCoupon = async () => {
@@ -159,6 +235,7 @@ export default function Operations() {
       perLimit,
       redeemCode: redeemCode || null,
       redeemOpen: couponForm.redeemOpen && !!redeemCode,
+      imageUrl: couponForm.imageUrl || null,
     }
     try {
       if (editCouponId) {
@@ -242,9 +319,26 @@ export default function Operations() {
       unit: a.unit,
       description: a.description || '',
       sortNo: String(a.sortNo),
+      imageUrl: a.imageUrl || '',
+      stockQty: String(a.stockQty ?? -1),
+      lowStockThreshold: String(a.lowStockThreshold ?? 0),
     })
     setAddonErrors({})
     setAddonModal(true)
+  }
+
+  const uploadAddonImage = async (file: File) => {
+    setAddonUploading(true)
+    try {
+      const res: any = await addonApi.uploadImage(file)
+      const url = res?.data?.url
+      if (url) setAddonForm(prev => ({ ...prev, imageUrl: url }))
+      toast('服务图片已上传', 'success')
+    } catch (e: any) {
+      toast(e?.message || '图片上传失败', 'error')
+    } finally {
+      setAddonUploading(false)
+    }
   }
 
   const saveAddon = async () => {
@@ -252,6 +346,10 @@ export default function Operations() {
     if (!addonForm.name.trim()) e.name = '请填写服务名称'
     const price = Number(addonForm.price)
     if (!Number.isFinite(price) || price < 0) e.price = '价格不能为负数'
+    const stockQty = Number(addonForm.stockQty)
+    if (!Number.isInteger(stockQty) || stockQty < -1) e.stockQty = '库存填 -1（不限）或非负整数'
+    const lowStockThreshold = Number(addonForm.lowStockThreshold)
+    if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) e.lowStockThreshold = '低库存阈值不能为负数'
     setAddonErrors(e)
     if (Object.keys(e).length > 0) return
 
@@ -261,6 +359,9 @@ export default function Operations() {
       unit: addonForm.unit,
       description: addonForm.description.trim() || null,
       sortNo: Number(addonForm.sortNo) || 0,
+      imageUrl: addonForm.imageUrl || null,
+      stockQty,
+      lowStockThreshold,
     }
     try {
       if (editAddonId) {
@@ -297,6 +398,18 @@ export default function Operations() {
       <div className="card-title">
         <Icon name="coupon" size={18} chip />运营配置
         <span className="card-title-count">优惠券 {activeCoupons} 个启用 · 增值服务 {addons.length} 项</span>
+        <div className="card-title-actions">
+          {tab === 'coupon' && (
+            <button className="btn-sm btn-sm-primary btn-icon-sm" onClick={openCouponAdd}>
+              <Icon name="create-order" size={15} color="#fff" /><span className="btn-label">新增优惠券</span>
+            </button>
+          )}
+          {tab === 'addon' && (
+            <button className="btn-sm btn-sm-primary btn-icon-sm" onClick={openAddonAdd}>
+              <Icon name="create-order" size={15} color="#fff" /><span className="btn-label">新增服务项</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="toolbar">
@@ -307,23 +420,23 @@ export default function Operations() {
           <button className={`tab-btn ${tab === 'addon' ? 'active' : ''}`} onClick={() => setTab('addon')}>
             <Icon name="addon" size={15} />增值服务<span className="tab-count">{addons.length}</span>
           </button>
+          <button className={`tab-btn ${tab === 'approval' ? 'active' : ''}`} onClick={() => setTab('approval')}>
+            <Icon name="check" size={15} />金额审批
+          </button>
+          <button className={`tab-btn ${tab === 'ticket' ? 'active' : ''}`} onClick={() => setTab('ticket')}>
+            <Icon name="info" size={15} />客服工单
+          </button>
+          <button className={`tab-btn ${tab === 'pricing' ? 'active' : ''}`} onClick={() => setTab('pricing')}>
+            <Icon name="settlements" size={15} />动态定价
+          </button>
         </div>
-        {tab === 'coupon' ? (
-          <button className="btn-sm btn-sm-primary btn-icon-sm" onClick={openCouponAdd}>
-            <Icon name="create-order" size={15} color="#fff" /><span className="btn-label">新增优惠券</span>
-          </button>
-        ) : (
-          <button className="btn-sm btn-sm-primary btn-icon-sm" onClick={openAddonAdd}>
-            <Icon name="create-order" size={15} color="#fff" /><span className="btn-label">新增服务项</span>
-          </button>
-        )}
       </div>
 
       {tab === 'coupon' ? (
         <>
           <div className="callout callout-info">
             <Icon name="info" size={18} chip />
-            <span>券只抵扣租金，不抵押金；同一订单最多使用一张。券状态改为「停用」后不再发放，已领出的券在有效期内仍可使用。设置了兑换码并开放领取后，顾客可在「我的优惠券」自助领券，也可到店出示二维码由前台核销。</span>
+            <span>券只抵扣租金、不可叠加；停用后不再发放，已领取的在有效期内仍可用。</span>
           </div>
           <div className="table-wrap">
             <table className="data-table nowrap-table">
@@ -336,7 +449,14 @@ export default function Operations() {
               <tbody>
                 {coupons.map(c => (
                   <tr key={c.couponId}>
-                    <td><strong>{c.name}</strong></td>
+                    <td>
+                      <div className="name-with-thumb">
+                        {c.imageUrl
+                          ? <img className="table-thumb" src={c.imageUrl} alt="" loading="lazy" />
+                          : <span className="table-thumb table-thumb-empty"><Icon name="image" size={14} /></span>}
+                        <strong>{c.name}</strong>
+                      </div>
+                    </td>
                     <td>¥{c.amount.toFixed(2)}</td>
                     <td>{c.minAmount > 0 ? `满 ¥${c.minAmount.toFixed(2)}` : '无门槛'}</td>
                     <td>
@@ -354,10 +474,10 @@ export default function Operations() {
                     </td>
                     <td>
                       <div className="btn-group">
-                        <button className="btn-sm btn-sm-default" onClick={() => openCouponEdit(c)}>编辑</button>
-                        <button className="btn-sm btn-sm-primary" onClick={() => openGrant(c)} disabled={c.status !== '启用'}>发券</button>
-                        <button className="btn-sm btn-sm-default" onClick={() => toggleCoupon(c)}>
-                          {c.status === '启用' ? '停用' : '启用'}
+                        <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => openCouponEdit(c)}><Icon name="config" size={14} /><span className="btn-label">编辑</span></button>
+                        <button className="btn-sm btn-sm-primary btn-icon-sm" onClick={() => openGrant(c)} disabled={c.status !== '启用'}><Icon name="coupon" size={14} /><span className="btn-label">发券</span></button>
+                        <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => toggleCoupon(c)}>
+                          <Icon name={c.status === '启用' ? 'close' : 'success'} size={14} /><span className="btn-label">{c.status === '启用' ? '停用' : '启用'}</span>
                         </button>
                       </div>
                     </td>
@@ -369,7 +489,15 @@ export default function Operations() {
           {coupons.length === 0 && (
             <div className="empty"><Icon name="empty" size={40} chip /><div>暂无优惠券，点右上角「新增优惠券」创建</div></div>
           )}
+          <div style={{ marginTop: 18 }}><CouponCampaignPanel /></div>
+          <div style={{ marginTop: 18 }}><GroupVoucherPanel /></div>
         </>
+      ) : tab === 'approval' ? (
+        <ApprovalPanel />
+      ) : tab === 'ticket' ? (
+        <TicketPanel />
+      ) : tab === 'pricing' ? (
+        <PricingPanel />
       ) : (
         <>
           <div className="callout callout-info">
@@ -380,16 +508,28 @@ export default function Operations() {
             <table className="data-table nowrap-table">
               <thead>
                 <tr>
-                  <th>服务名称</th><th>价格</th><th>计价方式</th><th className="col-hide-md">说明</th>
+                  <th>服务名称</th><th>价格</th><th>计价方式</th><th>库存</th><th className="col-hide-md">说明</th>
                   <th>排序</th><th>状态</th><th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {addons.map(a => (
                   <tr key={a.addonId}>
-                    <td><strong>{a.name}</strong></td>
+                    <td>
+                      <div className="name-with-thumb">
+                        {a.imageUrl
+                          ? <img className="table-thumb" src={a.imageUrl} alt="" loading="lazy" />
+                          : <span className="table-thumb table-thumb-empty"><Icon name="image" size={14} /></span>}
+                        <strong>{a.name}</strong>
+                      </div>
+                    </td>
                     <td>¥{a.price.toFixed(2)}</td>
                     <td>{a.unit}</td>
+                    <td>
+                      {a.stockQty === -1 || a.stockQty == null
+                        ? <span className="muted-text">不限</span>
+                        : <span className={a.lowStock ? 'text-danger' : ''}>{a.stockQty}{a.lowStock ? ' · 偏低' : ''}</span>}
+                    </td>
                     <td className="col-hide-md">{a.description || '—'}</td>
                     <td>{a.sortNo}</td>
                     <td>
@@ -397,9 +537,9 @@ export default function Operations() {
                     </td>
                     <td>
                       <div className="btn-group">
-                        <button className="btn-sm btn-sm-default" onClick={() => openAddonEdit(a)}>编辑</button>
-                        <button className="btn-sm btn-sm-default" onClick={() => toggleAddon(a)}>
-                          {a.status === '启用' ? '停用' : '启用'}
+                        <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => openAddonEdit(a)}><Icon name="config" size={14} /><span className="btn-label">编辑</span></button>
+                        <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => toggleAddon(a)}>
+                          <Icon name={a.status === '启用' ? 'close' : 'success'} size={14} /><span className="btn-label">{a.status === '启用' ? '停用' : '启用'}</span>
                         </button>
                       </div>
                     </td>
@@ -434,6 +574,13 @@ export default function Operations() {
                 />
                 {couponErrors.name && <div className="field-error">{couponErrors.name}</div>}
               </div>
+              <ImagePicker
+                value={couponForm.imageUrl}
+                uploading={couponUploading}
+                hint="选填；展示在顾客「我的优惠券」卡片上，支持 jpg / png / webp / gif，不超过 5MB。"
+                onPick={uploadCouponImage}
+                onClear={() => setCouponForm(prev => ({ ...prev, imageUrl: '' }))}
+              />
               <div className="form-row">
                 <div className="form-group">
                   <label>抵扣金额（元） <span className="req">*</span></label>
@@ -455,28 +602,20 @@ export default function Operations() {
                   <div className="field-hint">订单租金达到该金额才可用，0 表示无门槛。</div>
                 </div>
               </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>生效时间 <span className="req">*</span></label>
-                  <input
-                    type="datetime-local"
-                    className={couponErrors.validFrom ? 'has-error' : ''}
-                    value={couponForm.validFrom}
-                    onChange={e => { setCouponForm({ ...couponForm, validFrom: e.target.value }); setCouponErrors({ ...couponErrors, validFrom: '' }) }}
-                  />
-                  {couponErrors.validFrom && <div className="field-error">{couponErrors.validFrom}</div>}
-                </div>
-                <div className="form-group">
-                  <label>失效时间 <span className="req">*</span></label>
-                  <input
-                    type="datetime-local"
-                    className={couponErrors.validTo ? 'has-error' : ''}
-                    value={couponForm.validTo}
-                    min={couponForm.validFrom}
-                    onChange={e => { setCouponForm({ ...couponForm, validTo: e.target.value }); setCouponErrors({ ...couponErrors, validTo: '' }) }}
-                  />
-                  {couponErrors.validTo && <div className="field-error">{couponErrors.validTo}</div>}
-                </div>
+              <div className="form-group">
+                <label>生效与失效时间 <span className="req">*</span></label>
+                <DateRangeCalendar
+                  withTime
+                  start={couponForm.validFrom}
+                  end={couponForm.validTo}
+                  placeholder="选择券的有效期间"
+                  onChange={(s, e) => {
+                    setCouponForm({ ...couponForm, validFrom: s, validTo: e })
+                    setCouponErrors({ ...couponErrors, validFrom: '', validTo: '' })
+                  }}
+                />
+                {couponErrors.validFrom && <div className="field-error">{couponErrors.validFrom}</div>}
+                {couponErrors.validTo && <div className="field-error">{couponErrors.validTo}</div>}
               </div>
               <div className="form-row">
                 <div className="form-group">
@@ -627,6 +766,13 @@ export default function Operations() {
                 />
                 {addonErrors.name && <div className="field-error">{addonErrors.name}</div>}
               </div>
+              <ImagePicker
+                value={addonForm.imageUrl}
+                uploading={addonUploading}
+                hint="选填；展示在顾客下单页的服务项上，支持 jpg / png / webp / gif，不超过 5MB。"
+                onPick={uploadAddonImage}
+                onClear={() => setAddonForm(prev => ({ ...prev, imageUrl: '' }))}
+              />
               <div className="form-row">
                 <div className="form-group">
                   <label>价格（元） <span className="req">*</span></label>
@@ -644,6 +790,32 @@ export default function Operations() {
                     <option value="一次性">一次性</option>
                     <option value="按天">按天</option>
                   </select>
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>库存数量</label>
+                  <input
+                    type="number" step="1"
+                    className={addonErrors.stockQty ? 'has-error' : ''}
+                    value={addonForm.stockQty}
+                    onChange={e => { setAddonForm({ ...addonForm, stockQty: e.target.value }); setAddonErrors({ ...addonErrors, stockQty: '' }) }}
+                  />
+                  {addonErrors.stockQty
+                    ? <div className="field-error">{addonErrors.stockQty}</div>
+                    : <div className="field-hint">-1 表示不限库存；头盔、雨衣等实物填实际数量。</div>}
+                </div>
+                <div className="form-group">
+                  <label>低库存提醒</label>
+                  <input
+                    type="number" min="0" step="1"
+                    className={addonErrors.lowStockThreshold ? 'has-error' : ''}
+                    value={addonForm.lowStockThreshold}
+                    onChange={e => { setAddonForm({ ...addonForm, lowStockThreshold: e.target.value }); setAddonErrors({ ...addonErrors, lowStockThreshold: '' }) }}
+                  />
+                  {addonErrors.lowStockThreshold
+                    ? <div className="field-error">{addonErrors.lowStockThreshold}</div>
+                    : <div className="field-hint">剩余数量小于等于该值时提示补货；0 表示不提醒。</div>}
                 </div>
               </div>
               <div className="form-group">

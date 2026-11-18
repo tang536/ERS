@@ -91,9 +91,11 @@ export default function Landing() {
   const fromRoles = fromPath ? ROUTE_ROLES[fromPath] : undefined
   const fromStaffRoute = !!fromRoles && !fromRoles.includes(ROLE.CUSTOMER)
 
-  const deepLink = params.get('as')
-    ? resolveInitialMode(params.get('as'))
-    : fromStaffRoute ? 'staff' : 'none'
+  const deepLink = params.get('ref')
+    ? 'register'
+    : params.get('as')
+      ? resolveInitialMode(params.get('as'))
+      : fromStaffRoute ? 'staff' : 'none'
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40)

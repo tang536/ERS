@@ -83,6 +83,13 @@ public class SettleOrderDto
     /// 默认线下，保持与旧行为一致（无补缴时此字段无意义）。
     /// </summary>
     public string SupplementPayMethod { get; init; } = "线下";
+
+    /// <summary>
+    /// 前台已确认退款去向。存在应退金额时必须为 true：
+    /// 模拟支付/现金支付没有真实资金流，系统无法自动判断钱是否已交到顾客手里，
+    /// 必须先由前台当场确认，不能只给顾客推一条「线下划款」通知就当作已退。
+    /// </summary>
+    public bool RefundConfirmed { get; init; }
 }
 
 /// <summary>
@@ -143,6 +150,9 @@ public class SettlePreviewDto
 
     /// <summary>预补缴金额（退款为负时取正值）</summary>
     public decimal SupplementAmount { get; init; }
+
+    /// <summary>本单原支付方式（现金/支付宝/微信/银行卡），前台据此判断退款是否需当面交付</summary>
+    public string? PayType { get; init; }
 }
 
 public class OrderDto
@@ -153,6 +163,8 @@ public class OrderDto
     public string VehicleNo { get; init; } = string.Empty;
     /// <summary>车辆品牌：前台订单列表与结算单需「车牌号(品牌名)」并列展示，避免只看车牌分不清同号车辆</summary>
     public string? VehicleBrand { get; init; }
+    /// <summary>车辆主图（标准存储的相对 URL）：订单卡片以车辆图片为主视觉</summary>
+    public string? VehicleImageUrl { get; init; }
     public DateTime LeaseStart { get; init; }
     public DateTime LeaseEnd { get; init; }
     public decimal TotalRent { get; init; }
@@ -243,6 +255,10 @@ public class RentEstimateDto
 
     public decimal Deposit { get; init; }
     public decimal Discount { get; init; }
+
+    /// <summary>动态定价系数：当前生效规则的倍率，1.00 表示未命中任何规则</summary>
+    public decimal PriceFactor { get; init; } = 1.00m;
+
     public decimal TotalRent { get; init; }
     public decimal Payable { get; init; }
 

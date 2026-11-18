@@ -15,6 +15,10 @@ export interface UserInfo {
   memberLevel?: string
   userName: string
   userId: number
+  /** 登录账号：账号管理的敏感操作确认框用它指名当前管理员 */
+  loginAccount?: string
+  /** 头像地址（/uploads/avatars/…）；未上传为 null */
+  avatarUrl?: string | null
   /** 顾客租车资料（身份证号 + 手机号）是否已完善 */
   profileCompleted?: boolean
   /** 员工使用管理员发放的临时密码登录，必须先改密 */
@@ -70,6 +74,8 @@ export interface Customer {
   idCard?: string
   fullName: string
   contactPhone?: string
+  /** 头像地址（/uploads/avatars/…）；未上传为 null */
+  avatarUrl?: string | null
   memberLevel: string
   memberDiscount: number
   createTime: string
@@ -108,6 +114,8 @@ export interface Order {
   vehicleNo: string
   /** 车辆品牌：订单车辆列以「车牌号(品牌名)」展示 */
   vehicleBrand?: string | null
+  /** 车辆主图：订单卡片以车辆图片为主视觉 */
+  vehicleImageUrl?: string | null
   leaseStart: string
   leaseEnd: string
   totalRent: number
@@ -142,6 +150,7 @@ export interface StaffUser {
   userStatus: number
   loginFailCount: number
   mustChangePassword?: boolean
+  avatarUrl?: string
 }
 
 
@@ -274,6 +283,8 @@ export interface RentEstimate {
   /** 单次租期上限（天）；为空表示不受限 */
   maxLeaseDays?: number | null
   discount: number
+  /** 动态定价系数：>1 表示当前时段溢价，1 表示无规则 */
+  priceFactor?: number
   totalRent: number
   payable: number
 }
@@ -459,6 +470,8 @@ export interface Coupon {
   redeemCode?: string | null
   /** 是否开放顾客自助兑换 */
   redeemOpen: boolean
+  /** 券图片（/uploads/coupon/…）；无图为 null */
+  imageUrl?: string | null
 }
 
 export interface CouponInput {
@@ -474,6 +487,8 @@ export interface CouponInput {
   redeemCode?: string | null
   /** 是否开放顾客自助兑换 */
   redeemOpen?: boolean
+  /** 券图片：先调 /coupon/image 上传，再回传相对地址 */
+  imageUrl?: string | null
 }
 
 export interface GrantCouponPayload {
@@ -492,6 +507,8 @@ export interface MyCoupon {
   expireTime: string
   /** 未使用 / 已使用 / 已过期 */
   status: string
+  /** 券图片（/uploads/coupon/…）；无图为 null */
+  imageUrl?: string | null
   receiveTime: string
   orderId?: number | null
   /** 单张券唯一码值：顾客端据此生成核销二维码 */
@@ -516,6 +533,8 @@ export interface CouponVerifyInfo {
   idCardMasked?: string | null
   memberLevel: string
   usable: boolean
+  /** 券图片（/uploads/coupon/…）；无图为 null */
+  imageUrl?: string | null
 }
 
 /** 增值服务项 */
@@ -528,6 +547,12 @@ export interface AddonItem {
   description?: string | null
   status: string
   sortNo: number
+  /** 服务图片（/uploads/addon/…）；无图为 null */
+  imageUrl?: string | null
+  /** 库存：-1 表示不限 */
+  stockQty?: number
+  lowStockThreshold?: number
+  lowStock?: boolean
 }
 
 export interface AddonInput {
@@ -536,6 +561,11 @@ export interface AddonInput {
   unit: string
   description?: string | null
   sortNo?: number
+  /** 服务图片：先调 /addon/image 上传，再回传相对地址 */
+  imageUrl?: string | null
+  /** 库存：-1 表示不限 */
+  stockQty?: number
+  lowStockThreshold?: number
 }
 
 /** 订单增值服务明细快照 */
@@ -687,3 +717,62 @@ export interface SignContractPayload {
   /** 手写签名 PNG 的 data URL */
   signatureData: string
 }
+
+/* ============================================================
+   第二批运营扩展（预约/还车/评价/客服/企业/电池/保险/成本/备件/定价/团购/API/GPS）
+   ============================================================ */
+
+export interface Store { storeId: number; storeName: string; address?: string | null; phone?: string | null; status: string; vehicleCount: number; createTime: string }
+
+export interface Appointment {
+  appointmentId: number; customerId: number; customerName?: string | null; contactPhone?: string | null
+  vehicleId: number; vehicleNo?: string | null; brand?: string | null
+  storeId?: number | null; storeName?: string | null
+  appointTime: string; note?: string | null; status: string; createTime: string
+}
+
+export interface ReturnRequest {
+  requestId: number; orderId: number; orderNo?: string | null; customerId: number; customerName?: string | null
+  vehicleNo?: string | null; expectTime: string; mileage: number; batteryPercent: number
+  note?: string | null; status: string; createTime: string; handleTime?: string | null
+}
+
+export interface Review {
+  reviewId: number; orderId: number; orderNo?: string | null; customerId: number; customerName?: string | null
+  vehicleId: number; vehicleNo?: string | null; rating: number; content?: string | null
+  reply?: string | null; replyTime?: string | null; createTime: string
+}
+
+export interface SupportTicket {
+  ticketId: number; customerId: number; customerName?: string | null; orderId?: number | null; orderNo?: string | null
+  category: string; content: string; status: string; handlerId?: number | null; handlerName?: string | null
+  reply?: string | null; createTime: string; closeTime?: string | null
+}
+
+export interface CustomerCredit {
+  customerId: number; companyName?: string | null; taxNo?: string | null; creditLimit: number
+  realNameStatus: string; idCardNo?: string | null; depositWaiverLimit: number
+  referralCode?: string | null; updateTime?: string | null; isCorporate: boolean
+}
+
+export interface ReferralStats {
+  referralCode: string; invitedCount: number; rewardTotal: number
+  items: { referralId: number; referrerId: number; inviteeId: number; inviteeName?: string | null; rewardCouponId?: number | null; status: string; createTime: string }[]
+}
+
+export interface Battery { batteryId: number; vehicleId: number; vehicleNo?: string | null; serialNo: string; healthPercent: number; cycleCount: number; status: string; lastCheckTime?: string | null; lowHealth: boolean }
+export interface Insurance { policyId: number; vehicleId: number; vehicleNo?: string | null; insurer: string; policyNo: string; startDate: string; endDate: string; premium: number; status: string; daysLeft: number; expiring: boolean }
+export interface Accident { accidentId: number; vehicleId: number; vehicleNo?: string | null; orderId?: number | null; orderNo?: string | null; customerId?: number | null; customerName?: string | null; accidentTime: string; description: string; lossAmount: number; claimAmount: number; status: string; createTime: string }
+export interface VehicleCost { costId: number; vehicleId: number; vehicleNo?: string | null; costType: string; amount: number; occurDate: string; note?: string | null }
+export interface SparePart { partId: number; partName: string; sku?: string | null; stockQty: number; lowThreshold: number; unit: string; price: number; lowStock: boolean }
+export interface PricingRule { ruleId: number; ruleName: string; ruleType: string; startTime?: string | null; endTime?: string | null; factor: number; status: string; remark?: string | null; activeNow: boolean }
+export interface CouponCampaign { campaignId: number; couponId: number; couponName?: string | null; campaignName: string; startTime: string; endTime: string; totalQuota: number; issuedQty: number; status: string }
+export interface GroupVoucher { voucherId: number; code: string; title: string; amount: number; validFrom: string; validTo: string; status: string; usedOrderId?: number | null; usedTime?: string | null; expired: boolean }
+export interface ApiKey { keyId: number; name: string; prefix: string; status: string; lastUsed?: string | null; createTime: string }
+export interface ApiKeyCreated { keyId: number; name: string; key: string }
+export interface GpsDevice { deviceId: number; vehicleId: number; vehicleNo?: string | null; imei: string; simNo?: string | null; status: string; lastLat?: number | null; lastLng?: number | null; lastReport?: string | null }
+export interface NotificationOutbox { notifyId: number; channel: string; receiverType: string; receiverId: number; receiverName?: string | null; template: string; content: string; status: string; retryCount: number; createTime: string; sendTime?: string | null }
+export interface DamageAssessment { assessmentId: number; orderId: number; orderNo?: string | null; vehicleId: number; vehicleNo?: string | null; severity: number; estimatedCost: number; findings: string; status: string; createTime: string }
+export interface ForecastPoint { date: string; orders: number; revenue: number }
+export interface Forecast { days: number; avgOrders: number; trend: string; history: ForecastPoint[]; forecast: ForecastPoint[] }
+export interface StaffPerformance { userId: number; userName: string; roleName: string; orderCount: number; settleCount: number; revenue: number; refundAmount: number }

@@ -38,6 +38,8 @@ public class CustomerRegisterDto
 {
     public string LoginAccount { get; init; } = string.Empty;
     public string Password { get; init; } = string.Empty;
+    /// <summary>好友推荐码，选填；注册成功后绑定邀请关系</summary>
+    public string? ReferralCode { get; init; }
 }
 
 /// <summary>顾客自助补全租车资料（身份证号 / 手机号 / 姓名）</summary>
@@ -64,6 +66,8 @@ public class ChangePasswordDto
 public class LoginResponseDto
 {
     public string Token { get; init; } = string.Empty;
+    /// <summary>登录账号：账号管理里的敏感操作要显示「当前管理员」是哪个账号</summary>
+    public string LoginAccount { get; init; } = string.Empty;
     /// <summary>staff / customer</summary>
     public string UserType { get; init; } = string.Empty;
     /// <summary>系统角色：管理员 / 前台 / 财务 / 顾客（用于前端路由与菜单）</summary>
@@ -79,6 +83,8 @@ public class LoginResponseDto
     public IReadOnlyList<string> PermissionCodes { get; init; } = [];
     public string UserName { get; init; } = string.Empty;
     public int UserId { get; init; }
+    /// <summary>头像地址（/uploads/avatars/…）；未上传为 null</summary>
+    public string? AvatarUrl { get; init; }
     /// <summary>顾客租车资料是否已完善</summary>
     public bool ProfileCompleted { get; init; } = true;
     /// <summary>

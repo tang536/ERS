@@ -105,6 +105,7 @@ SELECT
   o.`vehicle_id`,
   v.`vehicle_no`,
   v.`brand`           AS `vehicle_brand`,
+  v.`image_url`       AS `vehicle_image_url`,
   o.`lease_start`,
   o.`lease_end`,
   o.`actual_return`,

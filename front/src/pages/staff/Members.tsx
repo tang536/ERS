@@ -161,7 +161,7 @@ export default function Members() {
       <div className="toolbar">
         <span className="toolbar-note">
           <Icon name="info" size={15} />
-          付费会员 {paidCount} 人 · 折扣是全系统唯一真源：租车试算、结算、顾客购买价均以此表为准
+          付费会员 {paidCount} 人
         </span>
       </div>
 

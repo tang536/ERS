@@ -64,6 +64,11 @@ public class Coupon
     [Column("redeem_open")]
     public bool RedeemOpen { get; private set; }
 
+    ///<summary>券图片：营销展示用，保存 ImageStorage 生成的 /uploads/coupon/… 相对 URL</summary>
+    [MaxLength(255)]
+    [Column("image_url")]
+    public string? ImageUrl { get; private set; }
+
     [Column("create_time")]
     public DateTime CreateTime { get; init; } = AppClock.Now;
 
@@ -114,6 +119,20 @@ public class Coupon
     {
         if (open && RedeemCode == null) throw new BusinessException("请先为该券设置兑换码，再开放领取");
         RedeemOpen = open;
+    }
+
+    ///<summary>设置或清除券图片：只接受本系统 /uploads/coupon/ 下的地址</summary>
+    public void SetImage(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            ImageUrl = null;
+            return;
+        }
+        var trimmed = url.Trim();
+        if (!ImageStorage.IsOwnedUrl(trimmed, "coupon"))
+            throw new BusinessException("券图片只支持本站上传的 /uploads/coupon/ 地址");
+        ImageUrl = trimmed;
     }
 
     ///<summary>兑换码规范化：统一大写去空格；允许 4~20 位字母数字，避免顾客输入中文/符号造成匹配歧义</summary>

@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { orderApi, renewalApi, printApi, settleApi } from '@/api'
 import type { Order } from '@/types'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import ReceiptModal from '@/components/ReceiptModal'
 import CopyText from '@/components/CopyText'
 import RowActions from '@/components/RowActions'
@@ -16,6 +17,7 @@ import { downloadBlob, todayStamp } from '@/utils/download'
 import CreateOrderPanel from './components/CreateOrderPanel'
 import OrderDetailModal from './components/OrderDetailModal'
 import OrderChangeModal from './components/OrderChangeModal'
+import { AppointmentPanel, ReturnRequestPanel } from './components/OpsExtPanels'
 import Pagination from '@/components/Pagination'
 
 /** 默认每页条数；用户可在分页条上改（对账时一屏看更多） */
@@ -116,6 +118,7 @@ export default function Orders() {
   const [detailOrder, setDetailOrder] = useState<Order | null>(null)
   /** 换车 / 改期弹窗 */
   const [changeOrder, setChangeOrder] = useState<Order | null>(null)
+  const [appointmentsOpen, setAppointmentsOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
   /** 到期/逾期预警。与列表筛选无关，独立拉取：换页换条件不该让它闪一下。 */
   const [warn, setWarn] = useState<WarningSummary | null>(null)
@@ -378,10 +381,14 @@ export default function Orders() {
           <Icon name="orders" size={18} chip />订单列表
         </span>
         {view === 'list' && (
-          <button className="btn-sm btn-sm-default" onClick={handleExport} disabled={exporting}
-                  style={{ marginLeft: 'auto' }} title="导出明细">
-            <Icon name="download" size={14} /><span className="btn-label">{exporting ? '导出中…' : '导出明细'}</span>
-          </button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button className="btn-sm btn-sm-default" onClick={() => setAppointmentsOpen(true)} title="查看顾客到店预约">
+              <Icon name="clock" size={14} /><span className="btn-label">到店预约</span>
+            </button>
+            <button className="btn-sm btn-sm-default" onClick={handleExport} disabled={exporting} title="导出明细">
+              <Icon name="download" size={14} /><span className="btn-label">{exporting ? '导出中…' : '导出明细'}</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -402,10 +409,12 @@ export default function Orders() {
              style={{ marginBottom: 12, alignItems: 'flex-start' }}>
           <Icon name="clock" size={18} chip />
           <div className="callout-body">
-            <div className="callout-head">
-              订单到期预警：已逾期 <strong>{warn.overdueCount}</strong> 笔，
-              {warn.warnDays} 天内到期 <strong>{warn.soonCount}</strong> 笔
-              <button type="button" className="link-btn" style={{ marginLeft: 8 }}
+            <div className="callout-head order-warn-head">
+              <span className="order-warn-summary">
+                订单到期预警：已逾期 <strong>{warn.overdueCount}</strong> 笔，
+                {warn.warnDays} 天内到期 <strong>{warn.soonCount}</strong> 笔
+              </span>
+              <button type="button" className="link-btn"
                       onClick={() => { setStatus('租赁中'); setPage(1) }}>
                 只看在租订单
               </button>
@@ -413,7 +422,7 @@ export default function Orders() {
             <ul style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.9 }}>
               {warn.items.slice(0, 5).map(w => (
                 <li key={w.orderId}>
-                  <button type="button" className="link-btn"
+                  <button type="button" className="link-btn order-warn-no"
                           onClick={() => { setKeyword(w.orderNo); setStatus(''); setPage(1) }}>
                     {w.orderNo}
                   </button>
@@ -459,28 +468,13 @@ export default function Orders() {
                 <option value="">全部状态</option>
                 {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              <span className="filter-sep" />
-              {/* 标签与日期框包成一组：手机端两列网格时「起租 [框]」「至 [框]」各自成组，
-                  等宽且标签不丢——原来标签是独立 span，窄屏被 display:none 后
-                  剩下两个裸日期框，用户分不清哪个是开始哪个是结束 */}
-              <span className="filter-date-group">
-                <span className="filter-tilde">起租</span>
-                <input
-                  type="date" className="filter-date"
-                  value={dateFrom} max={dateTo || undefined}
-                  onChange={e => { setDateFrom(e.target.value); setPage(1) }}
-                  aria-label="起租日期起"
-                />
-              </span>
-              <span className="filter-date-group">
-                <span className="filter-tilde">至</span>
-                <input
-                  type="date" className="filter-date"
-                  value={dateTo} min={dateFrom || undefined}
-                  onChange={e => { setDateTo(e.target.value); setPage(1) }}
-                  aria-label="起租日期止"
-                />
-              </span>
+              <DateRangeCalendar
+                className="filter-date-range"
+                start={dateFrom}
+                end={dateTo}
+                placeholder="起租日期"
+                onChange={(s, e) => { setDateFrom(s); setDateTo(e); setPage(1) }}
+              />
               {hasFilter && (
                 <button className="btn-sm btn-sm-default" onClick={resetAll} title="重置筛选条件">
                   <Icon name="refresh" size={14} /><span className="btn-label">重置</span>
@@ -506,7 +500,7 @@ export default function Orders() {
                   <th>客户</th>
                   <th>车辆</th>
                   <SortTh label="起租时间" active={sortBy === 'leasestart'} dir={sortDir} onClick={() => toggleSort('leasestart')} />
-                  <SortTh label="到期时间" active={sortBy === 'leaseend'} dir={sortDir} onClick={() => toggleSort('leaseend')} className="col-hide-md" />
+                  <SortTh label="到期时间" active={sortBy === 'leaseend'} dir={sortDir} onClick={() => toggleSort('leaseend')} className="col-hide-md col-hide-xl" />
                   <SortTh label="租金" active={sortBy === 'totalrent'} dir={sortDir} onClick={() => toggleSort('totalrent')} className="num" />
                   <SortTh label="押金" active={sortBy === 'deposit'} dir={sortDir} onClick={() => toggleSort('deposit')} className="num" />
                   <th>状态</th><th>操作</th>
@@ -520,13 +514,18 @@ export default function Orders() {
                     <td className="mono"><CopyText text={o.orderNo} label="复制订单号" /></td>
                     <td>{o.customerName}</td>
                     <td>
-                      <span className="vehicle-cell">
-                        <CopyText text={o.vehicleNo} label="复制车牌号" />
-                        {o.vehicleBrand ? <span className="vehicle-brand-sub">（{o.vehicleBrand}）</span> : null}
+                      <span className="vehicle-cell vehicle-cell-thumb">
+                        {o.vehicleImageUrl
+                          ? <img className="vehicle-thumb-sm" src={o.vehicleImageUrl} alt="" loading="lazy" />
+                          : <span className="vehicle-thumb-sm is-empty"><Icon name="vehicles" size={18} /></span>}
+                        <span className="vehicle-cell-text">
+                          <CopyText text={o.vehicleNo} label="复制车牌号" />
+                          {o.vehicleBrand ? <span className="vehicle-brand-sub">（{o.vehicleBrand}）</span> : null}
+                        </span>
                       </span>
                     </td>
                     <td className="cell-time">{fmtDT(o.leaseStart)}</td>
-                    <td className="cell-time col-hide-md">{fmtDT(o.leaseEnd)}</td>
+                    <td className="cell-time col-hide-md col-hide-xl">{fmtDT(o.leaseEnd)}</td>
                     <td className="num">¥{o.totalRent}</td>
                     <td className="num">¥{o.deposit}</td>
                     <td><span className={`status-tag ${statusMap[o.orderStatus] || 'status-default'}`}>{o.orderStatus}</span></td>
@@ -676,7 +675,22 @@ export default function Orders() {
               <button className="btn-sm btn-sm-primary" onClick={() => submitPickup(true)} disabled={pickupSaving || pickupLoading}>
                 <Icon name="check" size={13} color="#fff" />{pickupSaving ? '处理中…' : '确认取车并开始计费'}
               </button>
-              <button className="btn-sm btn-sm-default" onClick={() => setPickup(null)} disabled={pickupSaving}>关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {appointmentsOpen && (
+        <div className="modal-overlay" onClick={() => setAppointmentsOpen(false)}>
+          <div className="modal modal-lg" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>到店预约 / 还车登记</span>
+              <button className="close-btn" onClick={() => setAppointmentsOpen(false)} aria-label="关闭"><Icon name="close" size={15} /></button>
+            </div>
+            <div className="modal-body">
+              <AppointmentPanel />
+              <div style={{ height: 16 }} />
+              <ReturnRequestPanel />
             </div>
           </div>
         </div>

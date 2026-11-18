@@ -43,6 +43,10 @@ public class OrderOverviewView
     [Column("vehicle_brand")]
     public string? VehicleBrand { get; init; }
 
+    /// <summary>车辆主图：订单卡片把车当主视觉，列表与详情共用这一列</summary>
+    [Column("vehicle_image_url")]
+    public string? VehicleImageUrl { get; init; }
+
     [Column("lease_start")]
     public DateTime LeaseStart { get; init; }
 

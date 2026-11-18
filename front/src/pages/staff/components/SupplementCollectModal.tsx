@@ -290,14 +290,12 @@ export default function SupplementCollectModal({ settleId, preview, onClose, onC
           )}
         </div>
 
-        <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={onClose}>
-            {paid ? '关闭' : '稍后收款'}
-          </button>
-          {!paid && (
+        {!paid && (
+          <div className="modal-footer">
+            <button className="btn-sm btn-sm-default" onClick={onClose}>稍后收款</button>
             <span className="collect-footer-tip">关掉后仍可从「待收款」入口继续收</span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

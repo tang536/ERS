@@ -62,7 +62,6 @@ export default function ReceiptModal({ title, content, onClose, hint }: ReceiptM
           {hint && <div className="receipt-hint no-print"><Icon name="info" size={15} />{hint}</div>}
         </div>
         <div className="modal-footer no-print">
-          <button className="btn-sm btn-sm-default" onClick={onClose}>关闭</button>
           <button className="btn-sm btn-sm-primary" onClick={handlePrint}>
             <Icon name="print" size={14} color="#fff" />打印小票
           </button>

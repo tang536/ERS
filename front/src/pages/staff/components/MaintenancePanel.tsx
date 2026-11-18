@@ -567,7 +567,6 @@ export default function MaintenancePanel() {
             </div>
             <div className="modal-footer">
               <span className="img-viewer-note"><Icon name="lock" size={13} />照片随工单锁定存档，不可修改</span>
-              <button className="btn-sm btn-sm-default" onClick={() => setViewImages(null)}>关闭</button>
             </div>
           </div>
         </div>

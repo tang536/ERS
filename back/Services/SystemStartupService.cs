@@ -15,6 +15,16 @@ public sealed class SystemStartupService(AppDbContext db, IConfiguration config,
         // 否则逾期判定与计费小时数会在列表和结算两处给出不同结果。
         DatabaseClock.EnsureSessionMatchesLocalTime(db);
         DbInitializer.EnsureSchemaUpgrades(db);
+        // 把旧版按 ID 命名的头像迁移到 avatar_url；失败不影响启动，下次启动会再补
+        try
+        {
+            var migrated = LegacyAvatarMigration.Backfill(db, env.ContentRootPath);
+            if (migrated > 0) logger.LogInformation("已回填 {Count} 个存量头像地址", migrated);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "存量头像回填失败，已跳过");
+        }
         DbInitializer.Seed(db, config, env, logger);
 
         // 证据照片归档放在启动末尾做一次：启动流程本身不能因为一次文件移动失败而起不来，

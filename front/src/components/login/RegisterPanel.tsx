@@ -33,7 +33,15 @@ export default function RegisterPanel({
 }) {
   const { toast } = useUI()
 
-  const [form, setForm] = useState({ loginAccount: '', password: '', confirmPwd: '' })
+  const [form, setForm] = useState(() => ({
+    loginAccount: '',
+    password: '',
+    confirmPwd: '',
+    // 推荐二维码深链 /login?as=customer&ref=CODE 直接填好推荐码，新人不用手抄
+    referralCode: typeof window !== 'undefined'
+      ? (new URLSearchParams(window.location.search).get('ref') || '').toUpperCase()
+      : '',
+  }))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [agreed, setAgreed] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -68,7 +76,11 @@ export default function RegisterPanel({
     const acc = form.loginAccount.trim()
     setLoading(true)
     try {
-      await authApi.customerRegister({ loginAccount: acc, password: form.password })
+      await authApi.customerRegister({
+        loginAccount: acc,
+        password: form.password,
+        referralCode: form.referralCode.trim() || undefined,
+      })
       toast('注册成功，请使用该用户名登录', 'success')
       onRegistered?.(acc)
     } catch (e: any) {
@@ -137,6 +149,18 @@ export default function RegisterPanel({
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
         />
         {errors.confirmPwd && <div className="field-error">{errors.confirmPwd}</div>}
+      </div>
+
+      <div className="form-group">
+        <FloatingInput
+          id="register-referral"
+          label="推荐码（选填）"
+          icon="coupon"
+          value={form.referralCode}
+          autoComplete="off"
+          onChange={v => setField('referralCode', v.toUpperCase())}
+        />
+        <div className="field-hint">好友分享的推荐码，注册后自动绑定邀请关系</div>
       </div>
 
       <label className="agree-row">

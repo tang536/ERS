@@ -23,6 +23,8 @@ public class UserDto
     public string RoleName { get; init; } = string.Empty;
     public int UserStatus { get; init; }
     public int LoginFailCount { get; init; }
+    /// <summary>工作人员头像：账号管理列表直接展示，避免同名账号靠工号辨认</summary>
+    public string? AvatarUrl { get; init; }
     /// <summary>是否存在待本人修改的临时密码</summary>
     public bool MustChangePassword { get; init; }
 }

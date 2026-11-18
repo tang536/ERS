@@ -34,6 +34,8 @@ export default function MyCoupons() {
   const [tab, setTab] = useState<TabKey>('未使用')
   const [code, setCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
+  /** 兑换码弹窗：入口收在「我的优惠券」标题栏右上角，避免在页首再占一张卡 */
+  const [redeemOpen, setRedeemOpen] = useState(false)
   const [profile, setProfile] = useState<any>(null)
 
   const [qrOpen, setQrOpen] = useState<MyCoupon | null>(null)
@@ -85,6 +87,7 @@ export default function MyCoupons() {
       const res: any = await couponApi.redeem(c)
       toast(res?.message || '领取成功', 'success')
       setCode('')
+      setRedeemOpen(false)
       setTab('未使用')
       load()
     } catch (e: any) {
@@ -136,35 +139,14 @@ export default function MyCoupons() {
 
   return (
     <div>
-      <div className="vehicle-detail-head">
-        <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => history.back()}>
-          <Icon name="chevron-left" size={14} /><span className="btn-label">返回</span>
-        </button>
-      </div>
-
-      {/* ===== 兑换码 ===== */}
-      <div className="card">
-        <div className="card-title"><Icon name="coupon" size={18} chip />兑换码领券</div>
-        <div className="redeem-row">
-          <input
-            value={code}
-            onChange={e => setCode(e.target.value.toUpperCase())}
-            placeholder="输入兑换码"
-            maxLength={20}
-            aria-label="兑换码"
-            onKeyDown={e => { if (e.key === 'Enter') redeem() }}
-          />
-          <button className="btn-sm btn-sm-primary" onClick={redeem} disabled={redeeming}>
-            {redeeming ? '领取中…' : '立即领取'}
-          </button>
-        </div>
-      </div>
-
       {/* ===== 我的券 ===== */}
       <div className="card">
         <div className="card-title">
           <Icon name="coupon" size={18} chip />我的优惠券
           <span className="card-title-count">共 {list.length} 张</span>
+          <button className="btn-sm btn-sm-primary btn-icon-sm" style={{ marginLeft: 'auto' }} onClick={() => setRedeemOpen(true)}>
+            <Icon name="coupon" size={14} color="#fff" /><span className="btn-label">兑换码领券</span>
+          </button>
         </div>
 
         <div className="coupon-tabs">
@@ -182,7 +164,12 @@ export default function MyCoupons() {
         ) : (
           <div className="coupon-list">
             {shown.map(c => (
-              <div key={c.id} className={`coupon-card ${c.status !== '未使用' ? 'disabled' : ''}`}>
+              <div key={c.id} className={`coupon-card ${c.imageUrl ? 'has-image' : ''} ${c.status !== '未使用' ? 'disabled' : ''}`}>
+                {c.imageUrl && (
+                  <div className="coupon-cover">
+                    <img src={c.imageUrl} alt="" loading="lazy" />
+                  </div>
+                )}
                 <div className="coupon-stub">
                   <Icon name="coupon" size={22} />
                   <strong>{money(c.amount)}</strong>
@@ -212,6 +199,38 @@ export default function MyCoupons() {
           </div>
         )}
       </div>
+
+      {redeemOpen && createPortal(
+        <div className="modal-overlay" onClick={() => setRedeemOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>兑换码领券</strong>
+              <button className="close-btn" onClick={() => setRedeemOpen(false)}><Icon name="close" size={15} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>兑换码</label>
+                <input
+                  value={code}
+                  autoFocus
+                  onChange={e => setCode(e.target.value.toUpperCase())}
+                  placeholder="输入管理员发放的兑换码"
+                  maxLength={20}
+                  aria-label="兑换码"
+                  onKeyDown={e => { if (e.key === 'Enter') redeem() }}
+                />
+                <div className="field-hint">兑换成功后券会立即进入「未使用」列表。</div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-sm btn-sm-primary" onClick={redeem} disabled={redeeming}>
+                {redeeming ? '领取中…' : '立即领取'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {qrOpen && createPortal(
         <div className="modal-overlay" onClick={() => { setQrOpen(null); setQrMarkup('') }}>
@@ -245,7 +264,6 @@ export default function MyCoupons() {
                 <button className="btn-sm btn-sm-default" onClick={() => loadQr(qrOpen)} disabled={qrLoading}>
                   <Icon name="refresh" size={13} /><span className="btn-label">刷新二维码</span>
                 </button>
-                <button className="btn-sm btn-sm-primary" onClick={() => { setQrOpen(null); setQrMarkup('') }}>关闭</button>
               </div>
             </div>
           </div>

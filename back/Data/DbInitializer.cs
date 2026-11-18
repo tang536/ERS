@@ -38,7 +38,7 @@ public static class DbInitializer
     /// ⚠️ 改动 DbInitializer 里的 DDL（加列/加表/改约束）时必须把它 +1，
     /// 否则老库会因「版本已是最新」而跳过这次升级。
     /// </summary>
-    public const int SchemaVersion = 9;
+    public const int SchemaVersion = 12;
 
     /// <summary>幂等的结构升级：保证「老数据库」也能平滑支持新功能</summary>
     public static void EnsureSchemaUpgrades(AppDbContext db)
@@ -95,6 +95,9 @@ public static class DbInitializer
         UpgradeCustomerRightsColumns(db);
         UpgradeLogColumns(db);
         UpgradeCouponCodeColumns(db);
+        UpgradeImageColumns(db);
+        UpgradeOpsCenterColumns(db);
+        CreateOpsExtTables(db);
         NormalizeToBcnf(db);
 
         // 安全网：用 EF 模型反查数据库，补上任何遗漏的**可空列**（非空列只打印 ALTER 建议）。
@@ -421,6 +424,7 @@ public static class DbInitializer
         `issued_qty` INT NOT NULL DEFAULT 0 COMMENT '已发放数量',
         `per_limit` INT NOT NULL DEFAULT 1 COMMENT '同一顾客最多可领张数',
         `status` VARCHAR(10) NOT NULL DEFAULT '启用' COMMENT '状态（启用/停用）',
+        `image_url` VARCHAR(255) DEFAULT NULL COMMENT '券图片（/uploads/coupon/…）',
         `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
         PRIMARY KEY (`coupon_id`),
         KEY `idx_coupon_status` (`status`)
@@ -451,6 +455,9 @@ public static class DbInitializer
         `price` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '价格（元）',
         `unit` VARCHAR(10) NOT NULL DEFAULT '一次性' COMMENT '计价方式（一次性/按天）',
         `description` VARCHAR(200) DEFAULT NULL COMMENT '说明',
+        `image_url` VARCHAR(255) DEFAULT NULL COMMENT '服务图片（/uploads/addon/…）',
+        `stock_qty` INT NOT NULL DEFAULT -1 COMMENT '库存，-1 表示不限',
+        `low_stock_threshold` INT NOT NULL DEFAULT 0 COMMENT '低库存提醒阈值',
         `status` VARCHAR(10) NOT NULL DEFAULT '启用' COMMENT '状态（启用/停用）',
         `sort_no` INT NOT NULL DEFAULT 0 COMMENT '排序号',
         `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -469,6 +476,7 @@ public static class DbInitializer
         `price` DECIMAL(10,2) NOT NULL COMMENT '下单时的单价快照',
         `qty` INT NOT NULL DEFAULT 1 COMMENT '计费数量',
         `amount` DECIMAL(10,2) NOT NULL COMMENT '金额',
+        `stock_restored` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '取消订单是否已回补库存',
         PRIMARY KEY (`id`),
         KEY `idx_addon_order` (`order_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单增值服务明细表';
@@ -773,6 +781,432 @@ public static class DbInitializer
             SET l.`customer_id` = l.`user_id`, l.`user_id` = NULL
             WHERE l.`user_id` IS NOT NULL AND u.`user_id` IS NULL
             AND EXISTS (SELECT 1 FROM `customer` c WHERE c.`customer_id` = l.`user_id`);
+            """);
+    }
+
+    /// <summary>照片字段统一为 URL：头像、券图片、增值服务图片</summary>
+    private static void UpgradeImageColumns(AppDbContext db)
+    {
+        // 头像不再按 user_id / customer_id 拼文件名，改为数据库存 ImageStorage 返回的相对地址
+        if (!ColumnExists(db, "customer", "avatar_url"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `customer` ADD COLUMN `avatar_url` VARCHAR(255) NULL COMMENT '头像地址（/uploads/avatars/…）' AFTER `contact_phone`;");
+        }
+        if (!ColumnExists(db, "system_user", "avatar_url"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `system_user` ADD COLUMN `avatar_url` VARCHAR(255) NULL COMMENT '头像地址（/uploads/avatars/…）' AFTER `user_name`;");
+        }
+
+        //营销图片：券与增值服务都按普通目录图片公开访问
+        if (!ColumnExists(db, "coupon", "image_url"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `coupon` ADD COLUMN `image_url` VARCHAR(255) NULL COMMENT '券图片（/uploads/coupon/…）' AFTER `status`;");
+        }
+        if (!ColumnExists(db, "addon_item", "image_url"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `addon_item` ADD COLUMN `image_url` VARCHAR(255) NULL COMMENT '服务图片（/uploads/addon/…）' AFTER `description`;");
+        }
+    }
+
+    /// <summary>运营中心扩展：审批、电子发票、预防保养表，以及增值服务库存列</summary>
+    private static void UpgradeOpsCenterColumns(AppDbContext db)
+    {
+        if (!ColumnExists(db, "addon_item", "stock_qty"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `addon_item` ADD COLUMN `stock_qty` INT NOT NULL DEFAULT -1 COMMENT '库存，-1 表示不限' AFTER `image_url`;");
+        }
+        if (!ColumnExists(db, "addon_item", "low_stock_threshold"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `addon_item` ADD COLUMN `low_stock_threshold` INT NOT NULL DEFAULT 0 COMMENT '低库存提醒阈值' AFTER `stock_qty`;");
+        }
+        if (!ColumnExists(db, "order_addon", "stock_restored"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `order_addon` ADD COLUMN `stock_restored` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '取消订单是否已回补库存' AFTER `amount`;");
+        }
+
+        EnsureTable(db, "ops_approval", """
+            CREATE TABLE IF NOT EXISTS `ops_approval` (
+              `approval_id` INT NOT NULL AUTO_INCREMENT,
+              `request_no` VARCHAR(32) NOT NULL COMMENT '审批单号',
+              `biz_type` VARCHAR(20) NOT NULL COMMENT '业务类型：退款/免押/改价/减免',
+              `ref_type` VARCHAR(20) DEFAULT NULL COMMENT '关联单据类型',
+              `ref_id` VARCHAR(60) DEFAULT NULL COMMENT '关联单据号',
+              `order_id` INT DEFAULT NULL,
+              `amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `reason` VARCHAR(500) NOT NULL COMMENT '申请原因',
+              `status` VARCHAR(20) NOT NULL DEFAULT '待审批',
+              `applicant_id` INT NOT NULL,
+              `approver_id` INT DEFAULT NULL,
+              `approve_time` DATETIME DEFAULT NULL,
+              `approve_note` VARCHAR(500) DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`approval_id`),
+              UNIQUE KEY `uk_ops_approval_no` (`request_no`),
+              KEY `idx_ops_approval_status` (`status`, `create_time`),
+              KEY `idx_ops_approval_biz` (`biz_type`, `ref_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='运营金额审批单';
+            """);
+
+        EnsureTable(db, "ops_invoice", """
+            CREATE TABLE IF NOT EXISTS `ops_invoice` (
+              `invoice_id` INT NOT NULL AUTO_INCREMENT,
+              `invoice_no` VARCHAR(40) NOT NULL COMMENT '发票申请单号',
+              `order_id` INT NOT NULL,
+              `customer_id` INT NOT NULL,
+              `title` VARCHAR(100) NOT NULL COMMENT '发票抬头',
+              `tax_no` VARCHAR(50) NOT NULL COMMENT '纳税人识别号',
+              `invoice_type` VARCHAR(20) NOT NULL DEFAULT '电子普通发票',
+              `amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `email` VARCHAR(120) NOT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '待开票',
+              `remark` VARCHAR(300) DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `issue_time` DATETIME DEFAULT NULL,
+              PRIMARY KEY (`invoice_id`),
+              UNIQUE KEY `uk_ops_invoice_no` (`invoice_no`),
+              KEY `idx_ops_invoice_status` (`status`, `create_time`),
+              KEY `idx_ops_invoice_order` (`order_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='电子发票申请';
+            """);
+
+        EnsureTable(db, "maintenance_plan", """
+            CREATE TABLE IF NOT EXISTS `maintenance_plan` (
+              `plan_id` INT NOT NULL AUTO_INCREMENT,
+              `vehicle_id` INT NOT NULL,
+              `plan_name` VARCHAR(60) NOT NULL,
+              `trigger_type` VARCHAR(10) NOT NULL DEFAULT '按天数',
+              `trigger_value` INT NOT NULL DEFAULT 1,
+              `last_service_time` DATETIME DEFAULT NULL,
+              `last_mileage` INT NOT NULL DEFAULT 0,
+              `current_mileage` INT NOT NULL DEFAULT 0,
+              `next_due_time` DATETIME DEFAULT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '启用',
+              `remark` VARCHAR(200) DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`plan_id`),
+              KEY `idx_plan_vehicle_status` (`vehicle_id`, `status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='预防性保养计划';
+            """);
+    }
+
+    /// <summary>第二批运营扩展表：预约/还车/评价/客服/推荐/信用/资产/定价/团购/API/GPS/通知/车损</summary>
+    private static void CreateOpsExtTables(AppDbContext db)
+    {
+        EnsureTable(db, "store", """
+            CREATE TABLE IF NOT EXISTS `store` (
+              `store_id` INT NOT NULL AUTO_INCREMENT,
+              `store_name` VARCHAR(60) NOT NULL,
+              `address` VARCHAR(200) DEFAULT NULL,
+              `phone` VARCHAR(30) DEFAULT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '启用',
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`store_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='门店';
+            """);
+
+        EnsureTable(db, "vehicle_store", """
+            CREATE TABLE IF NOT EXISTS `vehicle_store` (
+              `id` INT NOT NULL AUTO_INCREMENT,
+              `vehicle_id` INT NOT NULL,
+              `store_id` INT NOT NULL,
+              `bind_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `uk_vehicle_store_vehicle` (`vehicle_id`),
+              KEY `idx_vehicle_store_store` (`store_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='车辆归属门店';
+            """);
+
+        EnsureTable(db, "appointment", """
+            CREATE TABLE IF NOT EXISTS `appointment` (
+              `appointment_id` INT NOT NULL AUTO_INCREMENT,
+              `customer_id` INT NOT NULL,
+              `vehicle_id` INT NOT NULL,
+              `store_id` INT DEFAULT NULL,
+              `appoint_time` DATETIME NOT NULL,
+              `contact_phone` VARCHAR(30) DEFAULT NULL,
+              `note` VARCHAR(300) DEFAULT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '待确认',
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`appointment_id`),
+              KEY `idx_appointment_status_time` (`status`, `appoint_time`),
+              KEY `idx_appointment_customer` (`customer_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='到店预约';
+            """);
+
+        EnsureTable(db, "return_request", """
+            CREATE TABLE IF NOT EXISTS `return_request` (
+              `request_id` INT NOT NULL AUTO_INCREMENT,
+              `order_id` INT NOT NULL,
+              `customer_id` INT NOT NULL,
+              `expect_time` DATETIME NOT NULL,
+              `mileage` INT NOT NULL DEFAULT 0,
+              `battery_percent` INT NOT NULL DEFAULT 0,
+              `note` VARCHAR(300) DEFAULT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '待处理',
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `handle_time` DATETIME DEFAULT NULL,
+              PRIMARY KEY (`request_id`),
+              KEY `idx_return_order_status` (`order_id`, `status`),
+              KEY `idx_return_status_time` (`status`, `expect_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='还车预登记';
+            """);
+
+        EnsureTable(db, "review", """
+            CREATE TABLE IF NOT EXISTS `review` (
+              `review_id` INT NOT NULL AUTO_INCREMENT,
+              `order_id` INT NOT NULL,
+              `customer_id` INT NOT NULL,
+              `vehicle_id` INT NOT NULL,
+              `rating` INT NOT NULL DEFAULT 5,
+              `content` VARCHAR(500) DEFAULT NULL,
+              `reply` VARCHAR(500) DEFAULT NULL,
+              `reply_time` DATETIME DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`review_id`),
+              UNIQUE KEY `uk_review_order` (`order_id`),
+              KEY `idx_review_vehicle_time` (`vehicle_id`, `create_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单评价';
+            """);
+
+        EnsureTable(db, "support_ticket", """
+            CREATE TABLE IF NOT EXISTS `support_ticket` (
+              `ticket_id` INT NOT NULL AUTO_INCREMENT,
+              `customer_id` INT NOT NULL,
+              `order_id` INT DEFAULT NULL,
+              `category` VARCHAR(30) NOT NULL DEFAULT '其他',
+              `content` VARCHAR(500) NOT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '待处理',
+              `handler_id` INT DEFAULT NULL,
+              `reply` VARCHAR(500) DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `close_time` DATETIME DEFAULT NULL,
+              PRIMARY KEY (`ticket_id`),
+              KEY `idx_ticket_status_time` (`status`, `create_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='客服工单';
+            """);
+
+        EnsureTable(db, "referral", """
+            CREATE TABLE IF NOT EXISTS `referral` (
+              `referral_id` INT NOT NULL AUTO_INCREMENT,
+              `referrer_id` INT NOT NULL,
+              `invitee_id` INT NOT NULL,
+              `reward_coupon_id` INT DEFAULT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '已注册',
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`referral_id`),
+              UNIQUE KEY `uk_referral_invitee` (`invitee_id`),
+              KEY `idx_referral_referrer` (`referrer_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='老带新推荐';
+            """);
+
+        EnsureTable(db, "customer_credit_profile", """
+            CREATE TABLE IF NOT EXISTS `customer_credit_profile` (
+              `profile_id` INT NOT NULL AUTO_INCREMENT,
+              `customer_id` INT NOT NULL,
+              `company_name` VARCHAR(80) DEFAULT NULL,
+              `tax_no` VARCHAR(50) DEFAULT NULL,
+              `credit_limit` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `real_name_status` VARCHAR(20) NOT NULL DEFAULT '未认证',
+              `id_card_no` VARCHAR(30) DEFAULT NULL,
+              `deposit_waiver_limit` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `referral_code` VARCHAR(12) DEFAULT NULL,
+              `referrer_id` INT DEFAULT NULL,
+              `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`profile_id`),
+              UNIQUE KEY `uk_credit_customer` (`customer_id`),
+              KEY `idx_credit_referral_code` (`referral_code`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='客户信用/企业/实名扩展';
+            """);
+
+        EnsureTable(db, "battery", """
+            CREATE TABLE IF NOT EXISTS `battery` (
+              `battery_id` INT NOT NULL AUTO_INCREMENT,
+              `vehicle_id` INT NOT NULL,
+              `serial_no` VARCHAR(40) NOT NULL,
+              `health_percent` INT NOT NULL DEFAULT 100,
+              `cycle_count` INT NOT NULL DEFAULT 0,
+              `status` VARCHAR(20) NOT NULL DEFAULT '在用',
+              `last_check_time` DATETIME DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`battery_id`),
+              UNIQUE KEY `uk_battery_serial` (`serial_no`),
+              KEY `idx_battery_vehicle` (`vehicle_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='电池资产';
+            """);
+
+        EnsureTable(db, "insurance_policy", """
+            CREATE TABLE IF NOT EXISTS `insurance_policy` (
+              `policy_id` INT NOT NULL AUTO_INCREMENT,
+              `vehicle_id` INT NOT NULL,
+              `insurer` VARCHAR(60) NOT NULL DEFAULT '',
+              `policy_no` VARCHAR(50) NOT NULL DEFAULT '',
+              `start_date` DATETIME NOT NULL,
+              `end_date` DATETIME NOT NULL,
+              `premium` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `status` VARCHAR(20) NOT NULL DEFAULT '有效',
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`policy_id`),
+              KEY `idx_insurance_vehicle_end` (`vehicle_id`, `end_date`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='车辆保险';
+            """);
+
+        EnsureTable(db, "accident_record", """
+            CREATE TABLE IF NOT EXISTS `accident_record` (
+              `accident_id` INT NOT NULL AUTO_INCREMENT,
+              `vehicle_id` INT NOT NULL,
+              `order_id` INT DEFAULT NULL,
+              `customer_id` INT DEFAULT NULL,
+              `accident_time` DATETIME NOT NULL,
+              `description` VARCHAR(500) NOT NULL,
+              `loss_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `claim_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `status` VARCHAR(20) NOT NULL DEFAULT '待处理',
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`accident_id`),
+              KEY `idx_accident_vehicle_time` (`vehicle_id`, `accident_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='事故记录';
+            """);
+
+        EnsureTable(db, "vehicle_cost", """
+            CREATE TABLE IF NOT EXISTS `vehicle_cost` (
+              `cost_id` INT NOT NULL AUTO_INCREMENT,
+              `vehicle_id` INT NOT NULL,
+              `cost_type` VARCHAR(30) NOT NULL DEFAULT '其他',
+              `amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `occur_date` DATETIME NOT NULL,
+              `note` VARCHAR(300) DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`cost_id`),
+              KEY `idx_cost_vehicle_date` (`vehicle_id`, `occur_date`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='车辆成本台账';
+            """);
+
+        EnsureTable(db, "spare_part", """
+            CREATE TABLE IF NOT EXISTS `spare_part` (
+              `part_id` INT NOT NULL AUTO_INCREMENT,
+              `part_name` VARCHAR(60) NOT NULL,
+              `sku` VARCHAR(40) DEFAULT NULL,
+              `stock_qty` INT NOT NULL DEFAULT 0,
+              `low_threshold` INT NOT NULL DEFAULT 0,
+              `unit` VARCHAR(10) NOT NULL DEFAULT '个',
+              `price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`part_id`),
+              KEY `idx_part_name` (`part_name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='备件库存';
+            """);
+
+        EnsureTable(db, "pricing_rule", """
+            CREATE TABLE IF NOT EXISTS `pricing_rule` (
+              `rule_id` INT NOT NULL AUTO_INCREMENT,
+              `rule_name` VARCHAR(80) NOT NULL,
+              `rule_type` VARCHAR(20) NOT NULL DEFAULT '时段溢价',
+              `start_time` DATETIME DEFAULT NULL,
+              `end_time` DATETIME DEFAULT NULL,
+              `factor` DECIMAL(5,2) NOT NULL DEFAULT 1.00,
+              `status` VARCHAR(20) NOT NULL DEFAULT '启用',
+              `remark` VARCHAR(200) DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`rule_id`),
+              KEY `idx_pricing_status_time` (`status`, `start_time`, `end_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='动态定价规则';
+            """);
+
+        EnsureTable(db, "group_voucher", """
+            CREATE TABLE IF NOT EXISTS `group_voucher` (
+              `voucher_id` INT NOT NULL AUTO_INCREMENT,
+              `code` VARCHAR(30) NOT NULL,
+              `title` VARCHAR(80) NOT NULL DEFAULT '',
+              `amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `valid_from` DATETIME NOT NULL,
+              `valid_to` DATETIME NOT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '未使用',
+              `used_order_id` INT DEFAULT NULL,
+              `used_time` DATETIME DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`voucher_id`),
+              UNIQUE KEY `uk_group_voucher_code` (`code`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='团购券/联合券';
+            """);
+
+        EnsureTable(db, "api_key", """
+            CREATE TABLE IF NOT EXISTS `api_key` (
+              `key_id` INT NOT NULL AUTO_INCREMENT,
+              `name` VARCHAR(60) NOT NULL DEFAULT '',
+              `key_hash` VARCHAR(64) NOT NULL,
+              `prefix` VARCHAR(12) NOT NULL DEFAULT '',
+              `status` VARCHAR(20) NOT NULL DEFAULT '启用',
+              `last_used` DATETIME DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`key_id`),
+              UNIQUE KEY `uk_api_key_hash` (`key_hash`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='开放 API Key';
+            """);
+
+        EnsureTable(db, "gps_device", """
+            CREATE TABLE IF NOT EXISTS `gps_device` (
+              `device_id` INT NOT NULL AUTO_INCREMENT,
+              `vehicle_id` INT NOT NULL,
+              `imei` VARCHAR(30) NOT NULL,
+              `sim_no` VARCHAR(30) DEFAULT NULL,
+              `status` VARCHAR(20) NOT NULL DEFAULT '离线',
+              `last_lat` DECIMAL(10,6) DEFAULT NULL,
+              `last_lng` DECIMAL(10,6) DEFAULT NULL,
+              `last_report` DATETIME DEFAULT NULL,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`device_id`),
+              UNIQUE KEY `uk_gps_vehicle` (`vehicle_id`),
+              UNIQUE KEY `uk_gps_imei` (`imei`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='GPS/智能锁设备';
+            """);
+
+        EnsureTable(db, "coupon_campaign", """
+            CREATE TABLE IF NOT EXISTS `coupon_campaign` (
+              `campaign_id` INT NOT NULL AUTO_INCREMENT,
+              `coupon_id` INT NOT NULL,
+              `campaign_name` VARCHAR(80) NOT NULL DEFAULT '',
+              `start_time` DATETIME NOT NULL,
+              `end_time` DATETIME NOT NULL,
+              `total_quota` INT NOT NULL DEFAULT 0,
+              `issued_qty` INT NOT NULL DEFAULT 0,
+              `status` VARCHAR(20) NOT NULL DEFAULT '启用',
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`campaign_id`),
+              KEY `idx_campaign_status_time` (`status`, `start_time`, `end_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='券活动';
+            """);
+
+        EnsureTable(db, "notification_outbox", """
+            CREATE TABLE IF NOT EXISTS `notification_outbox` (
+              `notify_id` INT NOT NULL AUTO_INCREMENT,
+              `channel` VARCHAR(20) NOT NULL DEFAULT '站内',
+              `receiver_type` VARCHAR(30) NOT NULL DEFAULT 'customer',
+              `receiver_id` INT NOT NULL,
+              `template` VARCHAR(30) NOT NULL DEFAULT '',
+              `content` VARCHAR(500) NOT NULL DEFAULT '',
+              `status` VARCHAR(20) NOT NULL DEFAULT '待发送',
+              `retry_count` INT NOT NULL DEFAULT 0,
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `send_time` DATETIME DEFAULT NULL,
+              PRIMARY KEY (`notify_id`),
+              KEY `idx_notify_status_time` (`status`, `create_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='短信/微信通知出站队列';
+            """);
+
+        EnsureTable(db, "damage_assessment", """
+            CREATE TABLE IF NOT EXISTS `damage_assessment` (
+              `assessment_id` INT NOT NULL AUTO_INCREMENT,
+              `order_id` INT NOT NULL,
+              `vehicle_id` INT NOT NULL,
+              `source` VARCHAR(20) NOT NULL DEFAULT '图片',
+              `severity` INT NOT NULL DEFAULT 1,
+              `estimated_cost` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+              `findings` VARCHAR(500) NOT NULL DEFAULT '',
+              `status` VARCHAR(20) NOT NULL DEFAULT '待复核',
+              `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`assessment_id`),
+              KEY `idx_damage_order_time` (`order_id`, `create_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 车损评估';
             """);
     }
 

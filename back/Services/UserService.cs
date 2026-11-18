@@ -14,8 +14,21 @@ public class UserService(AppDbContext db, SessionRegistry sessions)
     ///<summary>密码长度上限：与登录列 VARCHAR(100) 保持足够余量</summary>
     private const int MaxPasswordLength = 50;
 
-    public async Task<List<UserDto>> GetAllStaff()
+    /// <summary>
+    /// 敏感账号操作前校验「当前登录管理员」的密码。
+    /// 只校验一次、不签发任何令牌：密码正确只代表可以继续本次操作。
+    /// </summary>
+    public async Task VerifyAdminPassword(int adminId, string? password)
     {
+        if (string.IsNullOrWhiteSpace(password)) throw new BusinessException("请输入当前管理员账号的密码");
+        var admin = await _db.SystemUsers.FirstOrDefaultAsync(u => u.UserId == adminId && u.UserType == "admin")
+            ?? throw new BusinessException("当前账号不是管理员，无法执行此操作");
+        if (admin.UserStatus != 1) throw new BusinessException("当前管理员账号已停用");
+        if (!BCrypt.Net.BCrypt.Verify(password, admin.LoginPwd))
+            throw new BusinessException("管理员密码不正确，请重试");
+    }
+
+    public async Task<List<UserDto>> GetAllStaff()    {
         return await _db.SystemUsers.Include(u => u.Role).Where(u => u.Role!.RoleName != "管理员").OrderBy(u => u.UserId).Take(Paging.MaxUnpagedRows).Select(u => new UserDto
         {
             UserId = u.UserId,
@@ -24,7 +37,8 @@ public class UserService(AppDbContext db, SessionRegistry sessions)
             RoleName = u.Role!.RoleName,
             UserStatus = u.UserStatus,
             LoginFailCount = u.LoginFailCount,
-            MustChangePassword = u.MustChangePassword
+            MustChangePassword = u.MustChangePassword,
+            AvatarUrl = u.AvatarUrl
         }).ToListAsync();
     }
 
@@ -47,7 +61,8 @@ public class UserService(AppDbContext db, SessionRegistry sessions)
             LoginAccount = user.LoginAccount,
             UserName = user.UserName ?? "",
             RoleName = role.RoleName,
-            UserStatus = 1
+            UserStatus = 1,
+            AvatarUrl = user.AvatarUrl
         };
     }
 

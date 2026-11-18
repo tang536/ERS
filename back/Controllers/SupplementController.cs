@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using ERental.Authorization;
 using ERental.DTOs;
 using ERental.Models;
@@ -54,7 +54,7 @@ public class SupplementController(SupplementService svc) : ControllerBase
 
     ///<summary>待收款补缴账单（前台入口）</summary>
     [HttpGet("bills")]
-    [Authorize(Policy = Policies.ReceptionOnly)]
+    [Authorize(Policy = Policies.AdminOrReception)]
     public async Task<IActionResult> ListSupplementBills([FromQuery] bool outstanding = true)
     {
         try { return Ok(new ApiResponse<object> { Data = await _svc.GetBillsAsync(outstanding) }); }
@@ -63,7 +63,7 @@ public class SupplementController(SupplementService svc) : ControllerBase
 
     ///<summary>补缴收款：现金当场确认落账</summary>
     [HttpPost("settle/{settleId:int}/collect")]
-    [Authorize(Policy = Policies.ReceptionOnly)]
+    [Authorize(Policy = Policies.AdminOrReception)]
     public async Task<IActionResult> CollectSupplement(int settleId, [FromBody] SupplementCollectDto dto)
     {
         try
@@ -76,7 +76,7 @@ public class SupplementController(SupplementService svc) : ControllerBase
 
     ///<summary>查询某张结算单的补缴收款状态</summary>
     [HttpGet("settle/{settleId:int}/status")]
-    [Authorize(Policy = Policies.ReceptionOnly)]
+    [Authorize(Policy = Policies.AdminOrReception)]
     public async Task<IActionResult> GetCollectStatus(int settleId)
     {
         try { return Ok(new ApiResponse<SupplementBillDto> { Data = await _svc.GetStatusBySettleAsync(settleId) }); }
@@ -85,7 +85,7 @@ public class SupplementController(SupplementService svc) : ControllerBase
 
     ///<summary>催缴：提醒顾客还有补缴款未缴清</summary>
     [HttpPost("settle/{settleId:int}/remind")]
-    [Authorize(Policy = Policies.ReceptionOnly)]
+    [Authorize(Policy = Policies.AdminOrReception)]
     public async Task<IActionResult> RemindSupplement(int settleId)
     {
         try

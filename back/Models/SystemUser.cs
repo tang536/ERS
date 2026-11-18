@@ -32,6 +32,11 @@ public class SystemUser
     [Column("user_name")]
     public string? UserName { get; private set; }
 
+    ///<summary>头像地址：统一由 ImageStorage 落盘并保存 /uploads/avatars/… 相对 URL，不再按用户 ID 拼文件名</summary>
+    [MaxLength(255)]
+    [Column("avatar_url")]
+    public string? AvatarUrl { get; private set; }
+
     [Column("user_status")]
     public int UserStatus { get; private set; } = 1;
 
@@ -79,6 +84,10 @@ public class SystemUser
     {
         if (!string.IsNullOrWhiteSpace(userName)) UserName = userName.Trim();
     }
+
+    ///<summary>设置或清除头像地址（空值表示恢复默认首字符头像）</summary>
+    public void SetAvatar(string? url) =>
+        AvatarUrl = string.IsNullOrWhiteSpace(url) ? null : url.Trim();
 
     ///<summary>重置登录密码；管理员重置时同时要求首次登录改密</summary>
     public void SetPasswordHash(string passwordHash, bool requireChange = false, DateTime? expire = null)

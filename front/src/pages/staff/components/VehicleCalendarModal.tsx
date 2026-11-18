@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { orderApi } from '@/api'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import { todayInput, shiftDateInput, fmtDT } from '@/utils/datetime'
 
 interface VehicleCalendarModalProps {
@@ -70,13 +71,14 @@ export default function VehicleCalendarModal({ onClose }: VehicleCalendarModalPr
 
         <div className="modal-body">
           <div className="form-row form-row-inline" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
-            <label className="field">
-              <span className="field-label">开始日期</span>
-              <input className="field-input" type="date" value={from} onChange={e => setFrom(e.target.value)} />
-            </label>
-            <label className="field">
-              <span className="field-label">结束日期</span>
-              <input className="field-input" type="date" value={to} onChange={e => setTo(e.target.value)} />
+            <label className="field field-grow">
+              <span className="field-label">查询日期</span>
+              <DateRangeCalendar
+                start={from}
+                end={to}
+                placeholder="选择可用日历区间"
+                onChange={(s, e) => { setFrom(s); setTo(e) }}
+              />
             </label>
             <button className="btn-sm btn-sm-default btn-icon-sm" onClick={load} disabled={loading}>
               <Icon name="refresh" size={15} className={loading ? 'spin' : ''} /><span className="btn-label">刷新</span>
@@ -119,10 +121,6 @@ export default function VehicleCalendarModal({ onClose }: VehicleCalendarModalPr
               <div>该时间窗内没有可展示的车辆</div>
             </div>
           )}
-        </div>
-
-        <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={onClose}>关闭</button>
         </div>
       </div>
     </div>,

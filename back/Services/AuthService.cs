@@ -11,7 +11,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace ERental.Services;
 
-public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry sessions, LoginIpGuard ipGuard, IHttpContextAccessor http, SliderCaptchaService? sliderCaptcha = null)
+public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry sessions, LoginIpGuard ipGuard, IHttpContextAccessor http, SliderCaptchaService? sliderCaptcha = null, OpsExtService? ops = null)
 {
     ///<summary>用户类型：顾客</summary>
     private const string UserTypeCustomer = "customer";
@@ -136,6 +136,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         return new LoginResponseDto
         {
             Token = token,
+            LoginAccount = user.LoginAccount,
             //续期令牌
             RefreshToken = GenerateJwt(user.UserId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime(), refreshJti, user.MustChangePassword),
             UserType = user.UserType,
@@ -144,6 +145,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
             PermissionCodes = await LoadPermissionCodesAsync(user.Role),
             UserName = user.UserName ?? user.LoginAccount,
             UserId = user.UserId,
+            AvatarUrl = user.AvatarUrl,
             ProfileCompleted = true,
             MustChangePassword = user.MustChangePassword,
             PasswordResetExpire = user.PwdResetExpire
@@ -233,6 +235,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         return new LoginResponseDto
         {
             Token = token,
+            LoginAccount = customer.LoginAccount ?? account,
             RefreshToken = GenerateJwt(customer.CustomerId, customer.LoginAccount ?? account, UserTypeCustomer, RoleCustomer, sid, TokenTypeRefresh, RefreshLifetime(), refreshJti),
             UserType = UserTypeCustomer,
             //角色名固定为「顾客」，与前端菜单表逐条对应
@@ -240,6 +243,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
             MemberLevel = customer.MemberLevel,
             UserName = customer.FullName,
             UserId = customer.CustomerId,
+            AvatarUrl = customer.AvatarUrl,
             ProfileCompleted = customer.ProfileCompleted
         };
     }
@@ -258,6 +262,12 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
         //身份证号与手机号在租车环节采集，注册阶段不强制
         _db.Customers.Add(customer);
         await _db.SaveChangesAsync();
+        //推荐码绑定失败不应阻断注册：注册是主流程，邀请关系只是附加权益
+        if (ops is not null && !string.IsNullOrWhiteSpace(dto.ReferralCode))
+        {
+            try { await ops.BindReferralAsync(customer.CustomerId, dto.ReferralCode); }
+            catch { /* 推荐码无效/重复绑定时静默跳过，注册仍成功 */ }
+        }
         //账号生命周期全流程留痕
         await WriteLog(null, $"顾客注册成功（{account}，顾客ID {customer.CustomerId}）", "用户登录", "成功", customer.CustomerId);
         return customer;
@@ -544,6 +554,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
                 //姓名可能为空（注册只填用户名），为空时回落到令牌里的账号名
                 UserName = string.IsNullOrEmpty(customer.FullName) ? account : customer.FullName,
                 UserId = userId,
+                AvatarUrl = customer.AvatarUrl,
                 MemberLevel = customer.MemberLevel,
                 //复用模型上的计算属性
                 ProfileCompleted = customer.ProfileCompleted
@@ -563,6 +574,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
             PermissionCodes = await LoadPermissionCodesAsync(user.Role),
             UserName = user.UserName ?? user.LoginAccount,
             UserId = userId,
+            AvatarUrl = user.AvatarUrl,
             ProfileCompleted = true,
             MustChangePassword = user.MustChangePassword,
             PasswordResetExpire = user.PwdResetExpire

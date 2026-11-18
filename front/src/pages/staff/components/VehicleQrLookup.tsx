@@ -182,7 +182,6 @@ export default function VehicleQrLookup({ onClose, onPick, pickLabel = '选择�
         </div>
 
         <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={onClose}>关闭</button>
           {onPick && detail && (
             <button className="btn-sm btn-sm-primary" onClick={handlePick}>
               <Icon name="success" size={14} color="#fff" />{pickLabel}

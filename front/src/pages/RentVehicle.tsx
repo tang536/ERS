@@ -4,9 +4,11 @@ import { customerApi, orderApi, couponApi, addonApi, pointApi } from '@/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import { nowDatetimeInput, afterDaysDatetimeInput, isBeforeNow, clampLeaseStart } from '@/utils/datetime'
 import { newRequestId } from '@/utils/requestId'
 import type { RentableVehicle, RentEstimate, MyCoupon, AddonItem, PointSummary } from '@/types'
+import { AppointmentModal } from './components/CustomerExtras'
 
 /**
  * 车辆详情与下单页（/rent/:vehicleId）。
@@ -58,6 +60,7 @@ export default function RentVehicle() {
   const [estimate, setEstimate] = useState<RentEstimate | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+  const [appointmentOpen, setAppointmentOpen] = useState(false)
 
   const [coupons, setCoupons] = useState<MyCoupon[]>([])
   const [addons, setAddons] = useState<AddonItem[]>([])
@@ -218,6 +221,9 @@ export default function RentVehicle() {
         <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => navigate('/coupons')}>
           <Icon name="coupon" size={14} /><span className="btn-label">我的优惠券</span>
         </button>
+        <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => setAppointmentOpen(true)}>
+          <Icon name="clock" size={14} /><span className="btn-label">预约到店</span>
+        </button>
       </div>
 
       {/* ===== 车辆主信息 ===== */}
@@ -269,29 +275,23 @@ export default function RentVehicle() {
           ))}
         </div>
 
-        <div className="form-row">
-          <div className="form-group">
-            <label>起租时间 <span className="req">*</span></label>
-            <input
-              type="datetime-local"
-              className={errors.leaseStart ? 'has-error' : ''}
-              value={form.leaseStart}
-              min={nowDatetimeInput()}
-              onChange={e => applyStart(e.target.value)}
-            />
-            {errors.leaseStart && <div className="field-error">{errors.leaseStart}</div>}
-          </div>
-          <div className="form-group">
-            <label>到期时间 <span className="req">*</span></label>
-            <input
-              type="datetime-local"
-              className={errors.leaseEnd ? 'has-error' : ''}
-              value={form.leaseEnd}
-              min={form.leaseStart || nowDatetimeInput()}
-              onChange={e => { setForm({ ...form, leaseEnd: e.target.value }); setErrors({ ...errors, leaseEnd: '' }) }}
-            />
-            {errors.leaseEnd && <div className="field-error">{errors.leaseEnd}</div>}
-          </div>
+        <div className="form-group">
+          <label>租期 <span className="req">*</span></label>
+          <DateRangeCalendar
+            withTime
+            start={form.leaseStart}
+            end={form.leaseEnd}
+            minDate={nowDatetimeInput().slice(0, 10)}
+            placeholder="选择起租与到期日期"
+            onChange={(s, e) => {
+              if (s) applyStart(s)
+              else setForm(f => ({ ...f, leaseStart: '' }))
+              setForm(f => ({ ...f, leaseEnd: e }))
+              setErrors(prev => ({ ...prev, leaseStart: '', leaseEnd: '' }))
+            }}
+          />
+          {errors.leaseStart && <div className="field-error">{errors.leaseStart}</div>}
+          {errors.leaseEnd && <div className="field-error">{errors.leaseEnd}</div>}
         </div>
 
         {estimate ? (
@@ -301,13 +301,18 @@ export default function RentVehicle() {
               <div><span>计费时长</span><strong>{estimate.hours} 小时</strong></div>
               <div><span>小时租金</span><strong>{money(estimate.hourlyRent ?? estimate.dailyRent / 24)}</strong></div>
               <div><span>会员折扣</span><strong>{(estimate.discount * 10).toFixed(1)} 折</strong></div>
+              {(estimate.priceFactor ?? 1) > 1 && (
+                <div><span>时段系数</span><strong>×{Number(estimate.priceFactor).toFixed(2)}</strong></div>
+              )}
               <div><span>预收租金</span><strong>{money(estimate.totalRent)}</strong></div>
               <div><span>押金</span><strong>{money(estimate.deposit)}</strong></div>
               <div><span>优惠前应付</span><strong>{money(estimate.payable)}</strong></div>
             </div>
             {estimate.creditNote && (
               <p className="estimate-tip" style={{ color: 'var(--warning-text, #b45309)' }}>
-                <Icon name="info" size={13} chip />信用提示：{estimate.creditNote}
+                <Icon name="info" size={13} chip />
+                根据信用记录，本次押金按 {money(estimate.deposit)} 收取
+                {estimate.maxLeaseDays ? `，单次租期最长 ${estimate.maxLeaseDays} 天` : ''}。
               </p>
             )}
             {!!estimate.maxLeaseDays && estimate.hours > estimate.maxLeaseDays * 24 && (
@@ -376,8 +381,11 @@ export default function RentVehicle() {
                         checked={checked}
                         onChange={e => setAddonIds(prev => e.target.checked ? [...prev, a.addonId] : prev.filter(x => x !== a.addonId))}
                       />
+                      <span className="addon-item-icon">
+                        {a.imageUrl ? <img src={a.imageUrl} alt="" loading="lazy" /> : <Icon name="addon" size={15} />}
+                      </span>
                       <span className="addon-item-main">
-                        <strong><Icon name="addon" size={15} />{a.name}</strong>
+                        <strong>{a.name}</strong>
                         {a.description && <small>{a.description}</small>}
                       </span>
                       <span className="addon-item-price">
@@ -404,9 +412,12 @@ export default function RentVehicle() {
             <button className="btn-sm btn-sm-primary" onClick={handleSubmit} disabled={submitting}>
               {submitting ? '下单中…' : '确认下单并支付'}
             </button>
-            <button className="btn-sm btn-sm-default" onClick={() => navigate('/rent')}>再挑一台</button>
           </div>
         </div>
+      )}
+
+      {appointmentOpen && (
+        <AppointmentModal vehicle={vehicle} onClose={() => setAppointmentOpen(false)} />
       )}
     </div>
   )

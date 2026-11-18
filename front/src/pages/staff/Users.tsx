@@ -8,6 +8,7 @@ import type { StaffUser } from '@/types'
 import { fmtDT } from '@/utils/datetime'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import Icon from '@/components/Icon'
+import Avatar from '@/components/Avatar'
 
 const EMPTY = { loginAccount: '', password: '', userName: '', roleType: 'reception' }
 
@@ -48,6 +49,22 @@ export default function Users() {
     return okKw && okRole
   })
 
+  /**
+   * 敏感账号操作统一入口：每次都要求输入「当前登录管理员」的密码。
+   * 返回 null 表示用户取消；密码同时提交给后端做二次校验，前端弹窗不是唯一防线。
+   */
+  const askAdminPassword = async (action: string): Promise<string | null> => {
+    const pwd = await prompt({
+      title: '管理员身份验证',
+      message: `即将「${action}」，请输入当前管理员账号「${user?.loginAccount || ''}」的登录密码。`,
+      inputType: 'password',
+      placeholder: '当前管理员密码',
+      confirmText: '验证并继续',
+      validate: v => (v.trim() ? null : '请输入当前管理员密码'),
+    })
+    return pwd ? pwd.trim() : null
+  }
+
   const validate = () => {
     const e: Record<string, string> = {}
     if (!editId) {
@@ -66,12 +83,14 @@ export default function Users() {
 
   const handleSave = async () => {
     if (!validate()) return
+    const pwd = await askAdminPassword(editId ? '编辑该工作人员账号' : '新增工作人员账号')
+    if (!pwd) return
     try {
       if (editId) {
-        await userApi.update(editId, { userName: form.userName.trim() })
+        await userApi.update(editId, { userName: form.userName.trim() }, pwd)
         toast('账号信息已更新', 'success')
       } else {
-        await userApi.create({ ...form, loginAccount: form.loginAccount.trim(), userName: form.userName.trim() })
+        await userApi.create({ ...form, loginAccount: form.loginAccount.trim(), userName: form.userName.trim() }, pwd)
         toast('账号创建成功', 'success')
       }
       setShowModal(false)
@@ -82,11 +101,20 @@ export default function Users() {
   }
 
   const handleToggle = async (u: StaffUser) => {
+    const action = u.userStatus === 1 ? '禁用该账号' : '启用该账号'
+    const ok = await confirm({
+      title: action,
+      message: `${action}「${u.loginAccount}」？${u.userStatus === 1 ? '停用后该账号的在线会话会立即失效。' : '启用后该账号可立即恢复登录。'}`,
+      type: 'warning',
+      confirmText: '继续',
+    })
+    if (!ok) return
+    const pwd = await askAdminPassword(action)
+    if (!pwd) return
     try {
-      // 停用走专用端点（系统操作「停用员工账号」）：后端会顺手吊销该账号在线会话；
-      // 启用仍复用编辑端点，只把状态位改回 1。
-      if (u.userStatus === 1) await userApi.disable(u.userId)
-      else await userApi.update(u.userId, { userStatus: 1 })
+      // 停用走专用端点（后端顺手吊销在线会话）；启用复用编辑端点，只改状态位
+      if (u.userStatus === 1) await userApi.disable(u.userId, pwd)
+      else await userApi.update(u.userId, { userStatus: 1 }, pwd)
       toast(`账号 ${u.loginAccount} 已${u.userStatus === 1 ? '禁用' : '启用'}`, 'success')
       load()
     } catch (e: any) { toast(e?.message || '操作失败', 'error') }
@@ -110,8 +138,10 @@ export default function Users() {
       confirmText: '生成临时密码',
     })
     if (!ok) return
+    const pwd = await askAdminPassword('重置该账号密码')
+    if (!pwd) return
     try {
-      const res: any = await userApi.resetPassword(u.userId)
+      const res: any = await userApi.resetPassword(u.userId, pwd)
       setTempPwd({ account: u.loginAccount, password: res.data?.temporaryPassword || '', expiresAt: res.data?.expiresAt || '' })
       load()
     } catch (e: any) { toast(e?.message || '重置密码失败', 'error') }
@@ -132,8 +162,10 @@ export default function Users() {
       confirmText: '确认删除',
     })
     if (!ok) return
+    const pwd = await askAdminPassword('删除该工作人员账号')
+    if (!pwd) return
     try {
-      await userApi.remove(u.userId)
+      await userApi.remove(u.userId, pwd)
       toast('账号已删除', 'success')
       load()
     } catch (e: any) { toast(e?.message || '删除失败', 'error') }
@@ -176,7 +208,15 @@ export default function Users() {
 
   const columns: DataTableColumn<StaffUser>[] = [
     { key: 'loginAccount', label: '登录账号', className: 'mono strong' },
-    { key: 'userName', label: '姓名' },
+    {
+      key: 'userName', label: '姓名',
+      render: u => (
+        <span className="staff-user-cell">
+          <Avatar className="staff-avatar" name={u.userName || u.loginAccount} src={u.avatarUrl} />
+          <span>{u.userName || '—'}</span>
+        </span>
+      ),
+    },
     {
       key: 'roleName', label: '角色',
       render: u => (
@@ -194,10 +234,10 @@ export default function Users() {
       key: 'actions', label: '操作',
       render: u => (
         <div className="btn-group">
-          <button className="btn-sm btn-sm-default" onClick={() => openEditor(u)}>编辑</button>
-          <button className="btn-sm btn-sm-default" onClick={() => handleResetPassword(u)}>重置密码</button>
-          <button className="btn-sm btn-sm-default" onClick={() => handleToggle(u)}>{u.userStatus === 1 ? '禁用' : '启用'}</button>
-          <button className="btn-sm btn-sm-danger" onClick={() => handleDelete(u)} disabled={u.roleName === '管理员'} title={u.roleName === '管理员' ? '唯一管理员账号不可删除' : ''}>删除</button>
+          <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => openEditor(u)}><Icon name="config" size={14} /><span className="btn-label">编辑</span></button>
+          <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => handleResetPassword(u)}><Icon name="lock" size={14} /><span className="btn-label">重置密码</span></button>
+          <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => handleToggle(u)}><Icon name={u.userStatus === 1 ? 'shield' : 'success'} size={14} /><span className="btn-label">{u.userStatus === 1 ? '禁用' : '启用'}</span></button>
+          <button className="btn-sm btn-sm-danger btn-icon-sm" onClick={() => handleDelete(u)} disabled={u.roleName === '管理员'} title={u.roleName === '管理员' ? '唯一管理员账号不可删除' : ''}><Icon name="trash" size={14} /><span className="btn-label">删除</span></button>
         </div>
       ),
     },
@@ -233,10 +273,6 @@ export default function Users() {
         </div>
       </div>
 
-      <div className="toolbar-note" style={{ margin: '-6px 0 14px' }}>
-        <Icon name="shield" size={14} />系统不保存明文密码；重置会生成一次性临时密码，本人首次登录必须修改。不要把临时密码发到聊天或工单。
-      </div>
-
       <DataTable columns={columns} rows={filtered} rowKey={u => u.userId} ariaLabel="员工账号列表" />
 
       {loading && <div className="loading-line"><Icon name="refresh" size={18} />数据加载中…</div>}
@@ -249,10 +285,7 @@ export default function Users() {
         <div className="danger-zone">
           <div className="danger-zone-text">
             <strong>注销我的管理员账号</strong>
-            <p>
-              注销后当前管理员账号将被停用、无法再登录；历史业务数据与操作日志全部保留以便追溯。
-              系统中最后一名管理员不允许注销，需先新增其他管理员；如需停用前台/财务账号，请使用列表中的「禁用」。
-            </p>
+            <p>注销后该账号停用且无法登录，历史记录保留；最后一名管理员不可注销。</p>
           </div>
           <button className="btn-sm btn-sm-danger" onClick={handleSelfDeactivate}>
             <Icon name="warning" size={15} color="#fff" />注销我的账号
@@ -347,9 +380,6 @@ export default function Users() {
                 </div>
                 {tempPwd.expiresAt && <div className="field-hint">失效时间：{fmtDT(tempPwd.expiresAt)}</div>}
               </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn-sm btn-sm-default" onClick={() => setTempPwd(null)}>关闭</button>
             </div>
           </div>
         </div>

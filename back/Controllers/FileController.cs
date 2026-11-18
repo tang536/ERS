@@ -9,7 +9,7 @@ namespace ERental.Controllers;
 
 /// <summary>
 /// 私有上传文件的唯一读取入口。
-/// 公开静态目录只保留 vehicle / avatars；维保照片、交接照片、合同签名与 AI 成品
+/// 公开静态目录只保留 vehicle / avatars / coupon / addon；维保照片、交接照片、合同签名与 AI 成品
 /// 都含有顾客个人信息或经营证据，必须按角色鉴权后读取。
 /// access token 同时写入 HttpOnly Cookie，且 JWT 只在 GET/HEAD 时接受 Cookie，
 /// 因此前端的 &lt;img src&gt; 可以直接加载，而写接口仍然只认 Bearer。
@@ -23,10 +23,17 @@ public class FileController(AppDbContext db, IWebHostEnvironment env) : Controll
     private const string MaintenanceCategory = "maintenance";
     private const string HandoverCategory = "handover";
     private const string AiCategory = "ai";
+    // 公开素材：车辆、头像、券图、增值服务图。前端用普通 <img src="/uploads/..."> 加载，
+    // 由本控制器用登录态 Cookie 兜底，避免静态中间件路径/部署差异导致图片 401/404。
+    private const string VehicleCategory = "vehicle";
+    private const string AvatarCategory = "avatars";
+    private const string CouponCategory = "coupon";
+    private const string AddonCategory = "addon";
 
     private static readonly HashSet<string> AllowedCategories = new(StringComparer.OrdinalIgnoreCase)
     {
-        ContractCategory, MaintenanceCategory, HandoverCategory, AiCategory
+        ContractCategory, MaintenanceCategory, HandoverCategory, AiCategory,
+        VehicleCategory, AvatarCategory, CouponCategory, AddonCategory
     };
 
     private readonly AppDbContext _db = db;
@@ -76,6 +83,8 @@ public class FileController(AppDbContext db, IWebHostEnvironment env) : Controll
 
     private async Task<bool> CanReadAsync(string category, string relative)
     {
+        // 公开素材：登录用户即可读取。路径本身仍限制在 uploads 下，防目录穿越。
+        if (category is VehicleCategory or AvatarCategory or CouponCategory or AddonCategory) return true;
         // 维保与交接照片是门店内部证据，只给管理员/前台；财务对账不需要看现场照片。
         if (category is MaintenanceCategory or HandoverCategory) return IsAdmin || IsReception;
 

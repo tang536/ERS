@@ -71,7 +71,7 @@ public static class Policies
     /// <summary>前台或财务：小票与结算单打印</summary>
     public const string ReceptionOrFinance = "ReceptionOrFinance";
 
-    /// <summary>仅财务：财务口径报表与明细导出</summary>
+    /// <summary>仅财务：财务口径报表与明细导出（管理员保留核账入口）</summary>
     public const string FinanceOnly = "FinanceOnly";
 
     /// <summary>仅顾客：本人的订单、会员、档案</summary>
@@ -107,7 +107,7 @@ public static class AuthorizationSetup
         options.AddPolicy(Policies.ReceptionOnly, p => p.RequireRole(RoleNames.Reception));
         options.AddPolicy(Policies.OrderRead, p => p.RequireRole(RoleNames.Admin, RoleNames.Reception, RoleNames.Finance, RoleNames.Customer));
         options.AddPolicy(Policies.ReceptionOrFinance, p => p.RequireRole(RoleNames.Reception, RoleNames.Finance));
-        options.AddPolicy(Policies.FinanceOnly, p => p.RequireRole(RoleNames.Finance));
+        options.AddPolicy(Policies.FinanceOnly, p => p.RequireRole(RoleNames.Admin, RoleNames.Finance));
         options.AddPolicy(Policies.CustomerOnly, p => p.RequireRole(RoleNames.Customer));
         options.AddPolicy(Policies.AdminOrReceptionOrCustomer, p => p.RequireRole(RoleNames.Admin, RoleNames.Reception, RoleNames.Customer));
         options.AddPolicy(Policies.AnyRole, p => p.RequireRole(RoleNames.Admin, RoleNames.Reception, RoleNames.Finance, RoleNames.Customer));

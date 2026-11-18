@@ -40,6 +40,10 @@ public class OrderAddon
     [Column("amount", TypeName = "decimal(10,2)")]
     public decimal Amount { get; private set; }
 
+    ///<summary>取消订单时是否已归还库存，避免重复回补</summary>
+    [Column("stock_restored")]
+    public bool StockRestored { get; private set; }
+
     ///<summary>下单时固化服务项快照并算出金额</summary>
     public static OrderAddon Snapshot(int orderId, AddonItem item, int billableDays)
     {
@@ -55,4 +59,6 @@ public class OrderAddon
             Amount = item.AmountFor(billableDays),
         };
     }
+
+    public void MarkStockRestored() => StockRestored = true;
 }

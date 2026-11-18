@@ -28,6 +28,24 @@ public class AddonController(AddonService svc) : ControllerBase
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
+    ///<summary>上传服务图片：返回 /uploads/addon/… 相对 URL，保存时随 AddonInput.ImageUrl 回传</summary>
+    [HttpPost("image")]
+    [Authorize(Policy = Policies.AdminOnly)]
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 6 * 1024 * 1024)]
+    public async Task<IActionResult> UploadImage(IFormFile file)
+    {
+        try
+        {
+            var url = await _svc.SaveImageAsync(file);
+            return Ok(new ApiResponse<object> { Data = new { url }, Message = "图片已上传" });
+        }
+        catch (Exception ex) when (ErrorText.IsHandled(ex))
+        {
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false });
+        }
+    }
+
     [HttpPut("{id:int}")]
     [Authorize(Policy = Policies.AdminOnly)]
     public async Task<IActionResult> UpdateAddon(int id, [FromBody] AddonInput input)

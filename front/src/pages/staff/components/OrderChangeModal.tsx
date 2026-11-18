@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { orderApi, orderChangeApi } from '@/api'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import { fmtDT, toDatetimeInput } from '@/utils/datetime'
 import type { Order, OrderChange, RentableVehicle } from '@/types'
 
@@ -139,15 +140,15 @@ export default function OrderChangeModal({ order, onClose, onDone }: {
             </>
           ) : (
             <>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>新的起租时间 <span className="req">*</span></label>
-                  <input type="datetime-local" value={leaseStart} onChange={e => setLeaseStart(e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label>新的到期时间 <span className="req">*</span></label>
-                  <input type="datetime-local" value={leaseEnd} min={leaseStart} onChange={e => setLeaseEnd(e.target.value)} />
-                </div>
+              <div className="form-group">
+                <label>新的租期 <span className="req">*</span></label>
+                <DateRangeCalendar
+                  withTime
+                  start={leaseStart}
+                  end={leaseEnd}
+                  placeholder="选择起租与到期时间"
+                  onChange={(s, e) => { setLeaseStart(s); setLeaseEnd(e) }}
+                />
               </div>
               <div className="form-group">
                 <label>变更原因</label>
@@ -194,9 +195,6 @@ export default function OrderChangeModal({ order, onClose, onDone }: {
               </table>
             </div>
           )}
-        </div>
-        <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={onClose} disabled={saving}>关闭</button>
         </div>
       </div>
     </div>

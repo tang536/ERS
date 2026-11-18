@@ -59,6 +59,10 @@ export const ROUTE_ROLES: Record<string, string[]> = {
   // 旧路径：支付配置已并入「系统配置」页（/config?tab=pay），仅保留登记以兼容旧链接
   '/pay-config': [ROLE.ADMIN],
   '/my-orders': [ROLE.CUSTOMER],
+  // 归还结算单：从「我的订单」拆出的独立页，只对顾客开放
+  '/my-settlements': [ROLE.CUSTOMER],
+  // 消息通知：所有登录角色共用同一条 message 链路（员工看通知，顾客看客服回复）
+  '/notifications': [ROLE.ADMIN, ROLE.RECEPTION, ROLE.FINANCE, ROLE.CUSTOMER],
   // 线上补缴支付页：顾客为逾期 / 损坏费用在线缴款（独立于首付款通道）
   '/supplement-pay': [ROLE.CUSTOMER],
   '/rent': [ROLE.CUSTOMER],

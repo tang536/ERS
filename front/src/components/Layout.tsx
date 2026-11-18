@@ -82,12 +82,15 @@ const CUSTOMER_NAV: Array<{ key: string; label: string; path: string; icon: Icon
 const MENU_ALIAS: Record<string, string> = {
   '/vehicle-catalog': '/rent',   // 全部车辆：入口在「线上租车」页
   '/coupons': '/profile',        // 我的优惠券：个人中心的小按钮进入
+  '/my-settlements': '/my-orders', // 归还结算单：从「我的订单」拆出的子页
 }
 
 /** 归属菜单用于高亮，但浏览器标签标题仍应显示子页面自己的名字 */
 const PAGE_TITLE_OVERRIDE: Record<string, string> = {
   '/coupons': '我的优惠券',
   '/vehicle-catalog': '全部车辆',
+  '/notifications': '消息通知',
+  '/my-settlements': '归还结算单',
 }
 
 /**
@@ -115,7 +118,7 @@ interface SearchHit {
 export default function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { user, hasRole } = useAuth()
+  const { user, hasRole, login } = useAuth()
   const { toast, confirm } = useUI()
 
   // ===== 打印主题无关化：纸面永远白底黑字 =====
@@ -249,6 +252,21 @@ export default function Layout() {
     if (matches.length === 0) return null
     return matches.reduce((a, b) => (b.path.length > a.path.length ? b : a))
   }, [menus, location.pathname])
+
+  /**
+   * 子页面返回目标。
+   * 规则：当前路径不是侧边栏的一级菜单时，顶栏必须出现「返回」，
+   * 否则 /coupons、/vehicle-catalog、/pay/…、/notifications 这类页面只能靠浏览器的后退键。
+   */
+  const subPageBack = useMemo<string | null>(() => {
+    const p = location.pathname
+    if (p === '/') return null
+    const direct = menus.some(m => p === m.path || p.startsWith(m.path + '/'))
+    if (direct) return null
+    return MENU_ALIAS[p]
+      || MENU_PREFIX_ALIAS.find(([prefix]) => p.startsWith(prefix))?.[1]
+      || (p === '/notifications' ? (isCustomer ? '/profile' : homePathOf(user)) : null)
+  }, [location.pathname, menus, isCustomer, roleName, user])
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 4)
@@ -507,7 +525,6 @@ export default function Layout() {
   const roleLabel = isCustomer ? `顾客 · ${user?.memberLevel || '普通会员'}` : roleName
 
   // ===== 顶栏头像上传（员工没有「个人中心」页，入口放在账号菜单里）=====
-  const [avatarVer, setAvatarVer] = useState(0)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
@@ -517,8 +534,9 @@ export default function Layout() {
     if (!f) return
     setUploadingAvatar(true)
     try {
-      await authApi.uploadAvatar(f)
-      setAvatarVer(v => v + 1)     // 破缓存 + 让 Avatar 清掉之前的 404 失败标记
+      const res: any = await authApi.uploadAvatar(f)
+      const url = res?.data?.url
+      if (url && user) login({ ...user, avatarUrl: url })
       setUserMenuOpen(false)
       toast('头像已更新', 'success')
     } catch (err: any) {
@@ -597,7 +615,17 @@ export default function Layout() {
                   <Icon name="menu" size={20} />
                 </button>
               )}
-              <h1 className="header-title">{activeMenu?.label || '工作台'}</h1>
+              {subPageBack && (
+                <button
+                  className="header-back-btn"
+                  title="返回上一级"
+                  aria-label="返回上一级"
+                  onClick={() => navigate(subPageBack)}
+                >
+                  <Icon name="chevron-left" size={18} />
+                </button>
+              )}
+              <h1 className="header-title">{PAGE_TITLE_OVERRIDE[location.pathname] || activeMenu?.label || '工作台'}</h1>
               {/* 面包屑只标「属于哪个功能区」，不再重复当前页名——
                   原来 h1 和面包屑末级都写着「数据看板」，紧挨着读两遍是纯冗余。
                   当前页由 h1 回答，面包屑回答「它挂在哪一组下」。 */}
@@ -756,8 +784,14 @@ export default function Layout() {
                       ))}
                     </div>
                   )}
-                  <div className="dropdown-foot notify-foot">
-                    共 {notifications.length} 条，未读 {unread} 条<Icon name="info" size={13} />
+                  <div
+                    className="dropdown-foot notify-foot"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => { setNotifyOpen(false); navigate('/notifications') }}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setNotifyOpen(false); navigate('/notifications') } }}
+                  >
+                    查看全部消息（未读 {unread} 条）<Icon name="chevron-right" size={13} />
                   </div>
                 </div>
               )}
@@ -772,10 +806,8 @@ export default function Layout() {
               >
                 <Avatar
                   className="avatar"
-                  userId={user?.userId}
-                  userType={user?.userType}
                   name={user?.userName}
-                  version={avatarVer}
+                  src={user?.avatarUrl || undefined}
                 />
                 <div className="user-info">
                   <span className="user-name">{displayName}</span>

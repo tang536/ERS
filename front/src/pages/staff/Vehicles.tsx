@@ -16,6 +16,9 @@ import VehicleCalendarModal from './components/VehicleCalendarModal'
 import VehicleQrLookup from './components/VehicleQrLookup'
 import VehicleCheckPanel from './components/VehicleCheckPanel'
 import MaintenancePanel from './components/MaintenancePanel'
+import MaintenancePlanPanel from './components/MaintenancePlanPanel'
+import { SparePartPanel } from './components/OpsExtPanels'
+import { VehicleAssetPanel } from './components/OpsExtAssets'
 import AiImagePanel from './components/AiImagePanel'
 import BatchCreateModal from './components/BatchCreateModal'
 import BatchEditModal from './components/BatchEditModal'
@@ -148,6 +151,8 @@ export default function Vehicles() {
     if (v === 'check' && hasRole([ROLE.ADMIN])) return 'check'
     return hasRole([ROLE.ADMIN]) ? 'list' : 'maintenance'
   })
+  /** 维保页签内部的小切换：工单 / 保养计划 / 备件库存，避免再开顶级页签 */
+  const [maintTab, setMaintTab] = useState<'work' | 'plan' | 'parts' | 'assets'>('work')
 
   const load = async () => {
     setLoading(true)
@@ -533,7 +538,7 @@ export default function Vehicles() {
             </button>
           )}
           {/* 维保管理页签按钮 */}
-          {view === 'maintenance' && (
+          {view === 'maintenance' && maintTab === 'work' && (
             <>
               <button className="btn-sm btn-sm-primary btn-icon-sm" onClick={() => window.dispatchEvent(new CustomEvent('maintenance-add-work'))}>
                 <Icon name="create-order" size={15} color="#fff" /><span className="btn-label">新增工单</span>
@@ -549,7 +554,7 @@ export default function Vehicles() {
           {isAdmin && (
             <>
               <button className={`tab-btn ${view === 'list' ? 'active' : ''}`} onClick={() => setView('list')}>
-                车辆档案
+                车辆台账
               </button>
               <button className={`tab-btn ${view === 'check' ? 'active' : ''}`} onClick={() => setView('check')}>
                 车辆盘点
@@ -591,7 +596,15 @@ export default function Vehicles() {
       {view === 'check' ? (
         <VehicleCheckPanel refreshToken={checkRefresh} />
       ) : view === 'maintenance' ? (
-        <MaintenancePanel />
+        <>
+          <div className="tab-switch maint-subtabs">
+            <button className={`tab-btn ${maintTab === 'work' ? 'active' : ''}`} onClick={() => setMaintTab('work')}>维保工单</button>
+            <button className={`tab-btn ${maintTab === 'plan' ? 'active' : ''}`} onClick={() => setMaintTab('plan')}>保养计划</button>
+            <button className={`tab-btn ${maintTab === 'parts' ? 'active' : ''}`} onClick={() => setMaintTab('parts')}>配件库存</button>
+            <button className={`tab-btn ${maintTab === 'assets' ? 'active' : ''}`} onClick={() => setMaintTab('assets')}>车辆档案</button>
+          </div>
+          {maintTab === 'plan' ? <MaintenancePlanPanel /> : maintTab === 'parts' ? <SparePartPanel /> : maintTab === 'assets' ? <VehicleAssetPanel /> : <MaintenancePanel />}
+        </>
       ) : (
       <>
       {isAdmin && selected.length > 0 && (
@@ -608,24 +621,24 @@ export default function Vehicles() {
         </div>
       )}
       <div className="table-wrap">
-        <table className="data-table with-checkbox">
+        <table className="data-table with-checkbox vehicle-table">
           <thead>
             <tr>
               {isAdmin && <th className="col-check"><input type="checkbox" checked={allSelected} onChange={toggleSelectAll} aria-label="全选" /></th>}
-              <th>图片</th><th>车牌号</th>
-              <th>
+              <th>车辆</th>
+              <th className="col-hide-sm">
                 <span className="th-with-filter">品牌</span>
                 <DictThFilter options={brandOptions} value={brandFilter} onChange={setBrandFilter} />
               </th>
-              <th className="col-hide-lg">车架号</th>
+              <th className="col-hide-lg col-hide-sm">车架号</th>
               <SortTh label="采购时间" active={sortBy === 'buyTime'} dir={sortDir}
-                      onClick={() => toggleSort('buyTime')} className="col-hide-lg" />
+                      onClick={() => toggleSort('buyTime')} className="col-hide-lg col-hide-sm" />
               <SortTh label="购入价" active={sortBy === 'buyPrice'} dir={sortDir}
-                      onClick={() => toggleSort('buyPrice')} className="num col-hide-md" />
+                      onClick={() => toggleSort('buyPrice')} className="num col-hide-md col-hide-sm" />
               <SortTh label="日租金" active={sortBy === 'dailyRent'} dir={sortDir}
                       onClick={() => toggleSort('dailyRent')} className="num" />
               <SortTh label="押金" active={sortBy === 'deposit'} dir={sortDir}
-                      onClick={() => toggleSort('deposit')} className="num" />
+                      onClick={() => toggleSort('deposit')} className="num col-hide-sm" />
               <th>状态</th><th>操作</th>
             </tr>
           </thead>
@@ -633,19 +646,26 @@ export default function Vehicles() {
             {paged.map(v => (
               <tr key={v.vehicleId}>
                 {isAdmin && <td className="col-check" data-label="选择"><input type="checkbox" checked={selected.includes(v.vehicleId)} onChange={() => toggleSelect(v.vehicleId)} aria-label={`选择车辆 ${v.vehicleNo}`} /></td>}
-                <td>{thumb(v, setLightbox)}</td>
-                <td className="strong">{v.vehicleNo}</td>
-                <td>{v.brand || '—'}</td>
-                <td className="mono col-hide-lg">{v.frameNumber || '—'}</td>
-                <td className="cell-time col-hide-lg">{fmtD(v.buyTime)}</td>
-                <td className="num col-hide-md">¥{v.buyPrice ?? '—'}</td>
+                <td>
+                  <span className="vehicle-name-cell">
+                    {thumb(v, setLightbox)}
+                    <span className="vehicle-name-text">
+                      <strong>{v.vehicleNo}</strong>
+                      <small>{v.brand || '未填写品牌'}</small>
+                    </span>
+                  </span>
+                </td>
+                <td className="col-hide-sm">{v.brand || '—'}</td>
+                <td className="mono col-hide-lg col-hide-sm">{v.frameNumber || '—'}</td>
+                <td className="cell-time col-hide-lg col-hide-sm">{fmtD(v.buyTime)}</td>
+                <td className="num col-hide-md col-hide-sm">¥{v.buyPrice ?? '—'}</td>
                 {/* 每辆车可以有自己的租金与押金；两项都为空表示走系统默认价 */}
                 <td className="num">
                   {v.dailyRent != null
                     ? `¥${v.dailyRent}/天`
                     : <span className="text-muted">默认价</span>}
                 </td>
-                <td className="num">
+                <td className="num col-hide-sm">
                   {v.deposit != null
                     ? `¥${v.deposit}`
                     : <span className="text-muted">默认价</span>}

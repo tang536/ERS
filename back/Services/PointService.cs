@@ -40,7 +40,9 @@ public class PointService(AppDbContext db, ILogger<PointService> logger)
                 CreateTime = p.CreateTime,
             }).ToListAsync();
 
-        var maxPoints = rent.HasValue ? MaxUsablePoints(balance, rent.Value) : 0;
+        // 未带租金时给出「按余额可抵上限」，避免会员中心把「下一单最多可抵」显示成 0；
+        // 真正下单仍由 PreviewAsync/ValidateAsync 按租金 10% 重算。
+        var maxPoints = rent.HasValue ? MaxUsablePoints(balance, rent.Value) : balance;
         return new PointSummaryDto
         {
             Balance = balance,

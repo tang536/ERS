@@ -3,10 +3,11 @@ import { useUI } from '@/components/UIProvider'
 import ReactEChartsCore from 'echarts-for-react/lib/core'
 import echarts, { chartTheme } from '@/utils/chart'
 import { useTheme } from '@/hooks/useTheme'
-import { reportApi, paymentApi, printApi } from '@/api'
+import { reportApi, paymentApi, printApi, opsApi } from '@/api'
 import { useAuth, ROLE } from '@/hooks/useAuth'
 import { useAsyncAction, errMessage } from '@/hooks/useAsyncAction'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import OverflowMenu, { type OverflowItem } from '@/components/OverflowMenu'
 import RowActions from '@/components/RowActions'
 import { fmtDT, recentDateRange, shiftDateInput, todayInput } from '@/utils/datetime'
@@ -296,6 +297,15 @@ export default function Reports() {
     if (input == null) return
 
     const amount = Number(input)
+    // 金额审批链：≥1000 元的退款不直接出金，先生成审批单，由管理员在运营配置审批后执行
+    if (amount >= 1000) {
+      await opsApi.createApproval({
+        bizType: '退款', amount, reason: `${p.orderNo || `支付单 #${p.payId}`} 原路退款`,
+        refType: 'payment', refId: String(p.payId),
+      })
+      toast(`退款 ${money(amount)} 已提交金额审批，请在「运营配置 → 金额审批」处理后再退款`, 'success')
+      return
+    }
     const ok = await confirm({
       title: '确认退款',
       message: `将向「${p.payType}」原路退回 ${money(amount)}。该操作会写入支付流水与审计日志，且无法撤销。`,
@@ -627,15 +637,14 @@ export default function Reports() {
       <div className="card filter-card">
         <div className="card-title"><Icon name="reports" size={16} chip />统计时间段</div>
         <div className="filter-row">
-          <label className="field-inline">
-            <span>开始日期</span>
-            <input type="date" value={draft.from} max={draft.to || undefined}
-              onChange={e => setDraft({ ...draft, from: e.target.value })} />
-          </label>
-          <label className="field-inline">
-            <span>结束日期</span>
-            <input type="date" value={draft.to} min={draft.from || undefined}
-              onChange={e => setDraft({ ...draft, to: e.target.value })} />
+          <label className="field-inline field-date-inline">
+            <span>统计时间段</span>
+            <DateRangeCalendar
+              start={draft.from}
+              end={draft.to}
+              placeholder="选择统计区间"
+              onChange={(s, e) => setDraft(d => ({ ...d, from: s, to: e }))}
+            />
           </label>
           <button className="btn-sm btn-sm-primary" onClick={() => applyRange(draft)} title="查询">
             <Icon name="search" size={14} /><span className="btn-label">查询</span>

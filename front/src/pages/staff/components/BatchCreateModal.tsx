@@ -279,7 +279,6 @@ export default function BatchCreateModal({ onClose, onDone }: {
           )}
         </div>
         <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={handleClose}>关闭</button>
           <button className="btn-sm btn-sm-primary" onClick={handleSubmit} disabled={submitting}>
             <Icon name="save" size={14} color="#fff" />{submitting ? '提交中…' : '提交批量新增'}
           </button>

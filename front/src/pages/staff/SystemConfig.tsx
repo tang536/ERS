@@ -3,8 +3,11 @@ import { useSearchParams } from 'react-router-dom'
 import { useUI } from '@/components/UIProvider'
 import { configApi, logApi } from '@/api'
 import Icon from '@/components/Icon'
+import DateRangeCalendar from '@/components/DateRangeCalendar'
 import Pagination from '@/components/Pagination'
 import PayConfigPanel from './components/PayConfigPanel'
+import { ApiKeyPanel } from './components/OpsExtPanels'
+import { StorePanel, NotificationOutboxPanel } from './components/OpsExtAssets'
 import { fmtDT, recentDateRange } from '@/utils/datetime'
 
 /** 参数说明补充：用于把 config_key 翻译成更易懂的中文名 */
@@ -74,7 +77,7 @@ type LogFilter = ReturnType<typeof makeLogFilter>
  * 因此原独立页 支付配置（/pay-config）并入本页作为第二个页签，与结构图对齐。
  * 旧链接 /pay-config 仍可用（路由重定向到 /config?tab=pay）。
  */
-type TabKey = 'config' | 'pay' | 'log'
+type TabKey = 'config' | 'pay' | 'log' | 'api' | 'store'
 
 export default function SystemConfig() {
   const { toast, confirm } = useUI()
@@ -446,10 +449,18 @@ export default function SystemConfig() {
           <button className={`tab-btn ${tab === 'log' ? 'active' : ''}`} onClick={() => setTab('log')}>
             操作日志
           </button>
+          <button className={`tab-btn ${tab === 'api' ? 'active' : ''}`} onClick={() => setTab('api')}>
+            开放 API
+          </button>
+          <button className={`tab-btn ${tab === 'store' ? 'active' : ''}`} onClick={() => setTab('store')}>
+            门店网点
+          </button>
         </div>
       </div>
 
       {tab === 'pay' && <PayConfigPanel focusChannel={focusChannel} />}
+      {tab === 'api' && <><ApiKeyPanel /><NotificationOutboxPanel /></>}
+      {tab === 'store' && <StorePanel />}
 
       {tab === 'config' && (
         <>
@@ -516,7 +527,7 @@ export default function SystemConfig() {
                 </button>
                 {open && (
                   <div className="table-wrap" id={`cfg-group-${group.key}`}>
-                    <table className="data-table">
+                    <table className="data-table config-table">
                       <thead>
                         <tr>
                           <th>参数名</th><th>参数含义</th><th className="num">参数值</th>
@@ -615,21 +626,13 @@ export default function SystemConfig() {
                 <option value="成功">成功</option>
                 <option value="失败">失败</option>
               </select>
-              <span className="filter-sep" />
-              <span className="filter-date-group">
-                <span className="filter-tilde">从</span>
-                <input type="date" className="filter-date" value={logFilter.from}
-                  max={logFilter.to || undefined}
-                  onChange={e => patchLogFilter({ from: e.target.value })}
-                  aria-label="开始日期" />
-              </span>
-              <span className="filter-date-group">
-                <span className="filter-tilde">至</span>
-                <input type="date" className="filter-date" value={logFilter.to}
-                  min={logFilter.from || undefined}
-                  onChange={e => patchLogFilter({ to: e.target.value })}
-                  aria-label="结束日期" />
-              </span>
+              <DateRangeCalendar
+                className="filter-date-range"
+                start={logFilter.from}
+                end={logFilter.to}
+                placeholder="操作日期"
+                onChange={(s, e) => patchLogFilter({ from: s, to: e })}
+              />
               {hasLogFilter && (
                 <button className="btn-sm btn-sm-default" onClick={resetLogFilter}
                   title={`重置为近 ${DEFAULT_LOG_DAYS} 天`} aria-label={`重置为近 ${DEFAULT_LOG_DAYS} 天`}>
@@ -759,7 +762,6 @@ export default function SystemConfig() {
               <button className="btn-sm btn-sm-default" onClick={() => { loadBackups(); toast('备份列表已刷新', 'success') }}>
                 <Icon name="refresh" size={14} />刷新列表
               </button>
-              <button className="btn-sm btn-sm-primary" onClick={() => setBackupOpen(false)}>关闭</button>
             </div>
           </div>
         </div>

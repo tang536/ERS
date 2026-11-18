@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { orderApi, printApi, customerApi, supplementApi, settleApi } from '@/api'
+import { orderApi, printApi, customerApi, settleApi, supplementApi } from '@/api'
 import { useUI } from '@/components/UIProvider'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
@@ -7,8 +7,9 @@ import Icon from '@/components/Icon'
 import Pagination from '@/components/Pagination'
 import ReceiptModal from '@/components/ReceiptModal'
 import ContractModal from '@/components/ContractModal'
+import CopyText from '@/components/CopyText'
+import { ReturnRequestModal, ReviewModal } from './components/CustomerExtras'
 import { fmtDT } from '@/utils/datetime'
-import type { SupplementPayItem } from '@/types'
 
 const statusMap: Record<string, string> = {
   '待支付': 'status-warning',
@@ -21,7 +22,14 @@ const statusMap: Record<string, string> = {
 }
 
 const PAGE_SIZE = 6
+const money = (n: any) => Number(n || 0).toFixed(2)
 
+/**
+ * 我的租赁订单 + 归还结算单。
+ *
+ * 两个列表在同一页并列：桌面左右两栏同时可见，窄屏用两个并列页签切换。
+ * 订单卡片以车辆图片为主视觉；结算单只回答租金、押金、补缴。
+ */
 export default function MyOrders() {
   const { toast, confirm } = useUI()
   const { user } = useAuth()
@@ -33,16 +41,20 @@ export default function MyOrders() {
   const [loading, setLoading] = useState(true)
   // 实名状态以服务端档案为准（本地缓存可能过期）
   const [profileVerified, setProfileVerified] = useState<boolean | null>(null)
-  // 小票打印：顾客可对**本人任意订单**自助打印（后端按 Token 校验归属）
+  // 小票打印：顾客可对本人任意订单自助打印（后端按 Token 校验归属）
   const [receipt, setReceipt] = useState<string | null>(null)
   // 待支付倒计时：每秒减 1，用于给「待支付」订单展示剩余支付时间（超时会被系统自动取消）
   const [now, setNow] = useState(Date.now())
-  // 线上补缴单（门店结算选「线上补缴」生成），顾客在此去支付
-  const [supplements, setSupplements] = useState<SupplementPayItem[]>([])
-  /** 门店审核还车后生成的结算单：租金构成 / 逾期费 / 损坏费 / 应退应补，顾客据此决定怎么付 */
-  const [settles, setSettles] = useState<any[]>([])
   /** 电子合同弹窗：未签署可手写签名，已签署只读 */
   const [contractOrder, setContractOrder] = useState<{ orderId: number; orderNo: string } | null>(null)
+  const [returnOrder, setReturnOrder] = useState<any | null>(null)
+  const [reviewOrder, setReviewOrder] = useState<any | null>(null)
+  /** 归还结算单与本页并列展示：同一份数据源，不再让顾客在两页之间来回跳 */
+  const [settles, setSettles] = useState<any[]>([])
+  const [supplements, setSupplements] = useState<any[]>([])
+  const [settleLoading, setSettleLoading] = useState(true)
+  /** 窄屏下列宽不够并排两张表：用两个并列页签切换，桌面上仍然两表同屏 */
+  const [activeBoard, setActiveBoard] = useState<'orders' | 'settles'>('orders')
 
   const load = () => {
     setLoading(true)
@@ -50,16 +62,21 @@ export default function MyOrders() {
       .then((res: any) => setList(res.data || []))
       .catch((e: any) => toast(e?.message || '订单加载失败', 'error'))
       .finally(() => setLoading(false))
-    // 补缴列表失败不影响订单主流程
-    supplementApi.mine()
-      .then((res: any) => setSupplements(res.data || []))
-      .catch(() => { /* 忽略，下次刷新再试 */ })
-    settleApi.mine()
-      .then((res: any) => setSettles(res.data || []))
-      .catch(() => { /* 忽略，下次刷新再试 */ })
   }
 
   useEffect(() => { load() }, [keyword])
+
+  const loadSettles = () => {
+    setSettleLoading(true)
+    settleApi.mine()
+      .then((res: any) => setSettles(res.data || []))
+      .catch((e: any) => toast(e?.message || '结算单加载失败', 'error'))
+      .finally(() => setSettleLoading(false))
+    supplementApi.mine()
+      .then((res: any) => setSupplements(res.data || []))
+      .catch(() => { /* 补缴列表失败不影响结算单主流程 */ })
+  }
+  useEffect(() => { loadSettles() }, [])
 
   // 订单历史按 6 条/页浏览：十几条订单一屏铺开会把页面拉到几千像素
   useEffect(() => { setPage(1) }, [keyword])
@@ -127,6 +144,16 @@ export default function MyOrders() {
   /** 继续支付：跳回支付页 */
   const handlePay = (o: any) => navigate(`/pay/${o.orderNo}`)
 
+  /** 结算单补缴：生成补缴单后进入在线支付页 */
+  const handleSettlePay = async (s: any) => {
+    try {
+      const res: any = await settleApi.payOnline(s.settleId, '')
+      const payId = res?.data?.payId
+      if (!payId) { toast('补缴单生成失败，请稍后重试', 'error'); return }
+      navigate(`/supplement-pay/${payId}`)
+    } catch (e: any) { toast(e?.message || '发起在线支付失败', 'error') }
+  }
+
   /**
    * 自助申请还车（无论是否到期都可申请）。这里只提交申请，不直接改订单状态——
    * 车况、费用要由门店确认，顾客自己点了就把钱退了会让门店失去控制。
@@ -134,7 +161,7 @@ export default function MyOrders() {
   const handleEarlyReturn = async (o: any) => {
     const ok = await confirm({
       title: '申请还车',
-      message: `将为订单 ${o.orderNo}（${o.vehicleNo}）提交还车申请。门店审核通过后按实际用车时长结算（超时部分按系统倍数计收），请尽快到店交车。`,
+      message: `将为订单 ${o.orderNo}（${o.vehicleNo}）提交还车申请。门店审核通过后按实际用车时长结算，请尽快到店交车。`,
       type: 'question',
       confirmText: '提交申请',
     })
@@ -148,39 +175,11 @@ export default function MyOrders() {
     } catch (e: any) { toast(e?.message || '申请失败', 'error') }
   }
 
-  /**
-   * 结算单在线支付：先让后端为该结算单落一张待支付补缴单（同一笔钱不会挂两张），
-   * 再跳到支付页选支付宝/微信/银行卡。不直接跳支付宝——渠道得由顾客自己定。
-   */
-  const handleSettlePay = async (s: any) => {
-    try {
-      const res: any = await settleApi.payOnline(s.settleId, '')
-      const payId = res?.data?.payId
-      if (!payId) { toast('补缴单生成失败，请稍后重试', 'error'); return }
-      navigate(`/supplement-pay/${payId}`)
-    } catch (e: any) { toast(e?.message || '发起在线支付失败', 'error') }
-  }
-
-  const active = list.filter(o => o.orderStatus === '已支付' || o.orderStatus === '租赁中' || o.orderStatus === '待支付')
-  const finished = list.filter(o => o.orderStatus === '已完成' || o.orderStatus === '已完结')
   const paged = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-  // 门店结算选「线上补缴」生成的待支付补缴单，顾客在此在线缴款
-  // 注意字段名与后端 JSON 一致（camelCase）：写成 PayStatus 会永远过滤出空列表，
-  // 表现就是「关掉支付页以后再也找不到补缴入口」。
-  const pendingSupplements = supplements.filter(s => s.payStatus === '待支付')
-  /**
-   * 已由结算单承载的补缴不再单独列一行（同一笔钱出现两次会让人以为欠了两笔）；
-   * 这里只兜住「有补缴单却没有结算单」的历史数据。
-   */
-  const orphanSupplements = pendingSupplements.filter(
-    s => !settles.some((x: any) => x.orderId === s.orderId))
-
-  const summary = [
-    { label: '累计订单', value: list.length, icon: 'orders' as const, tone: 'sky' },
-    { label: '进行中', value: active.length, icon: 'clock' as const, tone: 'amber' },
-    { label: '已完成', value: finished.length, icon: 'success' as const, tone: 'emerald' },
-    { label: '会员等级', value: user?.memberLevel || '普通会员', icon: 'profile' as const, tone: 'violet' },
-  ]
+  /** 已被结算单承载的补缴不再重复列（同一笔钱出现两次会让人误以为欠了两笔） */
+  const orphanSupplements = supplements
+    .filter((s: any) => s.payStatus === '待支付')
+    .filter((s: any) => !settles.some((x: any) => x.orderId === s.orderId))
 
   return (
     <div>
@@ -195,23 +194,24 @@ export default function MyOrders() {
         </div>
       )}
 
-      <div className="stats-grid my-order-stats">
-        {summary.map(s => (
-          <div key={s.label} className={`stat-card tone-${s.tone}`}>
-            <div className="label">{s.label}</div>
-            <div className="value">{s.value}</div>
-            <div className="icon-bg"><Icon name={s.icon} size={24} chip /></div>
-          </div>
-        ))}
+      <div className="my-board-tabs">
+        <button className={`my-board-tab ${activeBoard === 'orders' ? 'is-active' : ''}`} onClick={() => setActiveBoard('orders')}>
+          我的订单 <span>{list.length}</span>
+        </button>
+        <button className={`my-board-tab ${activeBoard === 'settles' ? 'is-active' : ''}`} onClick={() => setActiveBoard('settles')}>
+          归还结算单 <span>{settles.length}</span>
+        </button>
       </div>
-
-      <div className="card">
+      <div className="my-board">
+      <div className={`card my-board-orders ${activeBoard === 'settles' ? 'is-hidden-mobile' : ''}`}>
         <div className="card-title">
           <Icon name="my-orders" size={18} chip />我的租赁订单
           <span className="card-title-count">共 {list.length} 条</span>
-          <button className="btn-sm btn-sm-primary btn-icon-sm" style={{ marginLeft: 'auto' }} onClick={() => navigate('/rent')}>
-            <Icon name="rent" size={15} color="#fff" /><span className="btn-label">线上租车</span>
-          </button>
+          <div className="card-title-actions">
+            <button className="btn-sm btn-sm-primary btn-icon-sm" onClick={() => navigate('/rent')}>
+              <Icon name="rent" size={15} color="#fff" /><span className="btn-label">线上租车</span>
+            </button>
+          </div>
         </div>
 
         <div className="toolbar">
@@ -227,85 +227,96 @@ export default function MyOrders() {
               </button>
             )}
           </div>
-          <span className="toolbar-note"><Icon name="info" size={15} />仅显示当前账号名下的订单</span>
         </div>
 
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>订单号</th><th>车辆</th><th>起租时间</th><th>到期时间</th>
-                <th className="num">租金</th><th className="num">押金</th><th>状态</th><th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paged.map(o => {
-                const canEarlyReturn = (o.orderStatus === '已支付' || o.orderStatus === '租赁中')
-                  && o.earlyReturnStatus !== '待审核'
-                const isPending = o.orderStatus === '待支付'
-                const remain = remainOf(o)
-                return (
-                <tr key={o.orderId}>
-                  <td className="mono">{o.orderNo}</td>
-                  <td>{o.vehicleNo}</td>
-                  <td className="cell-time">{fmtDT(o.leaseStart)}</td>
-                  <td className="cell-time">{fmtDT(o.leaseEnd)}</td>
-                  {/* 已结算的显示实际租金（按实际归还时长重算）；未结算的先显示预收预估 */}
-                  <td className="num">
-                    ¥{o.actualRent ?? o.totalRent}
-                  </td>
-                  <td className="num">¥{o.deposit}</td>
-                  <td>
-                    <span className={`status-tag ${statusMap[o.orderStatus] || 'status-default'}`}>{o.orderStatus}</span>
-                    {/*
-                      只在订单还没结束时挂「还车申请待审核」：订单一旦「已完结」，
-                      那份申请在结算时就已经一并关闭了，再显示会让顾客以为自己还要等门店审核。
-                    */}
-                    {o.earlyReturnStatus === '待审核'
-                      && (o.orderStatus === '已支付' || o.orderStatus === '租赁中') && (
-                      <span className="status-tag status-warning" style={{ marginLeft: 6 }}>还车申请待审核</span>
-                    )}
-                    {isPending && remain !== null && (
-                      <div className="pay-countdown">
-                        <Icon name="clock" size={12} />
-                        {remain > 0
-                          ? <>剩余 {fmtRemain(remain)} 未支付将自动取消</>
-                          : <>支付时间已过，系统即将释放车辆</>}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <div className="btn-group">
-                      {isPending && (
-                        <>
-                          <button className="btn-sm btn-sm-primary" onClick={() => handlePay(o)}>
-                            <Icon name="rent" size={13} color="#fff" />去支付
-                          </button>
-                          <button className="btn-sm btn-sm-default" onClick={() => handleCancelPending(o)}>
-                            <Icon name="close" size={13} />取消订单
-                          </button>
-                        </>
-                      )}
-                      <button className="btn-sm btn-sm-default" onClick={() => handlePrint(o.orderId)}>
-                        <Icon name="print" size={13} />打印小票
-                      </button>
-                      {o.orderStatus !== '已取消' && (
-                        <button className="btn-sm btn-sm-default" onClick={() => setContractOrder({ orderId: o.orderId, orderNo: o.orderNo })}>
-                          <Icon name="orders" size={13} />电子合同
-                        </button>
-                      )}
-                      {canEarlyReturn && (
-                        <button className="btn-sm btn-sm-primary" onClick={() => handleEarlyReturn(o)}>
-                          <Icon name="clock" size={13} color="#fff" />申请还车
-                        </button>
-                      )}
+        <div className="my-order-list">
+          {paged.map(o => {
+            const canEarlyReturn = (o.orderStatus === '已支付' || o.orderStatus === '租赁中')
+              && o.earlyReturnStatus !== '待审核'
+            const isPending = o.orderStatus === '待支付'
+            const remain = remainOf(o)
+            return (
+              <article className="my-order-card" key={o.orderId}>
+                <div className="my-order-media">
+                  {o.vehicleImageUrl ? (
+                    <img src={o.vehicleImageUrl} alt={`${o.vehicleNo} 车辆图片`} loading="lazy" />
+                  ) : (
+                    <span className="my-order-media-fallback">
+                      <Icon name="vehicles" size={40} />
+                      <em>{o.vehicleNo || '车辆待分配'}</em>
+                    </span>
+                  )}
+                  <span className={`status-tag order-status-chip ${statusMap[o.orderStatus] || 'status-default'}`}>
+                    {o.orderStatus}
+                  </span>
+                </div>
+
+                <div className="my-order-main">
+                  <div className="my-order-head">
+                    <CopyText text={o.orderNo} label="复制订单号" className="my-order-no" />
+                    <span className="my-order-vehicle">{o.vehicleNo || '车辆待分配'}</span>
+                    {o.vehicleBrand && <span className="my-order-brand">{o.vehicleBrand}</span>}
+                  </div>
+
+                  <div className="my-order-meta">
+                    <div><span>起租</span><strong>{fmtDT(o.leaseStart)}</strong></div>
+                    <div><span>到期</span><strong>{fmtDT(o.leaseEnd)}</strong></div>
+                    <div><span>租金</span><strong className="num">¥{money(o.actualRent ?? o.totalRent)}</strong></div>
+                    <div><span>押金</span><strong className="num">¥{money(o.deposit)}</strong></div>
+                  </div>
+
+                  {o.earlyReturnStatus === '待审核'
+                    && (o.orderStatus === '已支付' || o.orderStatus === '租赁中') && (
+                    <span className="status-tag status-warning">还车申请待审核</span>
+                  )}
+                  {isPending && remain !== null && (
+                    <div className="pay-countdown">
+                      <Icon name="clock" size={12} />
+                      {remain > 0
+                        ? <>剩余 {fmtRemain(remain)} 未支付将自动取消</>
+                        : <>支付时间已过，系统即将释放车辆</>}
                     </div>
-                  </td>
-                </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                  )}
+                </div>
+
+                <div className="my-order-actions">
+                  {isPending && (
+                    <>
+                      <button className="btn-sm btn-sm-primary" onClick={() => handlePay(o)}>
+                        <Icon name="rent" size={13} color="#fff" />去支付
+                      </button>
+                      <button className="btn-sm btn-sm-default" onClick={() => handleCancelPending(o)}>
+                        <Icon name="close" size={13} />取消订单
+                      </button>
+                    </>
+                  )}
+                  <button className="btn-sm btn-sm-default" onClick={() => handlePrint(o.orderId)}>
+                    <Icon name="print" size={13} />打印小票
+                  </button>
+                  {o.orderStatus !== '已取消' && (
+                    <button className="btn-sm btn-sm-default" onClick={() => setContractOrder({ orderId: o.orderId, orderNo: o.orderNo })}>
+                      <Icon name="orders" size={13} />电子合同
+                    </button>
+                  )}
+                  {canEarlyReturn && (
+                    <button className="btn-sm btn-sm-primary" onClick={() => handleEarlyReturn(o)}>
+                      <Icon name="clock" size={13} color="#fff" />申请还车
+                    </button>
+                  )}
+                  {(o.orderStatus === '已支付' || o.orderStatus === '租赁中') && (
+                    <button className="btn-sm btn-sm-default" onClick={() => setReturnOrder(o)}>
+                      <Icon name="clock" size={13} />还车登记
+                    </button>
+                  )}
+                  {o.orderStatus === '已完结' && (
+                    <button className="btn-sm btn-sm-default" onClick={() => setReviewOrder(o)}>
+                      <Icon name="success" size={13} />评价
+                    </button>
+                  )}
+                </div>
+              </article>
+            )
+          })}
         </div>
 
         {loading && <div className="loading-line"><Icon name="refresh" size={18} />数据加载中…</div>}
@@ -318,102 +329,89 @@ export default function MyOrders() {
         {!loading && list.length > 0 && (
           <Pagination total={list.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
         )}
-        {!loading && list.length > 0 && (
-          <div className="table-foot-note">累计租金合计：<strong>¥{list.reduce((s, o) => s + Number(o.totalRent || 0), 0).toFixed(2)}</strong></div>
-        )}
       </div>
 
-      {/* 归还结算单：门店审核还车时生成，顾客在这里看清每一笔账并决定怎么付 */}
-      {settles.length > 0 && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-title">
-            <Icon name="orders" size={18} chip />归还结算单
-            <span className="card-title-count">共 {settles.length} 条</span>
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>订单号</th><th>车辆</th><th>结算时间</th>
-                  <th className="num">实际租金</th><th className="num">逾期费</th><th className="num">损坏费</th>
-                  <th className="num">应退</th><th className="num">应补缴</th><th>补缴状态</th><th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {settles.map((s: any) => {
-                  const outstanding = Math.max(0, Number(s.supplementAmount || 0) - Number(s.supplementPaid || 0))
-                  return (
-                    <tr key={s.settleId}>
-                      <td className="mono">{s.orderNo}</td>
-                      <td>{s.vehicleNo || '—'}</td>
-                      <td className="cell-time">{fmtDT(s.settleTime)}</td>
-                      <td className="num">¥{Number(s.actualRent || 0).toFixed(2)}</td>
-                      <td className="num">¥{Number(s.overdueFee || 0).toFixed(2)}</td>
-                      <td className="num">¥{Number(s.damageFee || 0).toFixed(2)}</td>
-                      <td className="num">¥{Number(s.refundAmount || 0).toFixed(2)}</td>
-                      <td className="num">¥{Number(s.supplementAmount || 0).toFixed(2)}</td>
-                      <td>
-                        {Number(s.supplementAmount || 0) <= 0
-                          ? <span className="status-tag status-default">无需补缴</span>
-                          : s.supplementCollected
-                            ? <span className="status-tag status-success">已缴清{s.paidChannel ? `（${s.paidChannel}）` : ''}</span>
-                            : <span className="status-tag status-warning">待缴 ¥{outstanding.toFixed(2)}</span>}
-                        {s.remark && <div className="field-hint" style={{ marginTop: 4 }}>备注：{s.remark}</div>}
-                      </td>
-                      <td>
-                        {Number(s.supplementAmount || 0) > 0 && !s.supplementCollected ? (
-                          <div className="btn-group">
-                            <button className="btn-sm btn-sm-primary" onClick={() => handleSettlePay(s)}>
-                              <Icon name="rent" size={13} color="#fff" />在线支付
-                            </button>
-                            <span className="toolbar-note">或到店缴纳</span>
-                          </div>
-                        ) : (
-                          <span className="toolbar-note">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+      <div className={`card my-settle-board ${activeBoard === 'orders' ? 'is-hidden-mobile' : ''}`}>
+        <div className="card-title">
+          <Icon name="settlements" size={18} chip />归还结算单
+          <span className="card-title-count">共 {settles.length} 条</span>
+          <button className="btn-sm btn-sm-default btn-icon-sm" style={{ marginLeft: 'auto' }} onClick={loadSettles}>
+            <Icon name="refresh" size={15} /><span className="btn-label">刷新</span>
+          </button>
         </div>
-      )}
 
-      {/* 其他待补缴费用：没有对应结算单的历史补缴单（如早期数据），单独兜底列出 */}
-      {orphanSupplements.length > 0 && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-title">
-            <Icon name="warning" size={18} chip />其他待补缴费用
-            <span className="card-title-count">{orphanSupplements.length} 笔待支付</span>
+        {settles.map((s: any) => {
+          const outstanding = Math.max(0, Number(s.supplementAmount || 0) - Number(s.supplementPaid || 0))
+          return (
+            <article className="settle-card" key={s.settleId}>
+              <div className="settle-card-head">
+                <div>
+                  <strong className="mono">{s.orderNo}</strong>
+                  <span className="settle-vehicle">{s.vehicleNo || '—'}</span>
+                </div>
+                <span className="cell-time">{fmtDT(s.settleTime)}</span>
+              </div>
+
+              <div className="settle-money-grid">
+                <div><span>实际租金</span><strong>¥{money(s.actualRent)}</strong></div>
+                <div><span>逾期费</span><strong>¥{money(s.overdueFee)}</strong></div>
+                <div><span>损坏费</span><strong>¥{money(s.damageFee)}</strong></div>
+                <div className="highlight"><span>应退</span><strong>¥{money(s.refundAmount)}</strong></div>
+                <div className={Number(s.supplementAmount || 0) > 0 ? 'warn' : ''}>
+                  <span>应补缴</span><strong>¥{money(s.supplementAmount)}</strong>
+                </div>
+              </div>
+
+              <div className="settle-card-foot">
+                <div>
+                  {Number(s.supplementAmount || 0) <= 0 ? (
+                    <span className="status-tag status-default">无需补缴</span>
+                  ) : s.supplementCollected ? (
+                    <span className="status-tag status-success">已缴清{s.paidChannel ? `（${s.paidChannel}）` : ''}</span>
+                  ) : (
+                    <span className="status-tag status-warning">待缴 ¥{outstanding.toFixed(2)}</span>
+                  )}
+                  {s.remark && <span className="settle-remark">备注：{s.remark}</span>}
+                </div>
+                {Number(s.supplementAmount || 0) > 0 && !s.supplementCollected && (
+                  <button className="btn-sm btn-sm-primary" onClick={() => handleSettlePay(s)}>
+                    <Icon name="rent" size={13} color="#fff" />在线补缴
+                  </button>
+                )}
+              </div>
+            </article>
+          )
+        })}
+
+        {orphanSupplements.length > 0 && (
+          <div className="settle-extra">
+            <div className="settle-extra-title">其他待补缴费用 · {orphanSupplements.length} 笔</div>
+            {orphanSupplements.map((s: any) => (
+              <article className="settle-card" key={s.payId}>
+                <div className="settle-card-head">
+                  <div><strong className="mono">{s.orderNo}</strong><span className="settle-vehicle">{s.payType || '—'}</span></div>
+                  <span className="status-tag status-warning">待支付</span>
+                </div>
+                <div className="settle-card-foot">
+                  <strong className="num">¥{money(s.payAmount)}</strong>
+                  <button className="btn-sm btn-sm-primary" onClick={() => navigate(`/supplement-pay/${s.payId}`)}>
+                    <Icon name="rent" size={13} color="#fff" />去支付
+                  </button>
+                </div>
+              </article>
+            ))}
           </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>关联订单</th><th className="num">补缴金额</th><th>支付方式</th><th>状态</th><th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orphanSupplements.map(s => (
-                  <tr key={s.payId}>
-                    <td className="mono">{s.orderNo}</td>
-                    <td className="num">¥{Number(s.payAmount).toFixed(2)}</td>
-                    <td>{s.payType || '—'}</td>
-                    <td><span className="status-tag status-warning">待支付</span></td>
-                    <td>
-                      <button className="btn-sm btn-sm-primary" onClick={() => navigate(`/supplement-pay/${s.payId}`)}>
-                        <Icon name="rent" size={13} color="#fff" />去支付
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        )}
+
+        {settleLoading && <div className="loading-line"><Icon name="refresh" size={18} />数据加载中…</div>}
+        {!settleLoading && settles.length === 0 && orphanSupplements.length === 0 && (
+          <div className="empty">
+            <Icon name="empty" size={40} chip />
+            <div>还没有结算单。门店验收车辆并结算后，会在这里生成明细。</div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+      </div>
 
       {receipt !== null && (
         <ReceiptModal
@@ -430,6 +428,13 @@ export default function MyOrders() {
           orderNo={contractOrder.orderNo}
           onClose={() => setContractOrder(null)}
         />
+      )}
+
+      {returnOrder && (
+        <ReturnRequestModal order={returnOrder} onClose={() => setReturnOrder(null)} onDone={() => { load(); loadSettles() }} />
+      )}
+      {reviewOrder && (
+        <ReviewModal order={reviewOrder} onClose={() => setReviewOrder(null)} onDone={load} />
       )}
     </div>
   )

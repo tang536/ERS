@@ -420,9 +420,6 @@ function CheckModal({ channel, check, onClose }: { channel: string; check: any; 
             </div>
           </div>
         </div>
-        <div className="modal-footer">
-          <button className="btn-sm btn-sm-default" onClick={onClose}>关闭</button>
-        </div>
       </div>
     </div>
   )

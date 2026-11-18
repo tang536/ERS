@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ERental.Services;
 
 public class OrderService(AppDbContext db, CreditPolicy credit, MessageService messages,
-    CouponService coupons, PointService points, AddonService addons, ILogger<OrderService> logger)
+    CouponService coupons, PointService points, AddonService addons, OpsExtService ops, ILogger<OrderService> logger)
 {
     ///<summary>订单不存在时的统一提示</summary>
     private const string MsgOrderNotFound = "订单不存在";
@@ -20,6 +20,7 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     private readonly CouponService _coupons = coupons;
     private readonly PointService _points = points;
     private readonly AddonService _addons = addons;
+    private readonly OpsExtService _ops = ops;
     private readonly ILogger<OrderService> _logger = logger;
 
     ///<summary>下单时顾客选择的权益：一张券 + 抵扣积分 + 若干增值服务</summary>
@@ -95,6 +96,7 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
     {
         await _coupons.ReleaseOrphanedAsync();
         await _points.RefundCancelledAsync();
+        await _addons.RestoreCancelledAsync();
     }
 
     ///<summary>
@@ -178,6 +180,7 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         CustomerName = o.CustomerName ?? string.Empty,
         VehicleNo = o.VehicleNo ?? string.Empty,
         VehicleBrand = o.VehicleBrand,
+        VehicleImageUrl = o.VehicleImageUrl,
         LeaseStart = o.LeaseStart,
         LeaseEnd = o.LeaseEnd,
         TotalRent = o.TotalRent,
@@ -332,10 +335,19 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         var (dailyRent, hourlyRent, deposit) = await PricingResolver.ResolveHourlyAsync(_db, vehicleId);
         //3NF：折扣按等级关联权益表（档案不再冗余存储）
         var discount = customer == null ? 1.00m : await MemberDiscountLookup.OfLevelAsync(_db, customer.MemberLevel);
-        var totalRent = Math.Round(hours * hourlyRent * discount, 2);
+        //动态定价：只取启用且当前时段命中的规则中最高系数，规则未命中时为 1.00，不影响原价
+        var priceFactor = await _ops.CurrentPriceFactorAsync();
+        var totalRent = Math.Round(hours * hourlyRent * priceFactor * discount, 2);
         //试算就把信用加价算进去，顾客/前台看到的是「实际要交多少」，
         //而不是下单那一刻凭空多出一笔押金
         var verdict = await _credit.EvaluateAsync(customerId);
+        //免押额度只抵扣押金，不影响租金；额度小于押金时只收差额
+        var waiver = customerId > 0 ? await _ops.DepositWaiverAsync(customerId) : 0m;
+        var chargedDeposit = Math.Max(0m, verdict.ApplyToDeposit(deposit) - waiver);
+        var note = verdict.Note;
+        if (waiver > 0) note = string.IsNullOrWhiteSpace(note)
+            ? $"已按信用额度免押 ¥{Math.Min(waiver, verdict.ApplyToDeposit(deposit)):0.00}"
+            : $"{note}；另免押 ¥{Math.Min(waiver, verdict.ApplyToDeposit(deposit)):0.00}";
         return new RentEstimateDto
         {
             Hours = hours,
@@ -343,11 +355,12 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
             DailyRent = dailyRent,
             HourlyRent = hourlyRent,
             DepositBase = deposit,
-            Deposit = verdict.ApplyToDeposit(deposit),
+            Deposit = chargedDeposit,
             Discount = discount,
+            PriceFactor = priceFactor,
             TotalRent = totalRent,
-            Payable = totalRent + verdict.ApplyToDeposit(deposit),
-            CreditNote = verdict.Note,
+            Payable = totalRent + chargedDeposit,
+            CreditNote = note,
             MaxLeaseDays = verdict.MaxLeaseDays
         };
     }
@@ -512,7 +525,9 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         //计价按车辆取：每辆车有自己的日租金与押金，留空才回退全局配置
         var (_, hourlyRent, depositBase) = await PricingResolver.ResolveHourlyAsync(_db, vehicle.VehicleId);
         var discount = await MemberDiscountLookup.OfLevelAsync(_db, customer.MemberLevel);
-        var rentAfterDiscount = Math.Round(hours * hourlyRent * discount, 2);
+        //与试算同口径：动态定价系数必须在下单时再取一次，不能沿用前端展示的金额
+        var priceFactor = await _ops.CurrentPriceFactorAsync();
+        var rentAfterDiscount = Math.Round(hours * hourlyRent * priceFactor * discount, 2);
 
         /*
          * 优惠与增值服务全部在事务外先算清楚：
@@ -545,6 +560,9 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         if (verdict.MaxLeaseDays > 0 && hours > verdict.MaxLeaseDays * 24)
             throw new BusinessException($"该客户信用受限（{verdict.Note}），单次租期不能超过 {verdict.MaxLeaseDays} 天，请先缩短还车时间或结清历史账款");
         var deposit = verdict.ApplyToDeposit(depositBase);
+        //免押额度：信用档案里核定的额度直接抵扣押金，和试算保持同一口径
+        var depositWaiver = await _ops.DepositWaiverAsync(customer.CustomerId);
+        if (depositWaiver > 0) deposit = Math.Max(0m, deposit - depositWaiver);
 
         //支付渠道：柜台单按前台实收渠道落账（未选择时默认现金），线上单统一占位、待发起支付时回写。
         //注意不要再把渠道写死成「现金」——前台扫微信/刷卡收款时，那会把真实渠道覆盖掉，对账直接失真。
@@ -575,12 +593,22 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
             _db.RentalOrders.Add(order);
             await _db.SaveChangesAsync();
 
+            //站内信先入出站队列，真实短信/微信通道由外部消费者发送；失败不影响开单
+            try
+            {
+                await _ops.EnqueueNotificationAsync("站内信", "customer", customer.CustomerId, "order_created",
+                    $"订单 {order.OrderNo} 已创建：{vehicle.VehicleNo}，租期 {leaseStart:MM-dd HH:mm} 至 {leaseEnd:MM-dd HH:mm}，应付 ¥{Math.Round(order.PrepaidRent + order.Deposit, 2):0.00}。");
+            }
+            catch { /* 通知失败不阻断订单 */ }
+
             //核销券与积分：条件更新保证同一张券/同一笔积分不会被两个订单同时用掉，失败即整体回滚
             if (benefits.CouponId is int usedCouponId) await _coupons.ConsumeAsync(usedCouponId, order.OrderId);
             if (pointsUsed > 0) await _points.DeductAsync(customer.CustomerId, pointsUsed, order.OrderId);
 
             //增值服务快照：名称与单价固定在此刻，后台改价不影响历史订单
             foreach (var addon in _addons.Snapshot(order.OrderId, addonQuotes)) _db.OrderAddons.Add(addon);
+            //占用实物库存（不限库存的项在 AddonItem 内直接跳过），库存不足会回滚整笔订单
+            await _addons.ConsumeAsync(addonQuotes);
 
             //支付渠道已在事务外归一（见上方 channel），这里只负责落库；金额按「优惠后租金+押金」收
             var payAmount = Math.Round(order.PrepaidRent + deposit, 2);

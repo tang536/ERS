@@ -14,6 +14,15 @@ initSpringCards()
 // 手机端表格卡片化：把表头列名同步到单元格，避免窄屏只剩数值没有字段名
 installResponsiveTableLabels()
 
+// PWA：仅在 https 或非本机地址注册，开发环境（127.0.0.1 / localhost）不注册以免缓存干扰热更新
+const canRegisterSw = window.location.protocol === 'https:'
+  || !['localhost', '127.0.0.1'].includes(window.location.hostname)
+if ('serviceWorker' in navigator && canRegisterSw) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* 注册失败不影响正常使用 */ })
+  })
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>

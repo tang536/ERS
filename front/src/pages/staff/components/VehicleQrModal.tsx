@@ -68,7 +68,6 @@ export default function VehicleQrModal({ vehicle, onClose }: VehicleQrModalProps
           <button className="btn-sm btn-sm-default" onClick={handleDownload}>
             <Icon name="download" size={14} />下载 PNG
           </button>
-          <button className="btn-sm btn-sm-default" onClick={onClose}>关闭</button>
           <button className="btn-sm btn-sm-primary" onClick={() => window.print()}>
             <Icon name="print" size={14} color="#fff" />打印二维码
           </button>
