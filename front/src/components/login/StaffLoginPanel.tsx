@@ -5,6 +5,8 @@ import { useAuth, homePathOf } from '@/hooks/useAuth'
 import { canAccess, isRegisteredPath } from '@/permissions'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
+import FloatingInput from './FloatingInput'
+import SliderCaptchaModal from './SliderCaptchaModal'
 
 /** 页签 key 与后端 MapRoleType 一一对应；选哪个页签就必须是哪个角色的账号 */
 const STAFF_ROLES = [
@@ -43,6 +45,8 @@ export default function StaffLoginPanel({
   const [showPwd, setShowPwd] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
+  /** 登录前先弹滑动验证；验证通过拿到票据后才真正提交账号密码 */
+  const [sliderOpen, setSliderOpen] = useState(false)
 
   const validate = () => {
     const e: Record<string, string> = {}
@@ -52,11 +56,24 @@ export default function StaffLoginPanel({
     return Object.keys(e).length === 0
   }
 
-  const handleLogin = async () => {
+  /** 前端基础校验通过后打开滑动验证弹窗 */
+  const beginLogin = () => {
+    if (loading) return
     if (!validate()) return
+    setSliderOpen(true)
+  }
+
+  /** 滑动验证通过：带一次性票据提交登录 */
+  const finishLogin = async (ticket: string) => {
+    setSliderOpen(false)
     setLoading(true)
     try {
-      const res: any = await authApi.staffLogin({ loginAccount: account.trim(), password, roleType })
+      const res: any = await authApi.staffLogin({
+        loginAccount: account.trim(),
+        password,
+        roleType,
+        sliderTicket: ticket,
+      })
       const info = res.data
       login(info)
       toast(`欢迎回来，${info.userName}`, 'success')
@@ -77,7 +94,8 @@ export default function StaffLoginPanel({
   }
 
   return (
-    <div className="lp">
+    <>
+      <div className="lp">
       <header className="lp-head">
         <span className="lp-badge lp-badge--staff">
           <Icon name="shield" size={15} color="#fff" />
@@ -103,47 +121,47 @@ export default function StaffLoginPanel({
       <p className="role-tabs-hint">请先选择你的岗位，再输入对应岗位的账号登录</p>
 
       <div className="form-group">
-        <label>登录账号</label>
-        <div className={`input-affix ${errors.account ? 'has-error' : ''}`}>
-          <Icon name="user" size={16} className="input-affix-icon" />
-          <input
-            value={account}
-            autoFocus={autoFocus}
-            onChange={e => {
-              setAccount(e.target.value)
-              if (errors.account) setErrors({ ...errors, account: '' })
-            }}
-            placeholder="请输入岗位账号"
-            autoComplete="username"
-            onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          />
-        </div>
+        <FloatingInput
+          id="staff-account"
+          label="登录账号"
+          icon="user"
+          value={account}
+          autoFocus={autoFocus}
+          autoComplete="username"
+          error={errors.account}
+          onChange={v => {
+            setAccount(v)
+            if (errors.account) setErrors({ ...errors, account: '' })
+          }}
+          onKeyDown={e => e.key === 'Enter' && beginLogin()}
+        />
         {errors.account && <div className="field-error">{errors.account}</div>}
       </div>
 
       <div className="form-group">
-        <label>登录密码</label>
-        <div className={`input-affix ${errors.password ? 'has-error' : ''}`}>
-          <Icon name="lock" size={16} className="input-affix-icon" />
-          <input
-            type={showPwd ? 'text' : 'password'}
-            value={password}
-            onChange={e => {
-              setPassword(e.target.value)
-              if (errors.password) setErrors({ ...errors, password: '' })
-            }}
-            placeholder="请输入密码"
-            autoComplete="current-password"
-            onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          />
-          <button type="button" className="input-affix-btn" onClick={() => setShowPwd(v => !v)} tabIndex={-1}>
-            <Icon name={showPwd ? 'eye-off' : 'eye'} size={16} />
-          </button>
-        </div>
+        <FloatingInput
+          id="staff-password"
+          label="登录密码"
+          icon="lock"
+          type={showPwd ? 'text' : 'password'}
+          value={password}
+          autoComplete="current-password"
+          error={errors.password}
+          onChange={v => {
+            setPassword(v)
+            if (errors.password) setErrors({ ...errors, password: '' })
+          }}
+          onKeyDown={e => e.key === 'Enter' && beginLogin()}
+          rightSlot={(
+            <button type="button" className="input-affix-btn" onClick={() => setShowPwd(v => !v)} tabIndex={-1} aria-label="显示或隐藏密码">
+              <Icon name={showPwd ? 'eye-off' : 'eye'} size={16} />
+            </button>
+          )}
+        />
         {errors.password && <div className="field-error">{errors.password}</div>}
       </div>
 
-      <button className="btn-primary" onClick={handleLogin} disabled={loading}>
+      <button className="btn-primary" onClick={beginLogin} disabled={loading}>
         {loading ? '登录中…' : '登 录'}
       </button>
 
@@ -156,6 +174,13 @@ export default function StaffLoginPanel({
           </button>
         )}
       </div>
-    </div>
+      </div>
+
+      <SliderCaptchaModal
+        open={sliderOpen}
+        onClose={() => setSliderOpen(false)}
+        onVerified={ticket => { void finishLogin(ticket) }}
+      />
+    </>
   )
 }

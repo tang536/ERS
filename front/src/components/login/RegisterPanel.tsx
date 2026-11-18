@@ -6,6 +6,8 @@ import Icon from '@/components/Icon'
 import AgreementModal from '@/components/AgreementModal'
 import { getAgreement } from '@/utils/agreements'
 import type { AgreementDoc } from '@/utils/agreements'
+import FloatingInput from './FloatingInput'
+import PasswordStrength from './PasswordStrength'
 
 /**
  * 顾客注册面板（首页舞台的第三个卡面）。
@@ -89,51 +91,51 @@ export default function RegisterPanel({
       </header>
 
       <div className="form-group">
-        <label>用户名</label>
-        <div className={`input-affix ${errors.loginAccount ? 'has-error' : ''}`}>
-          <Icon name="user" size={16} className="input-affix-icon" />
-          <input
-            value={form.loginAccount}
-            autoFocus={autoFocus}
-            onChange={e => setField('loginAccount', e.target.value)}
-            placeholder="3-20 位字母、数字、下划线或中文"
-            autoComplete="username"
-          />
-        </div>
+        <FloatingInput
+          id="register-account"
+          label="用户名"
+          icon="user"
+          value={form.loginAccount}
+          autoFocus={autoFocus}
+          autoComplete="username"
+          error={errors.loginAccount}
+          onChange={v => setField('loginAccount', v)}
+        />
         {errors.loginAccount && <div className="field-error">{errors.loginAccount}</div>}
       </div>
 
       <div className="form-group">
-        <label>登录密码</label>
-        <div className={`input-affix ${errors.password ? 'has-error' : ''}`}>
-          <Icon name="lock" size={16} className="input-affix-icon" />
-          <input
-            type={showPwd ? 'text' : 'password'}
-            value={form.password}
-            onChange={e => setField('password', e.target.value)}
-            placeholder="至少 8 位，含字母和数字"
-            autoComplete="new-password"
-          />
-          <button type="button" className="input-affix-btn" onClick={() => setShowPwd(v => !v)} tabIndex={-1}>
-            <Icon name={showPwd ? 'eye-off' : 'eye'} size={16} />
-          </button>
-        </div>
+        <FloatingInput
+          id="register-password"
+          label="登录密码"
+          icon="lock"
+          type={showPwd ? 'text' : 'password'}
+          value={form.password}
+          autoComplete="new-password"
+          error={errors.password}
+          onChange={v => setField('password', v)}
+          rightSlot={(
+            <button type="button" className="input-affix-btn" onClick={() => setShowPwd(v => !v)} tabIndex={-1} aria-label="显示或隐藏密码">
+              <Icon name={showPwd ? 'eye-off' : 'eye'} size={16} />
+            </button>
+          )}
+        />
         {errors.password && <div className="field-error">{errors.password}</div>}
+        <PasswordStrength password={form.password} />
       </div>
 
       <div className="form-group">
-        <label>确认密码</label>
-        <div className={`input-affix ${errors.confirmPwd ? 'has-error' : ''}`}>
-          <Icon name="lock" size={16} className="input-affix-icon" />
-          <input
-            type="password"
-            value={form.confirmPwd}
-            onChange={e => setField('confirmPwd', e.target.value)}
-            placeholder="再次输入密码"
-            autoComplete="new-password"
-            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-          />
-        </div>
+        <FloatingInput
+          id="register-confirm"
+          label="确认密码"
+          icon="lock"
+          type="password"
+          value={form.confirmPwd}
+          autoComplete="new-password"
+          error={errors.confirmPwd}
+          onChange={v => setField('confirmPwd', v)}
+          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+        />
         {errors.confirmPwd && <div className="field-error">{errors.confirmPwd}</div>}
       </div>
 

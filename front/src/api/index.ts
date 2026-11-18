@@ -154,10 +154,15 @@ export const authApi = {
    * 不含任何密钥——此时来访者还没有令牌，本接口必须允许匿名访问。
    */
   options: () => api.get('/auth/options'),
-  staffLogin: (data: { loginAccount: string; password: string; roleType: string }) =>
+  /** 滑动拼图挑战：背景缺口图、拼图块与定位尺寸 */
+  sliderCaptcha: () => api.get('/auth/slider-captcha'),
+  /** 校验拼图偏移，通过后拿一次性票据 */
+  verifySlider: (data: { id: string; offset: number }) =>
+    api.post('/auth/slider-captcha/verify', data),
+  staffLogin: (data: { loginAccount: string; password: string; roleType: string; sliderTicket: string }) =>
     api.post('/auth/staff-login', data),
   /** 登录只认「用户名 + 密码」，已移除身份证号登录 */
-  customerLogin: (data: { account: string; password: string }) =>
+  customerLogin: (data: { account: string; password: string; sliderTicket: string }) =>
     api.post('/auth/customer-login', data),
   customerRegister: (data: { loginAccount: string; password: string }) =>
     api.post('/auth/customer-register', data),

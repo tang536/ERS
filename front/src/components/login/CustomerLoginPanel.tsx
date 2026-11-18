@@ -4,6 +4,8 @@ import { authApi } from '@/api'
 import { useAuth, homePathOf } from '@/hooks/useAuth'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
+import FloatingInput from './FloatingInput'
+import SliderCaptchaModal from './SliderCaptchaModal'
 
 /**
  * 顾客登录面板（首页舞台的卡面之一）。
@@ -37,6 +39,7 @@ export default function CustomerLoginPanel({
   const [showPwd, setShowPwd] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
+  const [sliderOpen, setSliderOpen] = useState(false)
 
   const validate = () => {
     const e: Record<string, string> = {}
@@ -46,11 +49,21 @@ export default function CustomerLoginPanel({
     return Object.keys(e).length === 0
   }
 
-  const handleLogin = async () => {
+  const beginLogin = () => {
+    if (loading) return
     if (!validate()) return
+    setSliderOpen(true)
+  }
+
+  const finishLogin = async (ticket: string) => {
+    setSliderOpen(false)
     setLoading(true)
     try {
-      const res: any = await authApi.customerLogin({ account: account.trim(), password })
+      const res: any = await authApi.customerLogin({
+        account: account.trim(),
+        password,
+        sliderTicket: ticket,
+      })
       const info = res.data
       login(info)
       toast(`欢迎回来，${info.userName}`, 'success')
@@ -63,7 +76,8 @@ export default function CustomerLoginPanel({
   }
 
   return (
-    <div className="lp">
+    <>
+      <div className="lp">
       <header className="lp-head">
         <span className="lp-badge lp-badge--customer">
           <Icon name="rent" size={15} color="#fff" />
@@ -84,47 +98,47 @@ export default function CustomerLoginPanel({
       </p>
 
       <div className="form-group">
-        <label>用户名</label>
-        <div className={`input-affix ${errors.account ? 'has-error' : ''}`}>
-          <Icon name="user" size={16} className="input-affix-icon" />
-          <input
-            value={account}
-            autoFocus={autoFocus}
-            onChange={e => {
-              setAccount(e.target.value)
-              if (errors.account) setErrors({ ...errors, account: '' })
-            }}
-            placeholder="请输入注册用户名"
-            autoComplete="username"
-            onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          />
-        </div>
+        <FloatingInput
+          id="customer-account"
+          label="用户名"
+          icon="user"
+          value={account}
+          autoFocus={autoFocus}
+          autoComplete="username"
+          error={errors.account}
+          onChange={v => {
+            setAccount(v)
+            if (errors.account) setErrors({ ...errors, account: '' })
+          }}
+          onKeyDown={e => e.key === 'Enter' && beginLogin()}
+        />
         {errors.account && <div className="field-error">{errors.account}</div>}
       </div>
 
       <div className="form-group">
-        <label>登录密码</label>
-        <div className={`input-affix ${errors.password ? 'has-error' : ''}`}>
-          <Icon name="lock" size={16} className="input-affix-icon" />
-          <input
-            type={showPwd ? 'text' : 'password'}
-            value={password}
-            onChange={e => {
-              setPassword(e.target.value)
-              if (errors.password) setErrors({ ...errors, password: '' })
-            }}
-            placeholder="请输入密码"
-            autoComplete="current-password"
-            onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          />
-          <button type="button" className="input-affix-btn" onClick={() => setShowPwd(v => !v)} tabIndex={-1}>
-            <Icon name={showPwd ? 'eye-off' : 'eye'} size={16} />
-          </button>
-        </div>
+        <FloatingInput
+          id="customer-password"
+          label="登录密码"
+          icon="lock"
+          type={showPwd ? 'text' : 'password'}
+          value={password}
+          autoComplete="current-password"
+          error={errors.password}
+          onChange={v => {
+            setPassword(v)
+            if (errors.password) setErrors({ ...errors, password: '' })
+          }}
+          onKeyDown={e => e.key === 'Enter' && beginLogin()}
+          rightSlot={(
+            <button type="button" className="input-affix-btn" onClick={() => setShowPwd(v => !v)} tabIndex={-1} aria-label="显示或隐藏密码">
+              <Icon name={showPwd ? 'eye-off' : 'eye'} size={16} />
+            </button>
+          )}
+        />
         {errors.password && <div className="field-error">{errors.password}</div>}
       </div>
 
-      <button className="btn-primary" onClick={handleLogin} disabled={loading}>
+      <button className="btn-primary" onClick={beginLogin} disabled={loading}>
         {loading ? '登录中…' : '登 录'}
       </button>
 
@@ -140,6 +154,13 @@ export default function CustomerLoginPanel({
           </button>
         )}
       </div>
-    </div>
+      </div>
+
+      <SliderCaptchaModal
+        open={sliderOpen}
+        onClose={() => setSliderOpen(false)}
+        onVerified={ticket => { void finishLogin(ticket) }}
+      />
+    </>
   )
 }

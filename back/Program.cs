@@ -282,6 +282,19 @@ static void ConfigureRateLimiter(IServiceCollection services)
                     AutoReplenishment = true
                 }));
 
+        // 滑动拼图挑战：单独给 30 次/分钟。登录失败、重新验证都会重新取图，
+        // 与登录共用 10 次额度会让正常用户被自己的重试动作锁在门外。
+        options.AddPolicy(RateLimitPolicies.Captcha, ctx =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                ClientIp.ResolveOrUnknown(ctx),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 30,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
+                }));
+
         // 匿名支付状态查询：订单号加随机熵之后仍可能被批量试探，单独按 IP 限流。
         options.AddPolicy(RateLimitPolicies.PayStatus, ctx =>
             RateLimitPartition.GetFixedWindowLimiter(
@@ -332,6 +345,8 @@ static void RegisterBusinessServices(IServiceCollection services, IConfiguration
     services.AddSingleton<RedisState>();
     // 登录 IP 防护闸：按来源 IP 累计登录失败并封锁。进程内单例——封锁记录只在内存，
     services.AddSingleton<LoginIpGuard>();
+    // 滑动拼图验证：答案存进程内缓存、120 秒有效、一次性消费；与登录同机，无需跨实例共享
+    services.AddSingleton<SliderCaptchaService>();
     // 单点登录登记表：同一账号不允许同时登录。按请求作用域注册即可——会话落在 system_config，
     // 多实例看到的是同一份真相，不需要进程内单例；本地只缓存 5 秒的校验结果，写操作主动失效。
     services.AddScoped<SessionRegistry>();

@@ -68,8 +68,8 @@ function fmtMoney(v: number) {
 export default function Dashboard() {
   const { toast } = useUI()
   /** 图表画在 canvas 上，CSS 变量管不到，配色必须显式传进 option */
-  const { isDark } = useTheme()
-  const tc = chartTheme(isDark)
+  const { theme } = useTheme()
+  const tc = chartTheme(theme)
   const navigate = useNavigate()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])

@@ -4,7 +4,8 @@ import Icon from '@/components/Icon'
 import HeroStage, { resolveInitialMode, type StageFace, type StageMode, type LoginSide } from '../components/landing/HeroStage'
 import RentDemo, { type DemoPricing } from '../components/landing/RentDemo'
 import { ROLE } from '@/hooks/useAuth'
-import { useTheme, setThemeOptions } from '@/hooks/useTheme'
+import { setThemeOptions } from '@/hooks/useTheme'
+import ThemeMenu from '@/components/ThemeMenu'
 import { authApi } from '@/api'
 import { ROUTE_ROLES } from '@/permissions'
 import { GITHUB_URL } from '@/utils/links'
@@ -21,7 +22,6 @@ import { GITHUB_URL } from '@/utils/links'
 export default function Landing() {
   const [params] = useSearchParams()
   const location = useLocation()
-  const { isDark, canToggle, toggleTheme } = useTheme()
   const stageWrapRef = useRef<HTMLDivElement>(null)
 
   const [mode, setMode] = useState<StageMode>('none')
@@ -165,16 +165,8 @@ export default function Landing() {
           <div className="landing-nav-actions">
             {/* 深浅主题切换：与系统内顶栏同一套 sun/moon，偏好共用 localStorage。
                 theme.options 只允许一种主题时整颗按钮隐藏（配置即界面，不留能点却无效的入口）。 */}
-            {canToggle && (
-              <button
-                className="landing-theme-btn"
-                title={isDark ? '切换为浅色主题' : '切换为深色主题'}
-                aria-label={isDark ? '切换为浅色主题' : '切换为深色主题'}
-                onClick={toggleTheme}
-              >
-                <Icon name={isDark ? 'sun' : 'moon'} size={17} />
-              </button>
-            )}
+            {/* 界面主题：与系统顶栏共用同一份偏好；只允许一种主题时按钮自动隐藏 */}
+            <ThemeMenu variant="landing" />
             {/* GitHub 直达：与系统顶栏共用 utils/links.ts 里的同一个地址 */}
             <a
               className="landing-theme-btn"

@@ -18,7 +18,7 @@ export type IconName =
   | 'zoom-in' | 'zoom-out' | 'replace'
   | 'menu' | 'camera'
   | 'coupon' | 'addon' | 'points' | 'scan' | 'sort'
-  | 'sun' | 'moon' | 'github' | 'trash'
+  | 'sun' | 'moon' | 'blossom' | 'palette' | 'github' | 'trash'
 
 /** 每枚图标的主色（红白主题：以红为主，配少量暖色/青色点缀，不使用紫色系） */
 const ACCENT: Record<IconName, string> = {
@@ -76,6 +76,8 @@ const ACCENT: Record<IconName, string> = {
   sort: '#64748b',
   sun: '#b45309',
   moon: '#64748b',
+  blossom: '#d6456d',
+  palette: '#c94b6e',
   github: '#64748b',
   trash: '#c0272d',
 }
@@ -442,6 +444,26 @@ const GLYPHS: Record<IconName, ReactNode> = {
   moon: (
     <>
       <path d="M20.2 14.2A8.4 8.4 0 0 1 9.8 3.8a8.4 8.4 0 1 0 10.4 10.4z" />
+    </>
+  ),
+  // 四瓣花：只用于「粉色主题」这一选项，与 sun/moon 并列
+  blossom: (
+    <>
+      <path d="M12 12c-1.8-1.8-1.8-4.6 0-6.4 1.8 1.8 1.8 4.6 0 6.4z" />
+      <path d="M12 12c1.8-1.8 4.6-1.8 6.4 0-1.8 1.8-4.6 1.8-6.4 0z" />
+      <path d="M12 12c1.8 1.8 1.8 4.6 0 6.4-1.8-1.8-1.8-4.6 0-6.4z" />
+      <path d="M12 12c-1.8 1.8-4.6 1.8-6.4 0 1.8-1.8 4.6-1.8 6.4 0z" />
+      <circle cx="12" cy="12" r="1.3" />
+    </>
+  ),
+  // 调色盘：粉色主题的入口图标。四瓣花在 17px 下容易被看成「+」，调色盘语义更明确
+  palette: (
+    <>
+      <path d="M12 3.2a8.8 8.8 0 1 0 0 17.6h1.4a1.7 1.7 0 0 0 1.2-2.9 1.7 1.7 0 0 1 1.2-2.9h2.1a3 3 0 0 0 3-3A8.8 8.8 0 0 0 12 3.2z" />
+      <circle cx="7.4" cy="10.6" r="1.15" />
+      <circle cx="10.4" cy="7.2" r="1.15" />
+      <circle cx="14.6" cy="7.2" r="1.15" />
+      <circle cx="17.4" cy="10.6" r="1.15" />
     </>
   ),
   // 垃圾桶：用于「删除单条 / 清空消息」这类破坏性小动作

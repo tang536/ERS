@@ -15,7 +15,7 @@ namespace ERental.Controllers;
 [Route("api/[controller]")]
 [SuppressMessage("Major Code Smell", "S6960:Controllers should have a single responsibility",
     Justification = "员工登录与顾客登录共用 api/auth 前缀，前端登录页/注册页与需求 4.2 接口清单都按这个路径对接；拆成两个控制器必须改路由前缀，对外契约会断。")]
-public class AuthController(AuthService auth, SystemConfigService cfg) : ControllerBase
+public class AuthController(AuthService auth, SystemConfigService cfg, SliderCaptchaService sliderCaptcha, IWebHostEnvironment env) : ControllerBase
 {
     ///<summary>用户类型默认值：门店员工（JWT 里没有 user_type 声明时按员工处理）</summary>
     private const string UserTypeStaff = "staff";
@@ -25,11 +25,69 @@ public class AuthController(AuthService auth, SystemConfigService cfg) : Control
 
     private readonly AuthService _auth = auth;
     private readonly SystemConfigService _cfg = cfg;
+    private readonly SliderCaptchaService _sliderCaptcha = sliderCaptcha;
+    private readonly IWebHostEnvironment _env = env;
 
     ///<summary>登录页公开配置：站点名称、可用登录方式、主题选项</summary>
     [AllowAnonymous]
     [HttpGet("options")]
     public async Task<IActionResult> Options() => Ok(new ApiResponse<object> { Data = await _cfg.GetPublic() });
+
+    ///<summary>生成一张滑动拼图挑战：背景缺口图 + 拼图块，登录前必须完成并换取一次性票据</summary>
+    [AllowAnonymous]
+    [HttpGet("slider-captcha")]
+    [EnableRateLimiting(RateLimitPolicies.Captcha)]
+    public IActionResult GetSliderCaptcha()
+    {
+        var challenge = _sliderCaptcha.Create(ClientIp.Resolve(HttpContext));
+        return Ok(new ApiResponse<object>
+        {
+            Data = new
+            {
+                id = challenge.Id,
+                background = challenge.BackgroundDataUrl,
+                piece = challenge.PieceDataUrl,
+                width = challenge.Width,
+                height = challenge.Height,
+                pieceCanvas = challenge.PieceCanvas,
+                pieceY = challenge.PieceY,
+                maxOffset = challenge.MaxOffset,
+                expiresIn = challenge.ExpiresInSeconds
+            }
+        });
+    }
+
+    ///<summary>校验拼图偏移；通过后返回一次性登录票据，失败则该挑战作废</summary>
+    [AllowAnonymous]
+    [HttpPost("slider-captcha/verify")]
+    [EnableRateLimiting(RateLimitPolicies.Captcha)]
+    public IActionResult VerifySliderCaptcha([FromBody] SliderVerifyDto dto)
+    {
+        var ticket = _sliderCaptcha.Verify(dto.Id, dto.Offset, ClientIp.Resolve(HttpContext));
+        if (string.IsNullOrWhiteSpace(ticket))
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = "拼图未对齐，请重新拖动滑块", Success = false });
+
+        return Ok(new ApiResponse<object>
+        {
+            Message = "验证通过",
+            Data = new { ticket, expiresIn = SliderCaptchaService.TicketExpiresInSeconds }
+        });
+    }
+
+    ///<summary>
+    /// 仅供本机开发/端到端测试读取缺口位置；生产环境直接 404。
+    /// 上线时 ASPNETCORE_ENVIRONMENT=Production，这个路由不存在。
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("slider-captcha/peek")]
+    public IActionResult PeekSliderCaptcha([FromQuery] string id)
+    {
+        if (!_env.IsDevelopment()) return NotFound();
+        var offset = _sliderCaptcha.Peek(id);
+        return offset is null
+            ? NotFound(new ApiResponse<object> { Code = 404, Message = "验证码不存在或已过期", Success = false })
+            : Ok(new ApiResponse<object> { Data = new { offset } });
+    }
 
     ///<summary>令牌续期：access token 临近过期时用它换一对新令牌，用户无需重新输入密码</summary>
     [AllowAnonymous]
