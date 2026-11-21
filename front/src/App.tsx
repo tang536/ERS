@@ -20,6 +20,7 @@ import Landing from './pages/Landing'
  * 只是加载时机变了，路由路径、权限判定、组件本身都没有改。
  */
 const MyOrders = lazy(() => import('./pages/MyOrders'))
+const MySettlements = lazy(() => import('./pages/MySettlements'))
 const Notifications = lazy(() => import('./pages/Notifications'))
 const RentBike = lazy(() => import('./pages/RentBike'))
 const RentVehicle = lazy(() => import('./pages/RentVehicle'))
@@ -166,7 +167,7 @@ export default function App() {
 
         {/* ===== 顾客端 ===== */}
         <Route path="my-orders" element={<CustomerGuard pathKey="/my-orders"><MyOrders /></CustomerGuard>} />
-        <Route path="my-settlements" element={<Navigate to="/my-orders" replace />} />
+        <Route path="my-settlements" element={<CustomerGuard pathKey="/my-settlements"><MySettlements /></CustomerGuard>} />
         <Route path="notifications" element={<Guard roles={R('/notifications')}><Notifications /></Guard>} />
         <Route path="rent" element={<CustomerGuard pathKey="/rent"><RentBike /></CustomerGuard>} />
         {/* 车辆详情：列表 → 详情 → 试算 → 下单，权限沿用 /rent */}

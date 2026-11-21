@@ -4,7 +4,7 @@ import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
 import DateRangeCalendar from '@/components/DateRangeCalendar'
 import { fmtDT, toDatetimeInput } from '@/utils/datetime'
-import type { Order, OrderChange, RentableVehicle } from '@/types'
+import type { Order, OrderChange, OrderChangePreview, RentableVehicle } from '@/types'
 
 /**
  * 订单变更弹窗：换车 / 改期。
@@ -29,6 +29,9 @@ export default function OrderChangeModal({ order, onClose, onDone }: {
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
   const [history, setHistory] = useState<OrderChange[]>([])
+  const [preview, setPreview] = useState<OrderChangePreview | null>(null)
+  const [previewError, setPreviewError] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   const loadHistory = () => {
     orderChangeApi.byOrder(order.orderId)
@@ -45,6 +48,33 @@ export default function OrderChangeModal({ order, onClose, onDone }: {
     loadHistory()
     return () => { alive = false }
   }, [order.orderId])
+
+  /**
+   * 变更前先试算：前台在点「确认」之前就能看到租金怎么变、补还是退。
+   * 后端试算与实际办理同口径（换车取新车现价、改期沿用车下单时的价格快照）。
+   * 输入还在变化时用 300ms 防抖，避免每敲一个字符/每选一次日期就打一次接口。
+   */
+  useEffect(() => {
+    if (tab === 'vehicle' && !newVehicleId) {
+      setPreview(null); setPreviewError(''); setPreviewLoading(false); return
+    }
+    if (tab === 'reschedule' && (!leaseStart || !leaseEnd || leaseEnd <= leaseStart)) {
+      setPreview(null); setPreviewError(''); setPreviewLoading(false); return
+    }
+    let alive = true
+    setPreviewLoading(true)
+    setPreviewError('')
+    const timer = setTimeout(() => {
+      const req = tab === 'vehicle'
+        ? orderChangeApi.previewVehicle({ orderId: order.orderId, newVehicleId })
+        : orderChangeApi.previewReschedule({ orderId: order.orderId, leaseStart, leaseEnd })
+      req
+        .then((res: any) => { if (alive) setPreview(res.data || null) })
+        .catch((e: any) => { if (alive) { setPreview(null); setPreviewError(e?.message || '试算失败，请检查输入') } })
+        .finally(() => { if (alive) setPreviewLoading(false) })
+    }, 300)
+    return () => { alive = false; clearTimeout(timer) }
+  }, [tab, newVehicleId, leaseStart, leaseEnd, order.orderId])
 
   const submitVehicle = async () => {
     if (!newVehicleId) { toast('请选择要更换的车辆', 'warning'); return }
@@ -82,6 +112,7 @@ export default function OrderChangeModal({ order, onClose, onDone }: {
       const diff = Number(res?.data?.diffAmount || 0)
       toast(diff > 0 ? `改期已办理，需补缴 ¥${diff.toFixed(2)}` : diff < 0 ? `改期已办理，需退款 ¥${(-diff).toFixed(2)}` : '改期已办理，无差价', 'success')
       setReason('')
+      setPreview(null)
       loadHistory()
       onDone()
     } catch (e: any) {
@@ -132,6 +163,7 @@ export default function OrderChangeModal({ order, onClose, onDone }: {
                 <label>变更原因</label>
                 <input value={reason} onChange={e => setReason(e.target.value)} placeholder="选填，如：原车电量不足" />
               </div>
+              <ChangePreview preview={preview} loading={previewLoading} error={previewError} />
               <div className="form-actions">
                 <button className="btn-sm btn-sm-primary" onClick={submitVehicle} disabled={saving || !newVehicleId}>
                   {saving ? '办理中…' : '确认换车'}
@@ -154,6 +186,7 @@ export default function OrderChangeModal({ order, onClose, onDone }: {
                 <label>变更原因</label>
                 <input value={reason} onChange={e => setReason(e.target.value)} placeholder="选填，如：顾客行程调整" />
               </div>
+              <ChangePreview preview={preview} loading={previewLoading} error={previewError} />
               <div className="form-actions">
                 <button className="btn-sm btn-sm-primary" onClick={submitReschedule} disabled={saving}>
                   {saving ? '办理中…' : '确认改期'}
@@ -197,6 +230,48 @@ export default function OrderChangeModal({ order, onClose, onDone }: {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 变更试算结果：把「新租金 − 原租金 = 补/退」一条算式摆出来。
+ * 只做展示，不参与提交；用户改选车辆或日期后由父组件重新拉取。
+ */
+function ChangePreview({ preview, loading, error }: {
+  preview: OrderChangePreview | null
+  loading: boolean
+  error: string
+}) {
+  if (loading) return <div className="field-hint" style={{ marginBottom: 12 }}>正在试算租金变化…</div>
+  if (error) return (
+    <div className="callout callout-warning" style={{ marginBottom: 12 }}>
+      <Icon name="warning" size={16} chip />
+      <span>{error}</span>
+    </div>
+  )
+  if (!preview) return null
+
+  const diff = Number(preview.diffAmount || 0)
+  const factor = Number(preview.newPriceFactor || 1)
+  return (
+    <div className="callout callout-info" style={{ marginBottom: 12 }}>
+      <Icon name="info" size={18} chip />
+      <span>
+        <strong>变更试算：</strong>
+        原租金 ¥{Number(preview.oldRent).toFixed(2)} → 新租金 ¥{Number(preview.newRent).toFixed(2)}；
+        {diff > 0.01
+          ? <strong style={{ color: 'var(--danger-text, #b91c1c)' }}> 需补缴 ¥{diff.toFixed(2)}</strong>
+          : diff < -0.01
+            ? <strong style={{ color: 'var(--success-text, #15803d)' }}> 应退 ¥{(-diff).toFixed(2)}</strong>
+            : <strong> 无差价</strong>}
+        （{preview.settleMode}）
+        <span className="field-hint" style={{ display: 'block', marginTop: 4 }}>
+          计价：日租金 ¥{Number(preview.newDailyRent).toFixed(2)}/天
+          {factor !== 1 ? ` × 动态系数 ${factor.toFixed(2)}` : ''}
+          ，小时租金 ¥{Number(preview.newHourlyRent).toFixed(2)}，计费 {preview.billableHours} 小时，再乘本单会员折扣。
+        </span>
+      </span>
     </div>
   )
 }

@@ -290,10 +290,20 @@ export default function Settlements() {
    * 这些信息都在订单上，不该逼着人去「租赁订单」页翻一遍再回来算账。
    */
   const settleTarget = orders.find(o => o.orderId === form.orderId)
-  /** 约定用车小时数（与后端计费口径一致：不足 1 小时按 1 小时） */
+  /** 约定用车小时数（与后端计费口径一致：向上取整，不足 1 小时按 1 小时） */
   const plannedHours = settleTarget
-    ? Math.max(1, Math.round(
+    ? Math.max(1, Math.ceil(
         (new Date(settleTarget.leaseEnd).getTime() - new Date(settleTarget.leaseStart).getTime()) / 3_600_000))
+    : 0
+
+  /**
+   * 结算实时净额 = 试算净额 − 当前录入的损坏费。
+   * 后端 SettlementMath 把「多退少补」收口成一个净额：refundAmount 与 supplementAmount 只会有一个 > 0，
+   * 所以 baseNet = refundAmount − supplementAmount 就是不含损坏费的净额；损坏费永远从净额里扣，
+   * 不能只减 refundAmount——补缴单会被算成 0，损坏费还会把补缴方向算反。
+   */
+  const previewNet = preview
+    ? preview.refundAmount - preview.supplementAmount - (form.damageFee || 0)
     : 0
 
   /**
@@ -531,8 +541,8 @@ export default function Settlements() {
       e.conditionNote = '收损坏费需写明车况（划痕位置 / 损坏部位），顾客质疑时这是唯一依据'
     if (form.batteryLevel !== '' && (Number(form.batteryLevel) < 0 || Number(form.batteryLevel) > 100))
       e.batteryLevel = '归还电量只能是 0~100 之间的整数'
-    // 应退金额必须由前台当场确认去向；模拟支付/现金支付没有真实资金流，系统不能替前台做主
-    if (Number(preview?.refund || 0) > 0 && !form.refundConfirmed)
+    // 应退金额（扣除损坏费后的实时净额）必须由前台当场确认去向；模拟支付/现金支付没有真实资金流
+    if (previewNet > 0 && !form.refundConfirmed)
       e.refundConfirmed = '本单有应退金额，请先确认退款去向'
     setErrors(e)
     if (Object.keys(e).length) return
@@ -1068,11 +1078,21 @@ export default function Settlements() {
                         ? `算式：${preview.overdueHours} 小时 × 小时租金 ¥${preview.hourlyRent.toFixed(2)} × 超时倍数 ${preview.multiplier}`
                         : '未逾期不收；已逾期的订单由系统按超出小时数 × 小时租金 × 超时倍数自动计收。'}
                     </div>
-                    {Number(preview.refund || 0) > 0 && (
+                    {/* 计价依据必须露出：运营调价后，老订单仍按下单时快照结算，前台要能一眼说明「为什么不是现价」 */}
+                    <div className="field-hint">
+                      <Icon name="info" size={14} />
+                      {preview.priceFromSnapshot
+                        ? '计价依据：下单时锁定的价格快照'
+                        : '计价依据：该单为历史订单，无价格快照，按车辆当前价结算'}
+                      （日租金 ¥{Number(preview.dailyRent || 0).toFixed(2)}
+                      {Number(preview.priceFactor || 1) !== 1 ? ` × 动态系数 ${Number(preview.priceFactor).toFixed(2)}` : ''}
+                      ，小时租金 ¥{Number(preview.hourlyRent || 0).toFixed(2)}）。
+                    </div>
+                    {previewNet > 0 && (
                       <div className="refund-confirm-box">
                         <div className="refund-confirm-head">
                           <Icon name="refund" size={16} chip />
-                          <span>本单应退 <strong>¥{Number(preview.refund).toFixed(2)}</strong></span>
+                          <span>本单应退 <strong>¥{previewNet.toFixed(2)}</strong></span>
                           <span className="status-tag status-default">{preview.payType || '原支付方式'}</span>
                         </div>
                         <label className="refund-confirm-check">
@@ -1204,16 +1224,9 @@ export default function Settlements() {
                   </div>
                   <div><span>押金</span><strong>¥{preview.deposit.toFixed(2)}</strong></div>
                   <div>
-                    {/* 试算（含 0 损坏费）减去当前填写的损坏费 = 实时净额；负数即需补缴 */}
-                    {(() => {
-                      const net = preview.refundAmount - (form.damageFee || 0)
-                      return (
-                        <>
-                          <span>{net >= 0 ? '预计退还' : '预计补缴'}</span>
-                          <strong>¥{Math.abs(net).toFixed(2)}</strong>
-                        </>
-                      )
-                    })()}
+                    {/* 试算净额再减当前填写的损坏费 = 实时净额；负数即需补缴 */}
+                    <span>{previewNet >= 0 ? '预计退还' : '预计补缴'}</span>
+                    <strong>¥{Math.abs(previewNet).toFixed(2)}</strong>
                   </div>
                 </div>
                 <div className="field-hint" style={{ marginTop: 6 }}>
@@ -1226,7 +1239,7 @@ export default function Settlements() {
               {/* 补缴收款方式：仅当核算出需顾客补缴时出现。
                   四种方式与收款弹窗完全一致——结算时选哪个，结算完弹窗里就默认落在哪个，
                   前台不必在"结算表单"和"收款台"之间重新理解一遍渠道名。 */}
-              {preview && (form.damageFee || 0) - preview.refundAmount > 0 && (
+              {preview && previewNet < 0 && (
                 <div className="form-group">
                   <label>补缴收款方式</label>
                   <div className="pay-methods is-grid" style={{ marginTop: 6 }}>

@@ -315,7 +315,7 @@ export default function Reports() {
     })
     if (!ok) return
 
-    const r: any = await paymentApi.refund(p.payId, amount)
+    const r: any = await paymentApi.refund(p.payId, amount, `报表手工退款（${p.orderNo || `支付流水 #${p.payId}`}）`)
     toast(r?.message || '退款已提交', 'success')
     // 退款已成功（上面已是 200）。刷新列表/报表放在独立 try 中：
     // 即便刷新因瞬时数据库抖动偶发失败，也不能把一次成功的退款误报成「服务器内部错误」
@@ -421,7 +421,7 @@ export default function Reports() {
   const rangeText = hasRange
     ? `${range.from || '最早'} ~ ${range.to || '至今'}`
     : '全部（累计口径）'
-  const trendTitle = hasRange ? '营收趋势（所选区间）' : '近 7 日营收趋势'
+  const trendTitle = hasRange ? '净营收趋势（所选区间）' : '近 7 日净营收趋势'
   /** 卡片标题必须跟着图表走：管理员口径画的是订单趋势，标题不能还写「营收趋势」 */
   const trendCardTitle = isFinance ? trendTitle : (hasRange ? '订单趋势（所选区间）' : '近 7 日订单趋势')
 
@@ -504,7 +504,7 @@ export default function Reports() {
 
   /** 财务口径：钱进来多少、账对不对 */
   const financeCards = [
-    { label: hasRange ? '区间营收' : '累计营收', value: money(dashboard.totalRevenue), icon: 'settlements' as const, tone: 'indigo', hint: '到账流水合计（含结算后退款）' },
+    { label: hasRange ? '区间净营收' : '累计净营收', value: money(dashboard.totalRevenue), icon: 'settlements' as const, tone: 'indigo', hint: '实收流水 − 退款（净额）' },
     { label: hasRange ? '区间订单' : '累计订单', value: dashboard.totalOrders ?? 0, icon: 'orders' as const, tone: 'sky', hint: '区间内新建订单' },
     { label: '维保总费用', value: money(dashboard.totalMaintenanceFee), icon: 'maintenance' as const, tone: 'amber', hint: '已完工工单支出' },
     { label: '客户总数', value: dashboard.totalCustomers ?? 0, icon: 'customers' as const, tone: 'violet', hint: '建档客户数' },
@@ -951,7 +951,7 @@ export default function Reports() {
             {vehStats && (
               <div className="stats-grid stats-rail">
                 <div className="stat-card tone-sky"><div className="label">车辆数</div><div className="value">{vehStats.totalVehicles}</div><div className="hint">其中闲置 {vehStats.idleVehicles} 台</div></div>
-                <div className="stat-card tone-indigo"><div className="label">累计营收</div><div className="value">{money(vehStats.totalRevenue)}</div><div className="hint">到账流水合计（含结算后退款）</div></div>
+                <div className="stat-card tone-indigo"><div className="label">累计净营收</div><div className="value">{money(vehStats.totalRevenue)}</div><div className="hint">实收流水 − 退款（净额）</div></div>
                 <div className="stat-card tone-emerald"><div className="label">累计租赁时长</div><div className="value">{vehStats.totalRentHours} h</div></div>
                 <div className="stat-card tone-amber"><div className="label">维保费用</div><div className="value">{money(vehStats.totalMaintenanceFee)}</div><div className="hint">{vehStats.totalMaintenanceCount} 次工单</div></div>
               </div>

@@ -212,11 +212,12 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
     }
 
     ///<summary>结算核算结果</summary>
-    private sealed record SettleCalc(decimal HourlyRent, decimal Multiplier, int ActualHours, decimal ActualRent, int OverdueHours, decimal OverdueFee, decimal RentTotal, decimal RentDiff, decimal Refund, decimal Supplement);
+    private sealed record SettleCalc(decimal DailyRent, decimal PriceFactor, decimal HourlyRent, decimal Multiplier, int ActualHours, decimal ActualRent, int OverdueHours, decimal OverdueFee, decimal RentTotal, decimal RentDiff, decimal Refund, decimal Supplement, bool UsedSnapshot);
 
     ///<summary>结算所需的订单快照：试算从订单实体取，正式结算从锁内实体取，核算逻辑只认这几列</summary>
     private readonly record struct SettleSnapshot(int VehicleId, DateTime LeaseStart, DateTime LeaseEnd,
-        decimal TotalRent, decimal Deposit, decimal RentDiscount, decimal AddonFee, decimal DiscountAmount);
+        decimal TotalRent, decimal Deposit, decimal RentDiscount, decimal AddonFee, decimal DiscountAmount,
+        decimal? DailyRent, decimal? PriceFactor);
 
     ///<summary>损坏理赔工单号：WB+时间戳，撞号重试（与 MaintenanceService 同一套规则，轮换同一个号段）</summary>
     private async Task<string> NextDamageWorkOrderNoAsync()
@@ -241,8 +242,28 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
     private async Task<SettleCalc> CalculateAsync(SettleSnapshot order, decimal damageFee)
     {
         var now = AppClock.Now;
-        //计费粒度与下单一致：按小时（向上取整，最少 1 小时）
-        var (_, hourlyRent, _) = await PricingResolver.ResolveHourlyAsync(_db, order.VehicleId);
+
+        /*
+         * 计价口径：优先用订单下单时固化的「日租金 + 动态系数」。
+         * 早期订单没有快照列，才回退车辆当前价（系数按 1.00）——这是兼容分支，
+         * 不能因为运营调价就把历史订单的账单一起改掉。
+         */
+        decimal dailyRent, priceFactor;
+        var usedSnapshot = order.DailyRent.HasValue;
+        if (usedSnapshot)
+        {
+            dailyRent = order.DailyRent!.Value;
+            priceFactor = order.PriceFactor ?? 1m;
+        }
+        else
+        {
+            var (currentDaily, _, _) = await PricingResolver.ResolveHourlyAsync(_db, order.VehicleId);
+            dailyRent = currentDaily;
+            priceFactor = 1m;
+        }
+
+        //计费粒度与下单一致：按小时（向上取整，最少 1 小时）；系数与下单时同一乘数顺序
+        var hourlyRent = PricingResolver.HourlyRent(dailyRent) * priceFactor;
 
         //正常租金只算到约定还车时间（leaseEnd）为止
         var normalEnd = order.LeaseEnd < now ? order.LeaseEnd : now;
@@ -271,7 +292,7 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
         //落库仍拆成 actual_rent/overdue_fee 两列，是为了保留可审计的构成
         var (rentTotal, rentDiff, refund, supplementFee) = SettlementMath.Settle(prepaidRent, order.Deposit, damageFee, actualRent, overdueFee);
 
-        return new SettleCalc(hourlyRent, multiplier, actualHours, actualRent, overdueHours, overdueFee, rentTotal, rentDiff, refund, supplementFee);
+        return new SettleCalc(dailyRent, priceFactor, hourlyRent, multiplier, actualHours, actualRent, overdueHours, overdueFee, rentTotal, rentDiff, refund, supplementFee, usedSnapshot);
     }
 
     ///<summary>结算试算：只读订单与客户/车辆名，不加载整实体</summary>
@@ -293,13 +314,15 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
                 o.RentDiscount,
                 o.AddonFee,
                 o.DiscountAmount,
+                o.DailyRent,
+                o.PriceFactor,
             })
             .FirstOrDefaultAsync()
             ?? throw new BusinessException("订单不存在");
 
         var c = await CalculateAsync(
             new SettleSnapshot(order.VehicleId, order.LeaseStart, order.LeaseEnd, order.TotalRent, order.Deposit,
-                order.RentDiscount, order.AddonFee, order.DiscountAmount),
+                order.RentDiscount, order.AddonFee, order.DiscountAmount, order.DailyRent, order.PriceFactor),
             0m);
         return new SettlePreviewDto
         {
@@ -311,6 +334,9 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
             LeaseEnd = order.LeaseEnd,
             PrepaidRent = Math.Round(order.TotalRent - order.DiscountAmount, 2),
             Deposit = order.Deposit,
+            DailyRent = c.DailyRent,
+            PriceFactor = c.PriceFactor,
+            PriceFromSnapshot = c.UsedSnapshot,
             HourlyRent = c.HourlyRent,
             Multiplier = c.Multiplier,
             IsOverdue = c.OverdueHours > 0,
@@ -367,7 +393,7 @@ public class SettlementService(AppDbContext db, PaymentService payment, MessageS
 
             var c = await CalculateAsync(
                 new SettleSnapshot(order.VehicleId, order.LeaseStart, order.LeaseEnd, order.TotalRent, order.Deposit,
-                    order.RentDiscount, order.AddonFee, order.DiscountAmount),
+                    order.RentDiscount, order.AddonFee, order.DiscountAmount, order.DailyRent, order.PriceFactor),
                 dto.DamageFee);
 
             //应退金额必须先由前台确认去向：模拟支付与现金支付没有真实资金流，

@@ -129,6 +129,10 @@ export interface Order {
   customerCouponId?: number | null
   /** 下单时固化的会员折扣率 */
   rentDiscount?: number
+  /** 下单时固化的日租金快照；null = 历史订单，结算按车辆现价回退 */
+  dailyRent?: number | null
+  /** 下单时固化的动态定价系数快照；null = 历史订单 */
+  priceFactor?: number | null
   /** 结算后的实际租金；未结算为 null（下单时的 totalRent 只是预收预估） */
   actualRent?: number | null
   deposit: number
@@ -636,6 +640,22 @@ export interface CloseShiftPayload {
   shiftId: number
   cashActual: number
   note?: string | null
+}
+
+/** 订单变更试算（只读，不落库；口径与正式办理一致） */
+export interface OrderChangePreview {
+  orderId: number
+  changeType: string
+  oldRent: number
+  newRent: number
+  /** 正数需补缴、负数应退款、0 无差价 */
+  diffAmount: number
+  newDailyRent: number
+  newPriceFactor: number
+  newHourlyRent: number
+  billableHours: number
+  /** 待支付直接改单 / 生成补缴单 / 原路退款 / 无差价 */
+  settleMode: string
 }
 
 /** 订单变更（换车 / 改期） */

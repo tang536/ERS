@@ -1,5 +1,6 @@
 using System.Data.Common;
 using ERental.Data;
+using ERental.Models;
 using ERental.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -59,6 +60,10 @@ internal sealed class TestDatabase : IDisposable
         var db = new AppDbContext(options);
         // 建表：EF 模型一次建全。视图映射用 ToView，不会建出同名空表。
         db.Database.EnsureCreated();
+        // 客户表 member_level 是指向 member_rights 的外键，实体默认等级「普通会员」必须先存在，
+        // 否则所有「建客户」的集成测试都会撞 FK_customer_member_rights_member_level。
+        db.MemberRights.Add(MemberRights.Create("普通会员", 1.00m, null, null, "会员专享活动"));
+        db.SaveChanges();
         // 安装 objects.sql：视图/函数/触发器/存储过程都按生产同一份脚本安装。
         SchemaObjects.EnsureInstalled(db);
 

@@ -32,6 +32,22 @@ public class OrderChangeController(OrderChangeService svc) : ControllerBase
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
+    ///<summary>换车试算：只返回租金变化与差价处置方式，不占车、不落库</summary>
+    [HttpPost("preview/vehicle")]
+    public async Task<IActionResult> PreviewVehicle([FromBody] ChangeVehicleInput input)
+    {
+        try { return Ok(new ApiResponse<OrderChangePreviewDto> { Data = await _svc.PreviewVehicleAsync(input.OrderId, input.NewVehicleId) }); }
+        catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
+    }
+
+    ///<summary>改期试算：只返回租金变化与差价处置方式，不落库</summary>
+    [HttpPost("preview/reschedule")]
+    public async Task<IActionResult> PreviewReschedule([FromBody] RescheduleInput input)
+    {
+        try { return Ok(new ApiResponse<OrderChangePreviewDto> { Data = await _svc.PreviewRescheduleAsync(input.OrderId, input.LeaseStart, input.LeaseEnd) }); }
+        catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
+    }
+
     ///<summary>某订单的变更历史</summary>
     [HttpGet("order/{orderId:int}")]
     public async Task<IActionResult> GetChanges(int orderId) =>

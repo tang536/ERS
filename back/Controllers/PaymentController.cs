@@ -526,13 +526,17 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
         //「支付成功」不能只盯「已支付/租赁中」两个状态
         var paid = order.OrderStatus is "已支付" or "租赁中" or "已完结" || PayStatuses.IsMoneyArrived(record?.PayStatus);
 
+        //匿名轮询只回传「付没付」所需的最小信息：订单主键与内部状态不外泄，
+        //订单号本身就是付款凭证，知道单号的人不需要再拿到数据库 ID 和完整状态机。
+        var anonStatus = paid ? "已支付" : (order.OrderStatus == "已取消" ? "已取消" : "待支付");
+
         return Ok(new ApiResponse<PayStatusDto>
         {
             Data = new PayStatusDto
             {
                 OrderNo = order.OrderNo,
-                OrderId = order.OrderId,
-                OrderStatus = order.OrderStatus,
+                OrderId = IsAnonymous ? 0 : order.OrderId,
+                OrderStatus = IsAnonymous ? anonStatus : order.OrderStatus,
                 Paid = paid,
                 Amount = IsAnonymous ? 0m : order.TotalRent + order.Deposit,
                 TransactionNo = IsAnonymous ? "" : (record?.TransactionNo ?? "")
@@ -589,13 +593,13 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
             Data = new PayStatusDto
             {
                 OrderNo = rec.OutTradeNo ?? "",
-                OrderId = rec.OrderId,
+                OrderId = IsAnonymous ? 0 : rec.OrderId,
                 OrderStatus = paid ? "已支付" : rec.PayStatus,
                 Paid = paid,
                 Amount = IsAnonymous ? 0m : rec.PayAmount,
                 TransactionNo = IsAnonymous ? "" : (rec.TransactionNo ?? ""),
                 BizType = "supplement",
-                PayId = rec.PayId
+                PayId = IsAnonymous ? 0 : rec.PayId
             }
         });
     }
@@ -605,6 +609,10 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
     {
         var view = await _member.GetPurchaseView(tradeNo);
         if (!view.Exists) return NotFound(new ApiResponse<object> { Code = 404, Message = "会员购买记录不存在", Success = false });
+
+        //交易号虽然高熵，但顾客登录态下仍要校验归属：不能拿别人的 HY 号查金额与支付交易号
+        if (IsCustomer && view.CustomerId != CurrentUserId)
+            return StatusCode(403, new ApiResponse<object> { Code = 403, Message = "无权查看该笔会员购买", Success = false });
 
         var paid = view.Done;
         var statusText = view.Done ? "已支付" : "待支付";
@@ -653,16 +661,27 @@ public class PaymentController(PaymentService svc, AlipayService alipay, WechatP
         }
     }
 
+    ///<summary>
+    /// 手工退款：只允许管理员/财务操作。前台在结算流程里退款走 SettlementService，
+    /// 这条接口是「对账时发现多收/需单独退」的兜底，不能让任意员工绕过结算直接动钱。
+    /// 退款原因与操作人一并写审计日志，事后可追责。
+    /// </summary>
     [HttpPut("{id:int}/refund")]
-    [Authorize(Policy = Policies.AnyStaff)]
-    public async Task<IActionResult> RefundPayment(int id, [FromBody] decimal amount)
+    [Authorize(Policy = Policies.FinanceOnly)]
+    public async Task<IActionResult> RefundPayment(int id, [FromBody] decimal amount, [FromQuery] string? reason = null)
     {
+        var detail = $"支付流水 {id}，金额 ¥{amount:0.00}" + (string.IsNullOrWhiteSpace(reason) ? "" : $"，原因：{reason.Trim()}");
         try
         {
             //返回值区分「真的原路退回」与「仅账面登记」，前台/财务必须看得见差别
-            var r = await _svc.Refund(id, amount);
+            var r = await _svc.Refund(id, amount, reason);
+            await AuditAsync("手工退款", true, detail);
             return Ok(new ApiResponse<object> { Message = r.Message, Data = r });
         }
-        catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
+        catch (Exception ex) when (ErrorText.IsHandled(ex))
+        {
+            await AuditAsync("手工退款", false, $"{detail}；失败：{ErrorText.Safe(ex)}");
+            return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false });
+        }
     }
 }

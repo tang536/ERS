@@ -201,11 +201,11 @@ public partial class MemberService(AppDbContext db, LogService log, ILogger<Memb
         }));
     }
 
-    ///<summary>读取购买意向/完成状态（供{HY号}/status 轮询）：返回</summary>
-    public async Task<(bool Done, decimal Amount, string AlipayTradeNo, DateTime CreateTime, bool Exists)> GetPurchaseView(string tradeNo)
+    ///<summary>读取购买意向/完成状态（供{HY号}/status 轮询）：返回归属顾客，供控制器做越权校验</summary>
+    public async Task<(bool Done, decimal Amount, string AlipayTradeNo, DateTime CreateTime, bool Exists, int CustomerId)> GetPurchaseView(string tradeNo)
     {
         var cfg = await _db.SystemConfigs.AsNoTracking().FirstOrDefaultAsync(x => x.ConfigKey == PayPrefix + tradeNo);
-        if (cfg == null) return (false, 0m, "", default, false);
+        if (cfg == null) return (false, 0m, "", default, false, 0);
         try
         {
             var intent = JsonSerializer.Deserialize<Dictionary<string, string>>(cfg.ConfigValue ?? "{}") ?? new Dictionary<string, string>();
@@ -213,13 +213,14 @@ public partial class MemberService(AppDbContext db, LogService log, ILogger<Memb
             var price = decimal.Parse(intent.GetValueOrDefault("p", "0"), CultureInfo.InvariantCulture);
             //时间戳解析失败时 ts 保持 default(DateTime)，与原「忽略返回值」的语义一致
             _ = DateTime.TryParse(intent.GetValueOrDefault("ts", ""), CultureInfo.InvariantCulture, DateTimeStyles.None, out var ts);
-            return (done, price, intent.GetValueOrDefault("alipay", ""), ts, true);
+            var customerId = int.TryParse(intent.GetValueOrDefault("c", "0"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var cid) ? cid : 0;
+            return (done, price, intent.GetValueOrDefault("alipay", ""), ts, true, customerId);
         }
         catch (Exception ex)
         {
             //反序列化失败等异常保留类型与堆栈
             _logger.LogWarning(ex, "会员购买意向 {TradeNo} 数据解析失败，按未完成状态返回", tradeNo);
-            return (false, 0m, "", default, true);
+            return (false, 0m, "", default, true, 0);
         }
     }
 

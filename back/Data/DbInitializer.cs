@@ -1,4 +1,5 @@
 ﻿using System.Data;
+using System.Globalization;
 using System.Text.Json;
 using ERental.Models;
 using ERental.Services;
@@ -38,7 +39,7 @@ public static class DbInitializer
     /// ⚠️ 改动 DbInitializer 里的 DDL（加列/加表/改约束）时必须把它 +1，
     /// 否则老库会因「版本已是最新」而跳过这次升级。
     /// </summary>
-    public const int SchemaVersion = 12;
+    public const int SchemaVersion = 13;
 
     /// <summary>幂等的结构升级：保证「老数据库」也能平滑支持新功能</summary>
     public static void EnsureSchemaUpgrades(AppDbContext db)
@@ -64,6 +65,44 @@ public static class DbInitializer
         //    作为嵌入资源随程序发布。安装器按脚本哈希 + 对象存在性判断，已安装则直接跳过。
         //    它与 schema 版本相互独立：objects.sql 改了哈希自然会触发重装。
         SchemaObjects.EnsureInstalled(db);
+
+        // ── 价格快照回填：历史在途订单没有 daily_rent/price_factor，
+        //    只能按车辆当前价兜底并记录一次；已完结订单不参与（账单已定，不再重算）。
+        BackfillOrderPricingSnapshot(db);
+    }
+
+    ///<summary>
+    /// 历史在途订单的价格快照回填（只跑一次：已有快照的行不会重复写）。
+    /// 精确的历史系数无法还原，这里按当前车辆日租、系数 1.00 兜底，并在日志里说明，
+    /// 避免结算时因为「车辆已改价」把老订单按新价重算。
+    /// </summary>
+    private static void BackfillOrderPricingSnapshot(AppDbContext db)
+    {
+        if (!ColumnExists(db, TableRentalOrder, "daily_rent")
+            || !ColumnExists(db, TableRentalOrder, "price_factor")) return;
+
+        var orders = db.RentalOrders
+            .Where(o => o.DailyRent == null
+                && (o.OrderStatus == "待支付" || o.OrderStatus == "已支付" || o.OrderStatus == "租赁中"))
+            .Select(o => new { o.OrderId, o.VehicleId })
+            .ToList();
+        if (orders.Count == 0) return;
+
+        var vehicleRents = db.Vehicles.AsNoTracking()
+            .Select(v => new { v.VehicleId, v.DailyRent })
+            .ToDictionary(v => v.VehicleId, v => v.DailyRent);
+        var configs = db.SystemConfigs.AsNoTracking().Where(c => c.ConfigKey == "daily_rent").ToList();
+        var globalRent = decimal.TryParse(configs.FirstOrDefault()?.ConfigValue,
+            NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) ? parsed : 30m;
+
+        var entities = db.RentalOrders.Where(o => orders.Select(x => x.OrderId).Contains(o.OrderId)).ToList();
+        foreach (var order in entities)
+        {
+            var daily = vehicleRents.GetValueOrDefault(order.VehicleId) ?? globalRent;
+            order.SetPricingSnapshot(daily, 1m);
+        }
+        db.SaveChanges();
+        Console.WriteLine($"[schema] 已为 {entities.Count} 笔在途订单回填价格快照（历史系数不可还原，按 1.00 处理）");
     }
 
     /// <summary>
@@ -644,6 +683,17 @@ public static class DbInitializer
         if (!ColumnExists(db, TableRentalOrder, "points_used"))
         {
             db.Database.ExecuteSqlRaw("ALTER TABLE `rental_order` ADD COLUMN `points_used` INT NOT NULL DEFAULT 0 COMMENT '本单抵扣的积分数' AFTER `customer_coupon_id`;");
+        }
+
+        //价格快照：下单时的日租金与动态系数，结算/续租只认快照，避免运营改价改写历史订单。
+        //可空仅为兼容历史订单（启动时由 BackfillOrderPricingSnapshot 回填在途单）。
+        if (!ColumnExists(db, TableRentalOrder, "daily_rent"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `rental_order` ADD COLUMN `daily_rent` DECIMAL(10,2) NULL COMMENT '下单时日租金快照（NULL=历史订单）' AFTER `addon_fee`;");
+        }
+        if (!ColumnExists(db, TableRentalOrder, "price_factor"))
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE `rental_order` ADD COLUMN `price_factor` DECIMAL(5,2) NULL COMMENT '下单时动态定价系数快照（1.00=无规则）' AFTER `daily_rent`;");
         }
     }
 
@@ -1299,7 +1349,9 @@ public static class DbInitializer
         EnsureNullableUniqueIndex(db, TablePaymentRecord, "uk_pay_out_trade_no", "`out_trade_no`", "支付商户单号唯一");
         EnsureNullableUniqueIndex(db, TableRentalOrder, "uk_rental_request_key", "`request_key`", "订单幂等键唯一（重复提交只保留一单）");
         EnsureUniqueIndex(db, "order_addon", "uk_order_addon", "`order_id`, `addon_id`", "同一订单同一增值服务唯一");
-
+        // 积分流水：同一订单的「抵扣 / 奖励 / 退回」各只允许一条。
+        // 人工调整的 order_id 为 NULL，MySQL 唯一索引允许多个 NULL，因此不限制人工补分。
+        EnsureUniqueIndex(db, "point_log", "uk_point_order_source", "`order_id`, `source`", "同一订单同一积分动作唯一（防止重复退分）", duplicateFilter: "`order_id` IS NOT NULL");
         // ② 复合索引：归还/占用的核心 SQL 都是「按车 + 按状态」二维过滤
 
         EnsureCompositeIndex(db, TableRentalOrder, "idx_vehicle_status", "`vehicle_id`, `order_status`", "车辆占用/归还判定：按车 + 按状态");
@@ -1511,12 +1563,17 @@ public static class DbInitializer
     private static string Q(string identifier) => string.Concat(Tick, identifier, Tick);
 
     /// <summary>建唯一索引</summary>
-    private static void EnsureUniqueIndex(AppDbContext db, string table, string index, string columns, string purpose)
+    /// <remarks>
+    /// duplicateFilter 可选 SQL 条件：只对满足条件的行查重。用于「唯一索引允许 NULL 重复」的场景
+    /// （如 point_log.order_id），否则历史 NULL 行会被误判成重复而跳过建索引。
+    /// </remarks>
+    private static void EnsureUniqueIndex(AppDbContext db, string table, string index, string columns, string purpose, string? duplicateFilter = null)
     {
         if (!TableExists(db, table) || IndexExists(db, table, index)) return;
 
+        var filter = string.IsNullOrWhiteSpace(duplicateFilter) ? string.Empty : $" WHERE {duplicateFilter}";
         var dups = ScalarLong(db,
-            $"SELECT COUNT(*) FROM (SELECT {columns} FROM `{table}` GROUP BY {columns} HAVING COUNT(*) > 1) AS d");
+            $"SELECT COUNT(*) FROM (SELECT {columns} FROM `{table}`{filter} GROUP BY {columns} HAVING COUNT(*) > 1) AS d");
         if (dups > 0)
         {
             Console.WriteLine($"[并发约束] 跳过 {table}.{index}（{purpose}）：存量数据中有 {dups} 组重复值，请先人工核对并清理后再建唯一索引。");
@@ -1677,6 +1734,18 @@ public static class DbInitializer
 
     public static void Seed(AppDbContext db, IConfiguration? config = null, IHostEnvironment? env = null, ILogger? logger = null)
     {
+        /*
+         * 基础会员等级：factory 不预置「银卡/金卡/钻石」等付费等级（需求 4.2.3），
+         * 但 customer.member_level 是指向 member_rights 的外键，而客户实体的默认等级就是「普通会员」。
+         * 如果连这一行都没有，全新库上的顾客注册/建档会直接撞外键（Cannot add or update a child row）。
+         * 所以这里只兜底一条不打折的基础等级，付费等级仍由管理员在「会员管理」中自行建立。
+         */
+        if (!db.MemberRights.Any(r => r.MemberLevel == "普通会员"))
+        {
+            db.MemberRights.Add(MemberRights.Create("普通会员", 1.00m, null, null, "会员专享活动"));
+            db.SaveChanges();
+        }
+
         if (!db.Roles.Any())
         {
             db.Roles.AddRange(

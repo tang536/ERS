@@ -156,6 +156,15 @@ export default function OrderDetailModal({ order, onClose, onPrint }: OrderDetai
               <b>{order.actualRent != null ? `¥${order.actualRent}` : '—'}</b>
             </div>
             <div>
+              <span>计价快照</span>
+              {/* 运营改价后老单仍按下单价结算：把快照露出来，前台解释账单时有据可依 */}
+              <b>
+                {order.dailyRent != null
+                  ? `¥${Number(order.dailyRent).toFixed(2)}/天${Number(order.priceFactor || 1) !== 1 ? ` × ${Number(order.priceFactor).toFixed(2)}` : ''}`
+                  : order.actualRent != null ? '历史订单（未记录快照）' : '历史订单（按现价）'}
+              </b>
+            </div>
+            <div>
               <span>押金</span>
               <b>¥{order.deposit}</b>
             </div>

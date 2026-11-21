@@ -114,6 +114,16 @@ public class SettlePreviewDto
     public decimal PrepaidRent { get; init; }
     public decimal Deposit { get; init; }
 
+    /// <summary>结算采用的日租金（优先取订单下单时的快照）</summary>
+    public decimal DailyRent { get; init; }
+    /// <summary>结算采用的动态定价系数（历史订单无快照时为 1.00）</summary>
+    public decimal PriceFactor { get; init; }
+    /// <summary>
+    /// true = 用的是订单下单时的价格快照；false = 历史订单没有快照，回退到车辆当前价。
+    /// 前台需要据此提示「该单按下单价结算」还是「按车辆现价结算」，避免改价后对账说不清。
+    /// </summary>
+    public bool PriceFromSnapshot { get; init; }
+
     /// <summary>该车小时租金（车辆未单独定价时已回退系统配置）</summary>
     public decimal HourlyRent { get; init; }
     /// <summary>超时租金倍数（system_config.overdue_multiplier）</summary>
@@ -179,6 +189,10 @@ public class OrderDto
     public int? CustomerCouponId { get; init; }
     /// <summary>下单时固化的会员折扣率</summary>
     public decimal RentDiscount { get; init; }
+    /// <summary>下单时固化的日租金（历史订单为 null，表示按车辆现价结算）</summary>
+    public decimal? DailyRent { get; init; }
+    /// <summary>下单时固化的动态定价系数（历史订单为 null）</summary>
+    public decimal? PriceFactor { get; init; }
 
     /// <summary>
     /// 结算后的**实际租金**（按实际归还时长重算）；未结算为 null。

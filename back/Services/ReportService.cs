@@ -65,7 +65,8 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
         var draft = new VisualReport
         {
             //累计指标（指定区间时即为「区间内」指标）
-            TotalRevenue = await payQ.SumAsync(p => p.PayAmount),
+            //净营收 = 实收 - 退款：押金原路退回后不能继续算作营收，否则报表与对账页永远差一笔
+            TotalRevenue = await payQ.SumAsync(p => p.PayAmount - p.RefundAmount),
             TotalOrders = await orderQ.CountAsync(),
             TotalCustomers = await _db.Customers.CountAsync(),
             TotalMaintenanceFee = await _db.MaintenanceOrders.Where(m => m.Status == "已完成").SumAsync(m => m.MaintainFee),
@@ -73,7 +74,8 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
             OrderStatusStats = await orderQ.GroupBy(o => o.OrderStatus).ToDictionaryAsync(g => g.Key, g => g.Count()),
 
             //首页看板指标
-            TodayRevenue = await _db.PaymentRecords.Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus) && p.PayTime.HasValue && p.PayTime >= today && p.PayTime < tomorrow).SumAsync(p => p.PayAmount),
+            //与 TotalRevenue 同口径：当天退款当天扣减
+            TodayRevenue = await _db.PaymentRecords.Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus) && p.PayTime.HasValue && p.PayTime >= today && p.PayTime < tomorrow).SumAsync(p => p.PayAmount - p.RefundAmount),
             TodayOrders = await _db.RentalOrders.CountAsync(o => o.CreateTime >= today && o.CreateTime < tomorrow),
             RentedCount = vehicleStatusStats.GetValueOrDefault("在租"),
             FreeCount = vehicleStatusStats.GetValueOrDefault("空闲"),
@@ -698,12 +700,12 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
     {
         var payQ = _db.PaymentRecords.AsNoTracking().Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus) && p.PayTime.HasValue);
         if (hasRange) payQ = payQ.Where(p => p.PayTime >= rangeFrom && p.PayTime < rangeTo);
-        var pays = await payQ.Select(p => new { p.OrderId, p.PayAmount }).ToListAsync();
+        var pays = await payQ.Select(p => new { p.OrderId, p.PayAmount, p.RefundAmount }).ToListAsync();
 
         var revenue = new Dictionary<int, decimal>();
         foreach (var p in pays)
         {
-            if (orderVehicle.TryGetValue(p.OrderId, out var vid)) revenue[vid] = revenue.GetValueOrDefault(vid) + p.PayAmount;
+            if (orderVehicle.TryGetValue(p.OrderId, out var vid)) revenue[vid] = revenue.GetValueOrDefault(vid) + p.PayAmount - p.RefundAmount;
         }
         return revenue;
     }
@@ -920,7 +922,7 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
     ///<summary>按天铺满营收/订单趋势：两条 GROUP BY 查询覆盖整个区间</summary>
     private async Task FillDailyTrendAsync(DateTime start, DateTime end, Dictionary<string, decimal> revenue, Dictionary<string, int> orders)
     {
-        var revenueRows = await _db.PaymentRecords.Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus) && p.PayTime.HasValue && p.PayTime >= start && p.PayTime < end).GroupBy(p => p.PayTime!.Value.Date).Select(g => new { Day = g.Key, Total = g.Sum(x => x.PayAmount) }).ToListAsync();
+        var revenueRows = await _db.PaymentRecords.Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus) && p.PayTime.HasValue && p.PayTime >= start && p.PayTime < end).GroupBy(p => p.PayTime!.Value.Date).Select(g => new { Day = g.Key, Total = g.Sum(x => x.PayAmount - x.RefundAmount) }).ToListAsync();
 
         var orderRows = await _db.RentalOrders.Where(o => o.CreateTime >= start && o.CreateTime < end).GroupBy(o => o.CreateTime.Date).Select(g => new { Day = g.Key, Count = g.Count() }).ToListAsync();
 
@@ -938,7 +940,7 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
     ///<summary>按月铺满趋势（长区间用）</summary>
     private async Task FillMonthlyTrendAsync(DateTime start, DateTime end, Dictionary<string, decimal> revenue, Dictionary<string, int> orders)
     {
-        var revenueRows = await _db.PaymentRecords.Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus) && p.PayTime.HasValue && p.PayTime >= start && p.PayTime < end).GroupBy(p => new { p.PayTime!.Value.Year, p.PayTime.Value.Month }).Select(g => new { g.Key.Year, g.Key.Month, Total = g.Sum(x => x.PayAmount) }).ToListAsync();
+        var revenueRows = await _db.PaymentRecords.Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus) && p.PayTime.HasValue && p.PayTime >= start && p.PayTime < end).GroupBy(p => new { p.PayTime!.Value.Year, p.PayTime.Value.Month }).Select(g => new { g.Key.Year, g.Key.Month, Total = g.Sum(x => x.PayAmount - x.RefundAmount) }).ToListAsync();
 
         var orderRows = await _db.RentalOrders.Where(o => o.CreateTime >= start && o.CreateTime < end).GroupBy(o => new { o.CreateTime.Year, o.CreateTime.Month }).Select(g => new { g.Key.Year, g.Key.Month, Count = g.Count() }).ToListAsync();
 

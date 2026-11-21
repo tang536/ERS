@@ -685,7 +685,11 @@ export const myExtApi = {
 export const paymentApi = {
   /** 分页查询支付流水；from/to 为闭区间，page 从 1 开始 */
   list: (params?: { status?: string; from?: string; to?: string; page?: number; size?: number }) => api.get('/payment', { params }),
-  refund: (id: number, amount: number) => api.put(`/payment/${id}/refund`, amount, { headers: { 'Content-Type': 'application/json' } }),
+  refund: (id: number, amount: number, reason?: string) =>
+    api.put(`/payment/${id}/refund`, amount, {
+      headers: { 'Content-Type': 'application/json' },
+      params: reason ? { reason } : undefined,
+    }),
   /** 发起支付：返回 { orderNo, payType, amount, payUrl, realPay }，前端跳 payUrl */
   create: (data: { orderNo: string; payType: string }) => api.post('/payment/create', data),
   /** 查询支付状态：支付页轮询 / 回跳后确认 */
@@ -867,6 +871,8 @@ export const shiftApi = {
 export const orderChangeApi = {
   changeVehicle: (data: ChangeVehiclePayload) => api.post('/orderchange/vehicle', data),
   reschedule: (data: ReschedulePayload) => api.post('/orderchange/reschedule', data),
+  previewVehicle: (data: ChangeVehiclePayload) => api.post('/orderchange/preview/vehicle', data),
+  previewReschedule: (data: ReschedulePayload) => api.post('/orderchange/preview/reschedule', data),
   byOrder: (orderId: number) => api.get(`/orderchange/order/${orderId}`)
 }
 

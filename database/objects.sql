@@ -115,6 +115,8 @@ SELECT
   o.`customer_coupon_id`,
   o.`points_used`,
   o.`rent_discount`,
+  o.`daily_rent`,
+  o.`price_factor`,
   o.`deposit`,
   o.`order_status`,
   o.`create_time`,
@@ -581,6 +583,8 @@ BEGIN
   DECLARE v_status       VARCHAR(10);
   DECLARE v_vehicle_id   INT;
   DECLARE v_daily_rent   DECIMAL(10, 2);
+  DECLARE v_order_daily  DECIMAL(10, 2);
+  DECLARE v_order_factor DECIMAL(5, 2);
   DECLARE v_renewal_id   INT;
   DECLARE v_fee          DECIMAL(10, 2);
   DECLARE v_old_end      DATETIME;
@@ -602,8 +606,8 @@ BEGIN
   SET SESSION innodb_lock_wait_timeout = 5;
   START TRANSACTION;
 
-  SELECT o.`order_status`, o.`vehicle_id`, o.`lease_end`
-    INTO v_status, v_vehicle_id, v_old_end
+  SELECT o.`order_status`, o.`vehicle_id`, o.`lease_end`, o.`daily_rent`, o.`price_factor`
+    INTO v_status, v_vehicle_id, v_old_end, v_order_daily, v_order_factor
     FROM `rental_order` o
    WHERE o.`order_id` = p_order_id
    FOR UPDATE;
@@ -615,11 +619,12 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'ERENTAL:订单状态不允许续租';
   END IF;
 
-  -- 定价口径统一交给函数：车辆日租 → 全局配置 → 30 元兜底。
+  -- 定价口径：优先用订单下单时固化的日租金/动态系数（同一单续租不能因为运营改价而变价），
+  -- 历史订单没有快照时才回退函数解析的当前价（车辆日租 → 全局配置 → 30 元兜底）。
   -- 续租按整天计费，直接用日租 × 天数；不要先折成小时再乘回来，
   -- 否则除不尽 24 的日租（如 35 元/天）会在四舍五入时多收几分钱。
-  SET v_daily_rent = fn_effective_daily_rent(v_vehicle_id);
-  SET v_fee = ROUND(v_daily_rent * p_days, 2);
+  SET v_daily_rent = COALESCE(v_order_daily, fn_effective_daily_rent(v_vehicle_id));
+  SET v_fee = ROUND(v_daily_rent * COALESCE(v_order_factor, 1.00) * p_days, 2);
   SET v_new_end = DATE_ADD(v_old_end, INTERVAL p_days DAY);
   SET v_renewal_time = NOW();
 

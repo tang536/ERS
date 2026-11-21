@@ -1,3 +1,4 @@
+using System.Data;
 using ERental.Data;
 using ERental.DTOs;
 using ERental.Models;
@@ -102,6 +103,10 @@ public class PointService(AppDbContext db, ILogger<PointService> logger)
     ///<summary>订单取消：把本单抵扣的积分退回（奖励分不回收，已发生的消费不撤销）</summary>
     public async Task RefundByOrderAsync(int orderId)
     {
+        //幂等：结算/取消流程可能被重复触发（并发、重试、人工补操作），
+        //同一订单只能退一次积分；批量兜底 RefundCancelledAsync 已有同款判断。
+        if (await _db.PointLogs.AnyAsync(p => p.OrderId == orderId && p.Source == PointLog.SourceRefund)) return;
+
         var used = await _db.PointLogs.AsNoTracking()
             .Where(p => p.OrderId == orderId && p.Source == PointLog.SourceRedeem)
             .SumAsync(p => -p.ChangeAmount);
@@ -131,14 +136,47 @@ public class PointService(AppDbContext db, ILogger<PointService> logger)
         }
     }
 
-    ///<summary>退分本体：余额加回并写一条「取消退回」流水，保证同一订单只会退一次</summary>
+    ///<summary>
+    /// 退分本体：余额加回并写一条「取消退回」流水，保证同一订单只会退一次。
+    /// 「查重 → 加余额 → 写流水」必须包在同一个事务里并锁住顾客行：
+    /// 只靠外面的 AnyAsync 判重时，取消与超时回收并发会双双通过检查，把积分退两遍。
+    /// 唯一索引 uk_point_log_order_source 是最后一道防线，撞键时整笔事务回滚。
+    ///</summary>
     private async Task RefundCoreAsync(int customerId, int orderId, int points)
     {
-        await _db.Customers.Where(c => c.CustomerId == customerId)
-            .ExecuteUpdateAsync(s => s.SetProperty(c => c.Points, c => c.Points + points));
-        var balance = await _db.Customers.AsNoTracking().Where(c => c.CustomerId == customerId).Select(c => c.Points).FirstAsync();
-        _db.PointLogs.Add(PointLog.Create(customerId, points, balance, PointLog.SourceRefund, orderId, "订单取消退回抵扣积分"));
-        await _db.SaveChangesAsync();
+        var ownsTx = _db.Database.CurrentTransaction == null;
+        await using var tx = ownsTx ? await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted) : null;
+        try
+        {
+            if (ownsTx) await DbRowLock.PrepareAsync(_db);
+
+            //锁住顾客档案行：同一顾客的所有退分请求在这里串行，锁内再判一次是否已退
+            if (await DbRowLock.LockCustomerAsync(_db, customerId) == null) return;
+            if (await _db.PointLogs.AnyAsync(p => p.OrderId == orderId && p.Source == PointLog.SourceRefund))
+            {
+                if (tx != null) await tx.CommitAsync();
+                return;
+            }
+
+            await _db.Customers.Where(c => c.CustomerId == customerId)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Points, c => c.Points + points));
+            var balance = await _db.Customers.AsNoTracking().Where(c => c.CustomerId == customerId).Select(c => c.Points).FirstAsync();
+            _db.PointLogs.Add(PointLog.Create(customerId, points, balance, PointLog.SourceRefund, orderId, "订单取消退回抵扣积分"));
+            await _db.SaveChangesAsync();
+
+            if (tx != null) await tx.CommitAsync();
+        }
+        catch (DbUpdateException ex) when (ownsTx && DbConcurrency.IsDuplicateKey(ex))
+        {
+            //并发请求已经写过退回流水：回滚本次余额加回，按幂等成功处理
+            if (tx != null) await tx.RollbackAsync();
+            _logger.LogInformation(ex, "订单 {OrderId} 的抵扣积分已由并发请求退回，本次忽略", orderId);
+        }
+        catch
+        {
+            if (tx != null) await tx.RollbackAsync();
+            throw;
+        }
     }
 
     ///<summary>按已完成订单数自动升级：只升不降，且只认折扣更优的等级</summary>

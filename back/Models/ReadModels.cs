@@ -74,6 +74,14 @@ public class OrderOverviewView
     [Column("rent_discount")]
     public decimal RentDiscount { get; init; }
 
+    ///<summary>下单时的日租金快照（历史订单为 NULL，结算按车辆现价回退）</summary>
+    [Column("daily_rent")]
+    public decimal? DailyRent { get; init; }
+
+    ///<summary>下单时的动态定价系数快照（历史订单为 NULL）</summary>
+    [Column("price_factor")]
+    public decimal? PriceFactor { get; init; }
+
     [Column("deposit")]
     public decimal Deposit { get; init; }
 

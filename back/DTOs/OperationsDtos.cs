@@ -251,6 +251,28 @@ public class OrderChangeDto
     public DateTime CreateTime { get; init; }
 }
 
+/// <summary>
+/// 订单变更试算：前台在确认换车/改期之前先看清「租金怎么变、要补还是要退」。
+/// 只读，不落库；口径与 <see cref="Services.OrderChangeService"/> 的实际办理保持一致。
+/// </summary>
+public class OrderChangePreviewDto
+{
+    public int OrderId { get; init; }
+    public string ChangeType { get; init; } = string.Empty;
+    public decimal OldRent { get; init; }
+    public decimal NewRent { get; init; }
+    /// <summary>正数 = 需补缴，负数 = 应退款，0 = 无差价</summary>
+    public decimal DiffAmount { get; init; }
+    /// <summary>变更后的计价快照：日租金 / 动态系数 / 小时租金</summary>
+    public decimal NewDailyRent { get; init; }
+    public decimal NewPriceFactor { get; init; }
+    public decimal NewHourlyRent { get; init; }
+    /// <summary>计费小时数（向上取整，最少 1 小时）</summary>
+    public int BillableHours { get; init; }
+    /// <summary>变更后订单状态对应的收付方式：待支付直接改单 / 生成补缴单 / 原路退款 / 无差价</summary>
+    public string SettleMode { get; init; } = string.Empty;
+}
+
 // ── 车辆档案 ────────────────────────────────────────────
 
 public class VehicleArchiveDto

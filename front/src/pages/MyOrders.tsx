@@ -335,7 +335,10 @@ export default function MyOrders() {
         <div className="card-title">
           <Icon name="settlements" size={18} chip />归还结算单
           <span className="card-title-count">共 {settles.length} 条</span>
-          <button className="btn-sm btn-sm-default btn-icon-sm" style={{ marginLeft: 'auto' }} onClick={loadSettles}>
+          <button className="btn-sm btn-sm-default btn-icon-sm" style={{ marginLeft: 'auto' }} onClick={() => navigate('/my-settlements')}>
+            <Icon name="settlements" size={15} /><span className="btn-label">独立结算页</span>
+          </button>
+          <button className="btn-sm btn-sm-default btn-icon-sm" onClick={loadSettles}>
             <Icon name="refresh" size={15} /><span className="btn-label">刷新</span>
           </button>
         </div>

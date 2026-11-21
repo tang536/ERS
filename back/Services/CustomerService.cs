@@ -118,6 +118,9 @@ public class CustomerService(AppDbContext db, LogService log)
         //3NF：客户档案只存等级名，折扣唯一真源在权益表（读取时关联），不再冗余写入
         var level = string.IsNullOrWhiteSpace(dto.MemberLevel) ? "普通会员" : dto.MemberLevel.Trim();
         var right = await _db.MemberRights.AsNoTracking().FirstOrDefaultAsync(m => m.MemberLevel == level);
+        //显式指定的等级必须已维护：静默回落到「普通会员」会让前台以为选了金卡、实际按原价开单
+        if (right == null && !string.Equals(level, "普通会员", StringComparison.Ordinal))
+            throw new BusinessException($"会员等级「{level}」未在会员管理中维护，请先在「会员管理」中建立该等级");
         if (right != null) c.ChangeMemberLevel(right);
 
         _db.Customers.Add(c);

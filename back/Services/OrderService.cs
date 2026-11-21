@@ -189,6 +189,8 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
         PointsUsed = o.PointsUsed,
         CustomerCouponId = o.CustomerCouponId,
         RentDiscount = o.RentDiscount,
+        DailyRent = o.DailyRent,
+        PriceFactor = o.PriceFactor,
         //结算视图里带出的实际租金：下单时那条只是预估，结算后才是真实消费
         ActualRent = o.ActualRent,
         Deposit = o.Deposit,
@@ -523,7 +525,7 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
 
         var hours = CalcHours(leaseStart, leaseEnd);
         //计价按车辆取：每辆车有自己的日租金与押金，留空才回退全局配置
-        var (_, hourlyRent, depositBase) = await PricingResolver.ResolveHourlyAsync(_db, vehicle.VehicleId);
+        var (dailyRent, hourlyRent, depositBase) = await PricingResolver.ResolveHourlyAsync(_db, vehicle.VehicleId);
         var discount = await MemberDiscountLookup.OfLevelAsync(_db, customer.MemberLevel);
         //与试算同口径：动态定价系数必须在下单时再取一次，不能沿用前端展示的金额
         var priceFactor = await _ops.CurrentPriceFactorAsync();
@@ -588,6 +590,8 @@ public class OrderService(AppDbContext db, CreditPolicy credit, MessageService m
                 (totalRent, deposit),
                 paidImmediately ? "已支付" : "待支付");
             order.SetRequestKey(normalizedRequestKey);
+            //价格快照：日租金与动态系数一起固化，结算只认快照，运营改价不影响已成立订单
+            order.SetPricingSnapshot(dailyRent, priceFactor);
             //金额构成固化在订单上：结算时按本单当时的折扣率与优惠重算，不受会员之后升降级影响
             order.ApplyBenefits(discountAmount, discount, addonFee, benefits.CouponId, pointsUsed);
             _db.RentalOrders.Add(order);

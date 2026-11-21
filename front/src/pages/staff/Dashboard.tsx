@@ -258,7 +258,7 @@ export default function Dashboard() {
   }
 
   const statCards: StatCard[] = [
-    { label: '今日营收', value: `¥${(stats?.todayRevenue ?? 0).toFixed(2)}`, icon: 'settlements', tone: 'indigo', hint: `今日新增订单 ${stats?.todayOrders ?? 0} 笔`, link: safeLink('/settlements') },
+    { label: '今日净营收', value: `¥${(stats?.todayRevenue ?? 0).toFixed(2)}`, icon: 'settlements', tone: 'indigo', hint: `已扣退款 · 今日新增订单 ${stats?.todayOrders ?? 0} 笔`, link: safeLink('/settlements') },
     { label: '在租车辆', value: stats?.rentedCount ?? 0, icon: 'vehicles', tone: 'emerald', hint: `空闲可租 ${stats?.freeCount ?? 0} 台`, link: safeLink('/vehicles') },
     { label: '进行中订单', value: stats?.activeOrderCount ?? 0, icon: 'orders', tone: 'amber', hint: `待支付 ${stats?.pendingPayCount ?? 0} 笔`, link: safeLink('/orders') },
     { label: '客户总数', value: stats?.totalCustomers ?? 0, icon: 'customers', tone: 'violet', hint: `资料待完善 ${stats?.incompleteProfileCount ?? 0} 位`, link: safeLink('/customers') },
@@ -436,7 +436,7 @@ export default function Dashboard() {
           <div className="card">
             <div className="card-title">
               <Icon name="reports" size={16} chip />近 7 日经营走势
-              <span className="card-title-count">营收（元） / 订单量（笔）</span>
+              <span className="card-title-count">净营收（已扣退款，元） / 订单量（笔）</span>
             </div>
             <div className="dash-chart-pair">
               <div className="chart-container"><ReactEChartsCore echarts={echarts} option={revenueOption} style={{ height: '100%' }} /></div>
