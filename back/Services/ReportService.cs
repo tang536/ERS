@@ -27,10 +27,8 @@ public class ReportService(AppDbContext db, MessageService messages) : INotifica
         var now = AppClock.Now;
         var soon = now.AddHours(24);
 
-        //区间右端点取「当日 23:59:59」：日期选择器给的是当天 00:00
-        var rangeFrom = from?.Date;
-        var rangeTo = to?.Date.AddDays(1);
-        var hasRange = rangeFrom.HasValue && rangeTo.HasValue;
+        //区间解析与财务下钻共用同一口径：右端点取次日 00:00
+        var (rangeFrom, rangeTo, hasRange) = ResolveDateRange(from, to);
 
         //落在区间内的支付/订单
         var payQ = _db.PaymentRecords.Where(p => PayStatuses.MoneyArrived.Contains(p.PayStatus));

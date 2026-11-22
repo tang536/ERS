@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
 import { useUI } from '@/components/UIProvider'
 import ReactEChartsCore from 'echarts-for-react/lib/core'
 import echarts, { chartTheme } from '@/utils/chart'
@@ -10,23 +10,10 @@ import Icon from '@/components/Icon'
 import DateRangeCalendar from '@/components/DateRangeCalendar'
 import OverflowMenu, { type OverflowItem } from '@/components/OverflowMenu'
 import RowActions from '@/components/RowActions'
+import { money } from '@/utils/money'
+import { PAYMENT_BADGE, VEHICLE_BADGE } from '@/utils/statusBadges'
 import { fmtDT, recentDateRange, shiftDateInput, todayInput } from '@/utils/datetime'
 import { downloadBlob, todayStamp } from '@/utils/download'
-
-const PAY_BADGE: Record<string, string> = {
-  '已支付': 'status-success',
-  '已退款': 'status-danger',
-  '待支付': 'status-warning',
-}
-
-/** 车辆状态配色：与车辆管理页 statusMap 保持同一套，避免同一个「在租」两页两色 */
-const VEH_BADGE: Record<string, string> = {
-  '空闲': 'status-success',
-  '在租': 'status-primary',
-  '维保': 'status-warning',
-  '报废': 'status-danger',
-}
-
 /** 统计区间：from / to 均为 YYYY-MM-DD，空串表示不限制（累计口径） */
 type Range = { from: string; to: string }
 type Dim = 'time' | 'order' | 'merchant'
@@ -62,7 +49,6 @@ const PRESETS: { key: string; label: string; make: () => Range }[] = [
   { key: 'all', label: '全部', make: () => ({ ...EMPTY_RANGE }) },
 ]
 
-const money = (v: any) => `¥${Number(v ?? 0).toFixed(2)}`
 
 /** 统一的区块状态：加载中 / 异常（可重试） / 空数据 —— 三种不能混为一谈 */
 function BlockState({
@@ -929,7 +915,7 @@ export default function Reports() {
                       <tr key={v.vehicleId}>
                         <td className="mono">{v.vehicleNo}</td>
                         <td>{v.brand || '—'}</td>
-                        <td><span className={`status-tag ${VEH_BADGE[v.vehicleStatus] || 'status-default'}`}>{v.vehicleStatus}</span></td>
+                        <td><span className={`status-tag ${VEHICLE_BADGE[v.vehicleStatus] || 'status-default'}`}>{v.vehicleStatus}</span></td>
                         <td className="num">{v.orderCount}</td>
                         <td className="num">{v.rentHours}</td>
                         <td className="num">{money(v.revenue)}</td>
@@ -1220,7 +1206,7 @@ export default function Reports() {
                   <td>{p.customerName || '—'}</td>
                   <td className="num">{money(p.payAmount)}</td>
                   <td>{p.payType}</td>
-                  <td><span className={`status-tag ${PAY_BADGE[p.payStatus] || 'status-warning'}`}>{p.payStatus}</span></td>
+                  <td><span className={`status-tag ${PAYMENT_BADGE[p.payStatus] || 'status-warning'}`}>{p.payStatus}</span></td>
                   <td className="num">{money(p.refundAmount)}</td>
                   <td className="mono">{p.transactionNo || '—'}</td>
                   <td className="cell-time">{fmtDT(p.payTime)}</td>

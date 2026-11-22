@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
 import QrScanner from '@/components/QrScanner'
 import { vehicleApi } from '@/api'
 import type { VehicleQrDetail } from '@/types'
 import { fmtDT } from '@/utils/datetime'
+import { VEHICLE_BADGE } from '@/utils/statusBadges'
 
 interface VehicleQrLookupProps {
   onClose: () => void
@@ -15,13 +16,7 @@ interface VehicleQrLookupProps {
 
 const fmt = (v?: string) => fmtDT(v)
 
-const STATUS_CLASS: Record<string, string> = {
-  '空闲': 'status-success',
-  '在租': 'status-primary',
-  '维保': 'status-warning',
-  '报废': 'status-danger',
-}
-
+/**
 /**
  * 扫码查询弹窗（需求 4.2.2「扫码可快速查看车辆档案与租赁记录」；
  * 需求「扫码设备接口」支持 USB 二维码扫码枪）。
@@ -113,7 +108,7 @@ export default function VehicleQrLookup({ onClose, onPick, pickLabel = '选择�
                 <div>
                   <div className="qr-result-no">
                     {detail.vehicleNo}
-                    <span className={`status-tag ${STATUS_CLASS[detail.vehicleStatus] || 'status-default'}`}>
+                    <span className={`status-tag ${VEHICLE_BADGE[detail.vehicleStatus] || 'status-default'}`}>
                       {detail.vehicleStatus}
                     </span>
                   </div>

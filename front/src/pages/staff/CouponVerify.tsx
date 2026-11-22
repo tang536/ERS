@@ -25,7 +25,7 @@ const normalize = (raw: string) => {
   return rest.toUpperCase()
 }
 
-const money = (v: number) => `¥${(Number.isFinite(v) ? v : 0).toFixed(2)}`
+import { money } from '@/utils/money'
 
 export default function CouponVerify() {
   const { toast, confirm } = useUI()

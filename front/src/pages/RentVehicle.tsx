@@ -9,6 +9,7 @@ import { nowDatetimeInput, afterDaysDatetimeInput, isBeforeNow, clampLeaseStart 
 import { newRequestId } from '@/utils/requestId'
 import type { RentableVehicle, RentEstimate, MyCoupon, AddonItem, PointSummary } from '@/types'
 import { AppointmentModal } from './components/CustomerExtras'
+import { money } from '@/utils/money'
 
 /**
  * 车辆详情与下单页（/rent/:vehicleId）。
@@ -27,7 +28,7 @@ const QUICK_RANGES = [
   { label: '7 天', hours: 168 },
 ]
 
-const money = (v: number) => `¥${(Number.isFinite(v) ? v : 0).toFixed(2)}`
+const EMPTY_LEASE = () => ({ leaseStart: nowDatetimeInput(), leaseEnd: afterDaysDatetimeInput(1) })
 
 /** datetime-local 值加小时，输出同格式的本地时间字符串（不能走 UTC，否则整体差 8 小时） */
 const addHours = (value: string, hours: number) => {

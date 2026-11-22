@@ -3,9 +3,8 @@ import { useUI } from '@/components/UIProvider'
 import { shiftApi } from '@/api'
 import Icon from '@/components/Icon'
 import { fmtDT } from '@/utils/datetime'
+import { money } from '@/utils/money'
 import type { Shift } from '@/types'
-
-const money = (v: number | null | undefined) => `¥${Number(v || 0).toFixed(2)}`
 
 /**
  * 交接班（班次现金对账）。

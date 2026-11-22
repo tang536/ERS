@@ -11,6 +11,7 @@ import RowActions from '@/components/RowActions'
 import SkeletonRows from '@/components/SkeletonRows'
 import SortTh, { type SortDir } from '@/components/SortTh'
 import { useAuth, ROLE } from '@/hooks/useAuth'
+import { ORDER_BADGE } from '@/utils/statusBadges'
 import { fmtDT, recentDateRange } from '@/utils/datetime'
 import { compressImage } from '@/utils/image'
 import { downloadBlob, todayStamp } from '@/utils/download'
@@ -25,15 +26,7 @@ const DEFAULT_PAGE_SIZE = 10
 /** 可排序字段的白名单（小写，与后端 QueryAsync 的 switch 键一致）：URL 里的 sort 参数不可信，必须收敛到这张表里 */
 const SORT_KEYS = ['createtime', 'leasestart', 'leaseend', 'totalrent', 'deposit', 'orderno']
 
-const statusMap: Record<string, string> = {
-  '待支付': 'status-warning',
-  '已支付': 'status-primary',
-  '租赁中': 'status-primary',
-  '已完结': 'status-success',
-  '已完成': 'status-success',
-  '已取消': 'status-default',
-  '已逾期': 'status-danger',
-}
+const statusMap = ORDER_BADGE
 
 const STATUS_OPTIONS = ['待支付', '已支付', '租赁中', '已完结', '已取消']
 

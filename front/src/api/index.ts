@@ -255,7 +255,6 @@ export const vehicleApi = {
   }) => api.get('/vehicle', { params }),
   /** 各状态车辆数（页签角标）：分页后前端没有全集，角标由后端分组统计 */
   stats: (params?: { keyword?: string; brand?: string }) => api.get('/vehicle/stats', { params }),
-  get: (id: number) => api.get(`/vehicle/${id}`),
   create: (data: SaveVehiclePayload) => api.post('/vehicle', data),
   /**
    * 车辆档案更新。若本次同时改动了「车辆状态」，需带 opPassword
@@ -275,7 +274,6 @@ export const vehicleApi = {
   /** 传二维码原文或车辆编号，返回车辆档案 + 租赁记录 */
   byQrCode: (code: string) => api.get('/vehicle/qr', { params: { code } }),
   /** 最近热销车辆（线上租车页推荐位） */
-  popular: (days = 30, limit = 6) => api.get('/vehicle/popular', { params: { days, limit } }),
   /** 车辆档案时间线：租用、维保、盘点、验车、报废与累计成本收益 */
   archive: (id: number) => api.get(`/vehicle/${id}/archive`),
   /** 顾客端「全部车辆」目录（热销板块「查看全部车辆」入口） */
@@ -377,7 +375,6 @@ export const orderApi = {
     sortBy?: string; sortDesc?: boolean
     page: number; pageSize: number
   }) => api.get('/order', { params }),
-  get: (id: number) => api.get(`/order/${id}`),
   /** 订单时间线：下单、支付、取还车、换车/改期、结算按时间正序聚合 */
   timeline: (id: number) => api.get(`/order/${id}/timeline`),
   /**
@@ -584,7 +581,6 @@ export const opsApi = {
     api.post('/ops/invoices', data),
   issueInvoice: (id: number) => api.post(`/ops/invoices/${id}/issue`),
   rejectInvoice: (id: number, note?: string) => api.post(`/ops/invoices/${id}/reject`, { note }),
-  redInvoice: (id: number) => api.post(`/ops/invoices/${id}/red`),
   plans: () => api.get('/ops/plans'),
   createPlan: (data: { vehicleId: number; planName: string; triggerType: string; triggerValue: number; lastServiceTime?: string | null; lastMileage: number; currentMileage: number; remark?: string }) =>
     api.post('/ops/plans', data),
@@ -600,7 +596,6 @@ export const opsApi = {
 export const extApi = {
   stores: () => api.get('/ext/stores'),
   createStore: (data: Record<string, unknown>) => api.post('/ext/stores', data),
-  updateStore: (id: number, data: Record<string, unknown>) => api.put(`/ext/stores/${id}`, data),
   bindVehicleStore: (storeId: number, vehicleId: number) => api.post(`/ext/stores/${storeId}/bind-vehicle/${vehicleId}`),
 
   appointments: (status?: string) => api.get('/ext/appointments', { params: { status } }),
@@ -609,8 +604,6 @@ export const extApi = {
   returns: (status?: string) => api.get('/ext/returns', { params: { status } }),
   setReturnStatus: (id: number, status: string) => api.post(`/ext/returns/${id}/status`, { status }),
 
-  reviews: (vehicleId?: number) => api.get('/ext/reviews', { params: { vehicleId } }),
-  replyReview: (id: number, reply: string) => api.post(`/ext/reviews/${id}/reply`, { reply }),
 
   tickets: (status?: string) => api.get('/ext/tickets', { params: { status } }),
   replyTicket: (id: number, reply: string, close = false) => api.post(`/ext/tickets/${id}/reply`, { reply, close }),
@@ -620,11 +613,9 @@ export const extApi = {
 
   batteries: () => api.get('/ext/batteries'),
   createBattery: (data: Record<string, unknown>) => api.post('/ext/batteries', data),
-  updateBattery: (id: number, data: Record<string, unknown>) => api.put(`/ext/batteries/${id}`, data),
 
   insurance: () => api.get('/ext/insurance'),
   createInsurance: (data: Record<string, unknown>) => api.post('/ext/insurance', data),
-  updateInsurance: (id: number, data: Record<string, unknown>) => api.put(`/ext/insurance/${id}`, data),
 
   accidents: () => api.get('/ext/accidents'),
   createAccident: (data: Record<string, unknown>) => api.post('/ext/accidents', data),
@@ -638,11 +629,9 @@ export const extApi = {
 
   gps: () => api.get('/ext/gps'),
   createGps: (data: Record<string, unknown>) => api.post('/ext/gps', data),
-  updateGps: (id: number, data: Record<string, unknown>) => api.put(`/ext/gps/${id}`, data),
 
   pricing: () => api.get('/ext/pricing'),
   createPricing: (data: Record<string, unknown>) => api.post('/ext/pricing', data),
-  updatePricing: (id: number, data: Record<string, unknown>) => api.put(`/ext/pricing/${id}`, data),
   setPricingStatus: (id: number, status: string) => api.post(`/ext/pricing/${id}/status`, { status }),
 
   campaigns: () => api.get('/ext/campaigns'),
@@ -668,17 +657,13 @@ export const extApi = {
 
 // 顾客侧扩展：我的预约、还车登记、评价、工单、信用、推荐码
 export const myExtApi = {
-  appointments: () => api.get('/my-ext/appointments'),
   createAppointment: (data: Record<string, unknown>) => api.post('/my-ext/appointments', data),
-  returns: () => api.get('/my-ext/returns'),
   createReturn: (data: Record<string, unknown>) => api.post('/my-ext/returns', data),
-  reviews: () => api.get('/my-ext/reviews'),
   createReview: (data: Record<string, unknown>) => api.post('/my-ext/reviews', data),
   tickets: () => api.get('/my-ext/tickets'),
   createTicket: (data: Record<string, unknown>) => api.post('/my-ext/tickets', data),
   credit: () => api.get('/my-ext/credit'),
   referral: () => api.get('/my-ext/referral'),
-  priceFactor: () => api.get('/my-ext/price-factor'),
 }
 
 // 支付
@@ -856,7 +841,6 @@ export const addonApi = {
 /** 积分：顾客看自己，工作人员可指定 customerId */
 export const pointApi = {
   summary: (customerId?: number, rent?: number) => api.get('/point', { params: { customerId, rent } }),
-  preview: (rent: number) => api.get('/point/preview', { params: { rent } })
 }
 
 /** 交接班：开班 / 交班 / 历史 */

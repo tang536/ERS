@@ -1138,7 +1138,6 @@ a.header-icon-btn { color: inherit; text-decoration: none; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.two-col { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 20px; }
 .chart-container { width: 100%; height: 300px; }
 /* 营收 / 订单量并排：两图共用一组日期刻度，横轴对齐才能横向对比。
    高度比单图矮一档（260），两张并排后总高度与原来单张大图基本持平，不多占一屏。 */
@@ -1620,13 +1619,6 @@ html[data-theme='dark'] .filter-inputs select {
 .op-cell strong { font-weight: 600; font-size: 13px; }
 .op-sub { font-size: 11.5px; color: var(--text-muted, #94a3b8); }
 
-/* 金额列角标：区分「结算后的实际租金」与「下单时的预收预估」，
-   避免同一个数字在下单页与结算后被读成两种含义 */
-.num-tag {
-  display: inline-block; margin-left: 5px; padding: 0 5px;
-  font-size: 10.5px; font-weight: 700; line-height: 16px; vertical-align: 1px;
-  border-radius: 5px; color: #16a34a; background: rgba(22, 163, 74, .13);
-}
 
 /* ---- 数据字典专用固定列宽（DataDict.tsx 的 colgroup）----
    table-layout:auto 按内容分列宽，字典六个分组内容长短不一，切 tab 时同一表头
@@ -2169,7 +2161,6 @@ html[data-theme="dark"] .settle-busy { background: rgba(3, 7, 18, 0.68); }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stats-grid--5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .alarm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .two-col { grid-template-columns: minmax(0, 1fr); }
   .estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* 次要列收纳第一档：笔记本窄屏 / 分屏场景先隐藏低频列（车架号、采购时间、注册时间等），

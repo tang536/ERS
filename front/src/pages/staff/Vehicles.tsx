@@ -24,13 +24,8 @@ import BatchCreateModal from './components/BatchCreateModal'
 import BatchEditModal from './components/BatchEditModal'
 import { useAuth, ROLE } from '@/hooks/useAuth'
 import { todayInput, toDateInputFrom, fmtD } from '@/utils/datetime'
+import { VEHICLE_BADGE } from '@/utils/statusBadges'
 
-const statusMap: Record<string, string> = {
-  '空闲': 'status-success',
-  '在租': 'status-primary',
-  '维保': 'status-warning',
-  '报废': 'status-danger',
-}
 /** 展示与统计用的全部状态 */
 const STATUSES = ['空闲', '在租', '维保', '报废']
 /** 车辆档案列表默认每页行数；用户可在分页条上改（盘点时想一屏看全） */
@@ -569,7 +564,7 @@ export default function Vehicles() {
         {view === 'list' && (
           <span className="title-chips">
             {countsRows.map(c => (
-              <span key={c.s} className={`status-tag ${statusMap[c.s]}`}>{c.s} {c.n}</span>
+              <span key={c.s} className={`status-tag ${VEHICLE_BADGE[c.s] || 'status-default'}`}>{c.s} {c.n}</span>
             ))}
           </span>
         )}
@@ -672,7 +667,7 @@ export default function Vehicles() {
                 </td>
                 <td>
                   <select
-                    className={`inline-select status-select-${statusMap[v.vehicleStatus]?.replace('status-', '') || 'default'}`}
+                    className={`inline-select status-select-${VEHICLE_BADGE[v.vehicleStatus]?.replace('status-', '') || 'default'}`}
                     value={v.vehicleStatus}
                     onChange={e => handleStatus(v, e.target.value)}
                   >

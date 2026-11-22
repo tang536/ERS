@@ -9,24 +9,13 @@ import DictThFilter from '@/components/DictThFilter'
 import Pagination from '@/components/Pagination'
 import RowActions from '@/components/RowActions'
 import { fmtD, fmtDT, recentDateRange } from '@/utils/datetime'
+import { ORDER_BADGE } from '@/utils/statusBadges'
+import { money } from '@/utils/money'
 import { CustomerCreditModal } from './components/OpsExtAssets'
 
 const EMPTY = { idCard: '', fullName: '', contactPhone: '', memberLevel: '普通会员', memberDiscount: 1 }
 
-// 订单状态配色与订单页保持一致（同一状态在任何页面都是同一种颜色）
-const ORDER_BADGE: Record<string, string> = {
-  '待支付': 'status-warning',
-  '已支付': 'status-primary',
-  '租赁中': 'status-primary',
-  '已完结': 'status-success',
-  '已完成': 'status-success',
-  '已取消': 'status-default',
-  '已逾期': 'status-danger',
-}
-
 const STATUS_OPTIONS = ['待支付', '已支付', '租赁中', '已完结', '已取消']
-
-const money = (v: any) => `¥${Number(v ?? 0).toFixed(2)}`
 
 export default function Customers() {
   const { toast, confirm } = useUI()

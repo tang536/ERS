@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { orderApi } from '@/api'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
 import DateRangeCalendar from '@/components/DateRangeCalendar'
 import { todayInput, shiftDateInput, fmtDT } from '@/utils/datetime'
+import { VEHICLE_BADGE } from '@/utils/statusBadges'
 
 interface VehicleCalendarModalProps {
   onClose: () => void
@@ -27,12 +28,7 @@ interface CalendarVehicle {
   slots: Slot[]
 }
 
-const STATUS_TONE: Record<string, string> = {
-  空闲: 'status-success',
-  在租: 'status-primary',
-  维保: 'status-warning',
-  报废: 'status-danger',
-}
+
 
 /**
  * 车辆可用日历：按时间窗查看每台车已有的「待支付 / 已支付 / 租赁中」档期。
@@ -98,7 +94,7 @@ export default function VehicleCalendarModal({ onClose }: VehicleCalendarModalPr
                       <strong>{v.vehicleNo}</strong>
                       {v.model ? <span className="cell-sub">{v.model}</span> : null}
                     </td>
-                    <td><span className={`status-tag ${STATUS_TONE[v.vehicleStatus] || 'status-warning'}`}>{v.vehicleStatus}</span></td>
+                    <td><span className={`status-tag ${VEHICLE_BADGE[v.vehicleStatus] || 'status-warning'}`}>{v.vehicleStatus}</span></td>
                     <td>
                       {v.slots.length === 0
                         ? <span className="status-tag status-success">该时段空闲</span>

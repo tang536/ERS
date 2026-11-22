@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useUI } from '@/components/UIProvider'
 import Icon from '@/components/Icon'
 import type { RentableVehicle } from '@/types'
+import { money } from '@/utils/money'
 
 /**
  * 顾客端「线上租车」首页。
@@ -27,7 +28,6 @@ const SORTS: Array<{ key: SortKey; label: string; hint: string }> = [
   { key: 'newest', label: '新车优先', hint: '按购入时间' },
 ]
 
-const money = (v: number) => `¥${(Number.isFinite(v) ? v : 0).toFixed(2)}`
 
 /** 车龄（年）：只用于「新车优先」的展示，不暴露购入价 */
 const ageText = (buyTime?: string | null) => {
