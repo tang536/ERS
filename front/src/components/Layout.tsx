@@ -41,7 +41,7 @@ const ALL_MENUS: MenuItem[] = ([
   // 「维保管理」不再是独立菜单：已并入「车辆管理」页的第三个页签（/vehicles）。
   // 「车辆盘点」不再是独立菜单：已并入「车辆管理」页的「车辆盘点」页签（/vehicles）。
   { key: 'reports', label: '统计报表', icon: 'reports', path: '/reports', group: '数据分析' },
-  // 优惠券核销：顾客出示二维码，前台扫码核对持券人后核销
+  // 优惠券核销：顾客出示二维码，前台扫码核对持券人后核销（仅前台）
   { key: 'coupon-verify', label: '优惠券核销', icon: 'scan', path: '/coupon-verify', group: '运营管理' },
   { key: 'users', label: '账号管理', icon: 'users', path: '/users', group: '系统管理' },
   { key: 'config', label: '系统配置', icon: 'config', path: '/config', group: '系统管理' },

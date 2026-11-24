@@ -141,7 +141,7 @@ export function VehicleAssetPanel() {
   return (
     <div>
       <T><Icon name="vehicles" size={15} chip />车辆档案<span className="ext-count">{filtered.length}</span></T>
-      <div className="panel-help">电池、保险、GPS、事故与费用记录，用于判断车辆是否继续出租。</div>
+      <div className="panel-help">电池、保险、GPS、事故与费用记录。</div>
       <div className="inline-form">
         <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}>
           <option value="">全部车辆</option>
@@ -259,7 +259,7 @@ export function CouponCampaignPanel() {
         <input type="number" min="0" placeholder="名额" value={form.totalQuota} onChange={e => setForm({ ...form, totalQuota: e.target.value })} />
         <button className="btn-sm btn-sm-primary" onClick={create}>新增</button>
       </div>
-      {loading ? <div className="loading-line">加载中…</div> : rows.length === 0 ? <div className="field-hint">暂无券活动。适合做生日券、会员日、沉睡唤醒的自动投放。</div> : (
+      {loading ? <div className="loading-line">加载中…</div> : rows.length === 0 ? <div className="field-hint">暂无券活动。</div> : (
         <div className="ext-list">
           {rows.map(c => (
             <div key={c.campaignId} className="ext-list-row">
@@ -324,7 +324,7 @@ export function GroupVoucherPanel() {
         />
         <button className="btn-sm btn-sm-default" onClick={create}>录入</button>
       </div>
-      {loading ? <div className="loading-line">加载中…</div> : rows.length === 0 ? <div className="field-hint">暂无团购券。美团/抖音券可先录入券码再核销。</div> : (
+      {loading ? <div className="loading-line">加载中…</div> : rows.length === 0 ? <div className="field-hint">暂无团购券。</div> : (
         <div className="ext-list">
           {rows.map(v => (
             <div key={v.voucherId} className="ext-list-row">
@@ -360,7 +360,7 @@ export function NotificationOutboxPanel() {
   return (
     <div style={{ marginTop: 18 }}>
       <T><Icon name="bell" size={15} chip />通知出站队列<span className="ext-count">{rows.length}</span></T>
-      {loading ? <div className="loading-line">加载中…</div> : rows.length === 0 ? <div className="field-hint">暂无待发通知。订单创建、到期提醒等事件会进入这里。</div> : (
+      {loading ? <div className="loading-line">加载中…</div> : rows.length === 0 ? <div className="field-hint">暂无待发通知。</div> : (
         <div className="ext-list">
           {rows.map(n => (
             <div key={n.notifyId} className="ext-list-row">
@@ -411,7 +411,7 @@ export function DamagePanel({ orderId, onChanged }: { orderId: number; onChanged
         <input placeholder="发现的问题（选填）" value={form.findings} onChange={e => setForm({ ...form, findings: e.target.value })} />
         <button className="btn-sm btn-sm-primary" onClick={create}>生成估价</button>
       </div>
-      {loading ? <div className="loading-line">加载中…</div> : rows.length === 0 ? <div className="field-hint">暂无定损记录。系统按严重度估价，最终金额以人工复核为准。</div> : (
+      {loading ? <div className="loading-line">加载中…</div> : rows.length === 0 ? <div className="field-hint">暂无定损记录。</div> : (
         <div className="ext-list">
           {rows.map(d => (
             <div key={d.assessmentId} className="ext-list-row">
@@ -514,7 +514,7 @@ export function CustomerCreditModal({ customerId, customerName, onClose }: { cus
             <label className="field"><span>实名状态</span><select value={form.realNameStatus} onChange={e => setForm({ ...form, realNameStatus: e.target.value })}><option>未认证</option><option>认证中</option><option>已认证</option></select></label>
             <label className="field"><span>证件号码</span><input placeholder="身份证号（脱敏保存）" value={form.idCardNo} onChange={e => setForm({ ...form, idCardNo: e.target.value })} /></label>
           </div>
-          <div className="field-hint" style={{ marginTop: 10 }}>免押额度只抵扣押金，不抵扣租金；企业授信用于月结客户，超额度后下单会按普通客户收押。</div>
+          <div className="field-hint" style={{ marginTop: 10 }}>免押额度只抵扣押金，不抵扣租金。</div>
         </div>
         <div className="modal-footer"><button className="btn-sm btn-sm-default" onClick={onClose}>取消</button><button className="btn-sm btn-sm-primary" onClick={save} disabled={loading}>保存</button></div>
       </div>

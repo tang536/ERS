@@ -51,6 +51,8 @@ public class RefreshTokenRotationTests
         var rotated = await auth.RefreshAsync(login.RefreshToken);
         Assert.False(string.IsNullOrEmpty(rotated.RefreshToken));
         Assert.NotEqual(login.RefreshToken, rotated.RefreshToken);
+        // 回归：续期响应必须带回账号名，否则前端刷新令牌后账号显示会变空
+        Assert.Equal(account, rotated.LoginAccount);
 
         //旧令牌重放：必须拒绝
         await Assert.ThrowsAsync<BusinessException>(() => auth.RefreshAsync(login.RefreshToken));

@@ -551,6 +551,8 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
                 RefreshToken = GenerateJwt(userId, customer.LoginAccount ?? account, UserTypeCustomer, RoleCustomer, sid, TokenTypeRefresh, RefreshLifetime(), newJti),
                 UserType = UserTypeCustomer,
                 RoleName = RoleCustomer,
+                //账号名以库为准；续期响应同样要带回，否则前端刷新令牌后账号显示会变空
+                LoginAccount = customer.LoginAccount ?? account,
                 //姓名可能为空（注册只填用户名），为空时回落到令牌里的账号名
                 UserName = string.IsNullOrEmpty(customer.FullName) ? account : customer.FullName,
                 UserId = userId,
@@ -571,6 +573,7 @@ public class AuthService(AppDbContext db, IConfiguration config, SessionRegistry
             RefreshToken = GenerateJwt(userId, user.LoginAccount, user.UserType, roleName, sid, TokenTypeRefresh, RefreshLifetime(), newJti, user.MustChangePassword),
             UserType = user.UserType,
             RoleName = roleName,
+            LoginAccount = user.LoginAccount,
             PermissionCodes = await LoadPermissionCodesAsync(user.Role),
             UserName = user.UserName ?? user.LoginAccount,
             UserId = userId,

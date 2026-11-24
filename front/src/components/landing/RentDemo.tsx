@@ -156,8 +156,7 @@ export default function RentDemo({ pricing, onTry }: RentDemoProps) {
       <div className="demo-intro">
         <h2>一笔租车订单，怎么走完整个系统</h2>
         <p>
-          左边改租期、归还时间和会员档位，右边这张结算单会按系统真实公式即时重算——
-          计费小时向上取整、日租金除以 24 得小时价、超时按倍数单收、押金多退少补。
+          左边调整租期、归还时间与会员档位，右边结算单会按系统真实公式即时重算；
           再切换顾客 / 前台 / 财务视角，能看到每个角色分别经手哪一步、能读到什么。
         </p>
       </div>
@@ -215,10 +214,7 @@ export default function RentDemo({ pricing, onTry }: RentDemoProps) {
             </div>
           </fieldset>
 
-          <p className="demo-note">
-            日租金 ¥{pricing.dailyRent.toFixed(2)} / 天，押金 ¥{pricing.deposit.toFixed(2)}，
-            超时倍数 {pricing.overdueMultiplier}。会员档位为演示值，门店实际折扣以会员权益表为准。
-          </p>
+          <p className="demo-note">会员档位为演示值，门店实际折扣以会员权益表为准。</p>
         </div>
 
         <div className="demo-paper" data-ui role="group" aria-label="这笔订单的费用明细">

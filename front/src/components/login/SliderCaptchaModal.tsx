@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { authApi } from '@/api'
 import Icon from '@/components/Icon'
 
@@ -188,7 +189,9 @@ export default function SliderCaptchaModal({
   const pieceWidthPct = challenge ? (challenge.pieceCanvas / challenge.width) * 100 : 0
   const pieceTopPct = challenge ? (challenge.pieceY / challenge.height) * 100 : 0
 
-  return (
+  /* 必须挂到 body：首页舞台卡片带 transform，position:fixed 会被它当成包含块，
+     弹窗就会被塞进卡片内部并在窄屏下溢出视口。 */
+  return createPortal(
     <div
       className="modal-overlay slider-overlay"
       onMouseDown={e => { if (e.target === e.currentTarget && phase !== 'checking') onClose() }}
@@ -288,6 +291,7 @@ export default function SliderCaptchaModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

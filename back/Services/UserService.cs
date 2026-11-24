@@ -21,7 +21,8 @@ public class UserService(AppDbContext db, SessionRegistry sessions)
     public async Task VerifyAdminPassword(int adminId, string? password)
     {
         if (string.IsNullOrWhiteSpace(password)) throw new BusinessException("请输入当前管理员账号的密码");
-        var admin = await _db.SystemUsers.FirstOrDefaultAsync(u => u.UserId == adminId && u.UserType == "admin")
+        // UserType 是 [NotMapped] 的 TPH 判别属性，不能进 LINQ；用 OfType 落到 user_type 判别列
+        var admin = await _db.SystemUsers.OfType<AdminUser>().FirstOrDefaultAsync(u => u.UserId == adminId)
             ?? throw new BusinessException("当前账号不是管理员，无法执行此操作");
         if (admin.UserStatus != 1) throw new BusinessException("当前管理员账号已停用");
         if (!BCrypt.Net.BCrypt.Verify(password, admin.LoginPwd))

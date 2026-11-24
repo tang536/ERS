@@ -434,10 +434,7 @@ export default function Operations() {
 
       {tab === 'coupon' ? (
         <>
-          <div className="callout callout-info">
-            <Icon name="info" size={18} chip />
-            <span>券只抵扣租金、不可叠加；停用后不再发放，已领取的在有效期内仍可用。</span>
-          </div>
+          <div className="field-hint">券只抵扣租金，不可叠加；停用后已领取的仍可用至有效期。</div>
           <div className="table-wrap">
             <table className="data-table nowrap-table">
               <thead>
@@ -449,7 +446,7 @@ export default function Operations() {
               <tbody>
                 {coupons.map(c => (
                   <tr key={c.couponId}>
-                    <td>
+                    <td data-label="券名称">
                       <div className="name-with-thumb">
                         {c.imageUrl
                           ? <img className="table-thumb" src={c.imageUrl} alt="" loading="lazy" />
@@ -457,22 +454,22 @@ export default function Operations() {
                         <strong>{c.name}</strong>
                       </div>
                     </td>
-                    <td>¥{c.amount.toFixed(2)}</td>
-                    <td>{c.minAmount > 0 ? `满 ¥${c.minAmount.toFixed(2)}` : '无门槛'}</td>
-                    <td>
+                    <td data-label="抵扣">¥{c.amount.toFixed(2)}</td>
+                    <td data-label="门槛">{c.minAmount > 0 ? `满 ¥${c.minAmount.toFixed(2)}` : '无门槛'}</td>
+                    <td data-label="兑换码">
                       {c.redeemCode
                         ? <span className="redeem-code-cell"><Icon name="qrcode" size={13} />{c.redeemCode}
                           <span className={`badge ${c.redeemOpen ? 'badge-success' : 'badge-muted'}`}>{c.redeemOpen ? '开放' : '仅码'}</span>
                         </span>
                         : <span className="muted-text">未设置</span>}
                     </td>
-                    <td className="col-hide-md">{fmtD(c.validFrom)} ~ {fmtD(c.validTo)}</td>
-                    <td>{c.issuedQty} / {c.totalQty > 0 ? c.totalQty : '不限'}</td>
-                    <td>{c.perLimit} 张</td>
-                    <td>
+                    <td className="col-hide-md" data-label="有效期">{fmtD(c.validFrom)} ~ {fmtD(c.validTo)}</td>
+                    <td data-label="发放/总量">{c.issuedQty} / {c.totalQty > 0 ? c.totalQty : '不限'}</td>
+                    <td data-label="限额">{c.perLimit} 张</td>
+                    <td data-label="状态">
                       <span className={`badge ${c.status === '启用' ? 'badge-success' : 'badge-muted'}`}>{c.status}</span>
                     </td>
-                    <td>
+                    <td data-label="操作">
                       <div className="btn-group">
                         <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => openCouponEdit(c)}><Icon name="config" size={14} /><span className="btn-label">编辑</span></button>
                         <button className="btn-sm btn-sm-primary btn-icon-sm" onClick={() => openGrant(c)} disabled={c.status !== '启用'}><Icon name="coupon" size={14} /><span className="btn-label">发券</span></button>
@@ -500,10 +497,6 @@ export default function Operations() {
         <PricingPanel />
       ) : (
         <>
-          <div className="callout callout-info">
-            <Icon name="info" size={18} chip />
-            <span>「按天」服务按订单计费天数计价，「一次性」只收一次；下单时会把名称与单价快照进订单，之后改价不影响历史订单。</span>
-          </div>
           <div className="table-wrap">
             <table className="data-table nowrap-table">
               <thead>
@@ -515,7 +508,7 @@ export default function Operations() {
               <tbody>
                 {addons.map(a => (
                   <tr key={a.addonId}>
-                    <td>
+                    <td data-label="服务名称">
                       <div className="name-with-thumb">
                         {a.imageUrl
                           ? <img className="table-thumb" src={a.imageUrl} alt="" loading="lazy" />
@@ -523,19 +516,19 @@ export default function Operations() {
                         <strong>{a.name}</strong>
                       </div>
                     </td>
-                    <td>¥{a.price.toFixed(2)}</td>
-                    <td>{a.unit}</td>
-                    <td>
+                    <td data-label="价格">¥{a.price.toFixed(2)}</td>
+                    <td data-label="计价方式">{a.unit}</td>
+                    <td data-label="库存">
                       {a.stockQty === -1 || a.stockQty == null
                         ? <span className="muted-text">不限</span>
                         : <span className={a.lowStock ? 'text-danger' : ''}>{a.stockQty}{a.lowStock ? ' · 偏低' : ''}</span>}
                     </td>
-                    <td className="col-hide-md">{a.description || '—'}</td>
-                    <td>{a.sortNo}</td>
-                    <td>
+                    <td className="col-hide-md" data-label="说明">{a.description || '—'}</td>
+                    <td data-label="排序">{a.sortNo}</td>
+                    <td data-label="状态">
                       <span className={`badge ${a.status === '启用' ? 'badge-success' : 'badge-muted'}`}>{a.status}</span>
                     </td>
-                    <td>
+                    <td data-label="操作">
                       <div className="btn-group">
                         <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => openAddonEdit(a)}><Icon name="config" size={14} /><span className="btn-label">编辑</span></button>
                         <button className="btn-sm btn-sm-default btn-icon-sm" onClick={() => toggleAddon(a)}>
@@ -599,7 +592,7 @@ export default function Operations() {
                     value={couponForm.minAmount}
                     onChange={e => setCouponForm({ ...couponForm, minAmount: e.target.value })}
                   />
-                  <div className="field-hint">订单租金达到该金额才可用，0 表示无门槛。</div>
+                  <div className="field-hint">0 表示无门槛。</div>
                 </div>
               </div>
               <div className="form-group">
@@ -655,7 +648,7 @@ export default function Operations() {
                       setCouponErrors({ ...couponErrors, redeemCode: '' })
                     }}
                   />
-                  <div className="field-hint">顾客在「我的优惠券」输入该码即可自助领取；留空表示不开放口令领取。</div>
+                  <div className="field-hint">留空则不开放口令领取。</div>
                   {couponErrors.redeemCode && <div className="field-error">{couponErrors.redeemCode}</div>}
                 </div>
                 <div className="form-group">
@@ -668,7 +661,7 @@ export default function Operations() {
                     />
                     <span>{couponForm.redeemOpen ? '顾客可自助领券' : '关闭（仅后台发券）'}</span>
                   </label>
-                  <div className="field-hint">关闭后兑换码立即失效，不影响已领出的券。</div>
+                  <div className="field-hint">关闭后立即失效，不影响已领取的券。</div>
                 </div>
               </div>
             </div>
@@ -711,9 +704,9 @@ export default function Operations() {
                       placeholder="按姓名 / 手机号搜索"
                     />
                   </div>
-                  <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid var(--border-color, #e5e7eb)', borderRadius: 8 }}>
+                  <div className="grant-customer-list">
                     {grantCustomers.map(c => (
-                      <label key={c.customerId} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid var(--border-color, #e5e7eb)', fontWeight: 400 }}>
+                      <label key={c.customerId} className="grant-customer-row">
                         <input
                           type="checkbox"
                           checked={grantSelected.has(c.customerId)}
@@ -769,7 +762,7 @@ export default function Operations() {
               <ImagePicker
                 value={addonForm.imageUrl}
                 uploading={addonUploading}
-                hint="选填；展示在顾客下单页的服务项上，支持 jpg / png / webp / gif，不超过 5MB。"
+                hint="选填，支持 jpg / png / webp / gif，不超过 5MB。"
                 onPick={uploadAddonImage}
                 onClear={() => setAddonForm(prev => ({ ...prev, imageUrl: '' }))}
               />
@@ -803,7 +796,7 @@ export default function Operations() {
                   />
                   {addonErrors.stockQty
                     ? <div className="field-error">{addonErrors.stockQty}</div>
-                    : <div className="field-hint">-1 表示不限库存；头盔、雨衣等实物填实际数量。</div>}
+                    : <div className="field-hint">-1 表示不限库存。</div>}
                 </div>
                 <div className="form-group">
                   <label>低库存提醒</label>
@@ -815,7 +808,7 @@ export default function Operations() {
                   />
                   {addonErrors.lowStockThreshold
                     ? <div className="field-error">{addonErrors.lowStockThreshold}</div>
-                    : <div className="field-hint">剩余数量小于等于该值时提示补货；0 表示不提醒。</div>}
+                    : <div className="field-hint">低于该值提示补货，0 不提醒。</div>}
                 </div>
               </div>
               <div className="form-group">

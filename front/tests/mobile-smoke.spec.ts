@@ -15,6 +15,10 @@ const staffAccount: Account | null = process.env.E2E_STAFF_ACCOUNT && process.en
   ? { account: process.env.E2E_STAFF_ACCOUNT, password: process.env.E2E_STAFF_PASSWORD, roleType: process.env.E2E_STAFF_ROLE || 'admin', kind: 'staff' }
   : null
 
+const receptionAccount: Account | null = process.env.E2E_RECEPTION_ACCOUNT && process.env.E2E_RECEPTION_PASSWORD
+  ? { account: process.env.E2E_RECEPTION_ACCOUNT, password: process.env.E2E_RECEPTION_PASSWORD, roleType: 'reception', kind: 'staff' }
+  : null
+
 const customerAccount: Account | null = process.env.E2E_CUSTOMER_ACCOUNT && process.env.E2E_CUSTOMER_PASSWORD
   ? { account: process.env.E2E_CUSTOMER_ACCOUNT, password: process.env.E2E_CUSTOMER_PASSWORD, kind: 'customer' }
   : null
@@ -72,14 +76,18 @@ async function assertPageHealth(page: any, route: string, testInfo: any) {
   })
 }
 
+// 仅前台角色可进：券核销已收紧到前台，管理员不再出现在 STAFF_ROUTES 中。
 const STAFF_ROUTES = [
   '/dashboard', '/orders', '/settlements', '/customers', '/vehicles',
-  '/operations', '/coupon-verify', '/reports', '/users', '/config', '/dict',
+  '/operations', '/reports', '/users', '/config', '/dict',
 ]
+
+const RECEPTION_ROUTES = ['/coupon-verify']
 
 const CUSTOMER_ROUTES = ['/my-orders', '/rent', '/coupons', '/profile', '/membership']
 
 let staffUser: any = null
+let receptionUser: any = null
 let customerUser: any = null
 
 test.describe('员工端关键路由', () => {
@@ -96,6 +104,27 @@ test.describe('员工端关键路由', () => {
   })
 
   for (const route of STAFF_ROUTES) {
+    test(`布局健康 ${route}`, async ({ page }, testInfo) => {
+      await page.goto(route)
+      await page.waitForTimeout(1200)
+      await assertPageHealth(page, route, testInfo)
+    })
+  }
+})
+
+test.describe('前台专属路由', () => {
+  test.skip(!receptionAccount, '未配置 E2E_RECEPTION_ACCOUNT / E2E_RECEPTION_PASSWORD，跳过前台端回归')
+
+  test.beforeAll(async () => {
+    if (receptionAccount) receptionUser = await loginByApi(receptionAccount)
+  })
+
+  test.beforeEach(async ({ page }) => {
+    if (!receptionUser) return
+    await page.addInitScript((u) => localStorage.setItem('user', JSON.stringify(u)), receptionUser)
+  })
+
+  for (const route of RECEPTION_ROUTES) {
     test(`布局健康 ${route}`, async ({ page }, testInfo) => {
       await page.goto(route)
       await page.waitForTimeout(1200)

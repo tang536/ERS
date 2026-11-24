@@ -368,6 +368,15 @@ input[type='password']::-webkit-credentials-auto-fill-button { visibility: hidde
 }
 /* 多行文本框默认高度自适应内容，纵向可拖动拉伸，不限制死高度 */
 .form-group textarea { resize: vertical; line-height: 1.5; min-height: 84px; }
+/* 单选 / 复选是替换元素，不能被上面的 width:100% 拉成整行宽；
+   否则文字会被挤到最右侧，点击热区也会覆盖整行。 */
+.form-group input[type='radio'],
+.form-group input[type='checkbox'] {
+  width: 16px; height: 16px; padding: 0; margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
 .form-group input:focus,
 .form-group select:focus,
 .prompt-body input:focus,
@@ -4007,10 +4016,6 @@ a.landing-theme-btn { text-decoration: none; }
 }
 /* 手机把标题断成均衡的两行，避免「办理」两个字单独掉到第二行 */
 .hero-break { display: none; }
-.hero-sub {
-  margin: 18px auto 0; max-width: 700px;
-  font-size: 18px; line-height: 1.7; color: var(--text-secondary);
-}
 .hero-actions { margin-top: 20px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
 /* 首屏两个入口按钮：一个主色、一个描边，但**尺寸必须一致**。
    原先主按钮 padding 28 / 描边按钮 padding 24 再加 1.5px 边框，
@@ -4032,9 +4037,6 @@ a.landing-theme-btn { text-decoration: none; }
   transition: color .2s var(--ease), background .2s var(--ease), border-color .2s var(--ease);
 }
 .hero-btn-ghost:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-bg); }
-.hero-meta { margin-top: 16px; display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; list-style: none; }
-.hero-meta li { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); }
-.hero-meta svg { color: var(--success-text); }
 .hero-stage-wrap { position: relative; z-index: 2; margin-top: 6px; }
 
 /* ============================================================
@@ -4536,9 +4538,7 @@ a.landing-theme-btn { text-decoration: none; }
      不缩小字号，标题与副标题仍保持 32/14px 的可读尺寸。 */
   .hero { padding-top: 84px; }
   .hero h1 { margin-top: 8px; }
-  .hero-sub { margin-top: 14px; }
   .hero-actions { margin-top: 14px; }
-  .hero-meta { margin-top: 12px; }
   /* 页脚转纵排后高度由文案行高决定：顾客卡的 13px 正文比另两面的 12px 提示高 2px，
      三张卡的提交按钮就会错开 2px。锁一个最小高度，按钮重新落到同一条线上。 */
   .lp-foot { flex-direction: column; align-items: flex-start; gap: 8px; min-height: 47px; }
@@ -5759,9 +5759,7 @@ textarea,
     to { transform: none; }
   }
   .hero-copy h1,
-  .hero-sub,
   .hero-actions,
-  .hero-meta,
   .hero-stage-wrap,
   .demo-intro h2,
   .demo-intro p,
@@ -5777,9 +5775,7 @@ textarea,
   .landing-cta-actions {
     animation: landingRise 0.62s var(--ease) both;
   }
-  .hero-sub { animation-delay: 0.07s; }
   .hero-actions { animation-delay: 0.14s; }
-  .hero-meta { animation-delay: 0.21s; }
   .hero-stage-wrap { animation-delay: 0.1s; }
   .demo-intro p { animation-delay: 0.07s; }
   .demo-paper { animation-delay: 0.08s; }
@@ -6589,12 +6585,13 @@ textarea,
   gap: 8px; align-items: center;
   margin-bottom: 8px;
 }
-.inline-form input, .inline-form select { width: 100%; min-width: 0; height: 34px; font-size: 13px; }
+.inline-form input, .inline-form select, .inline-form .date-range-trigger { width: 100%; min-width: 0; height: 34px; font-size: 13px; }
+.inline-form .date-range { width: 100%; min-width: 0; }
 .inline-form > .btn-sm { width: 100%; justify-content: center; }
 .inline-form > .btn-group { grid-column: 1 / -1; }
+/* 手机端转单列：控件纵向排布，按钮不再折行或溢出 */
 @media (max-width: 620px) {
-  .inline-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .inline-form > .btn-sm:last-child { grid-column: 1 / -1; }
+  .inline-form { grid-template-columns: minmax(0, 1fr); }
 }
 .compact-table th, .compact-table td { padding: 6px 8px; font-size: 12px; }
 .compact-table .cell-note { max-width: 180px; white-space: normal; word-break: break-all; }
@@ -6705,6 +6702,30 @@ textarea,
   box-shadow: 0 0 0 3px rgba(220, 38, 38, .12);
 }
 .inline-form .btn-sm { flex: none; white-space: nowrap; }
+/* 手机端单列表单统一 42px 高；放在桌面控件规则之后，避免被 34px 覆盖 */
+@media (max-width: 620px) {
+  .inline-form input,
+  .inline-form select,
+  .inline-form .date-range-trigger,
+  .inline-form > .btn-sm {
+    height: 42px;
+  }
+}
+
+/* 发券按客户搜索的结果列表：外框与每行控件高度统一，点击整行都能选中 */
+.grant-customer-list {
+  display: flex; flex-direction: column;
+  max-height: 260px; overflow-y: auto;
+  border: 1px solid var(--border-color, #e5e7eb); border-radius: 8px;
+}
+.grant-customer-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer;
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+}
+.grant-customer-row:last-child { border-bottom: none; }
+.grant-customer-row input[type='checkbox'] { width: 16px; height: 16px; flex: 0 0 auto; margin: 0; }
+.grant-customer-row .mono { margin-left: auto; font-size: 12px; }
 
 /* 面板标题下的一句话说明：门店人员看不懂「资产档案 / 备件库存」时先看这里 */
 .panel-help {

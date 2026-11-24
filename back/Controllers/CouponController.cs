@@ -114,18 +114,18 @@ public class CouponController(CouponService svc) : ControllerBase
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
-    ///<summary>前台扫码查券：二维码里是短时签名令牌，验证后带出持券人</summary>
+    ///<summary>前台扫码查券：二维码里是短时签名令牌，验证后带出持券人；仅前台</summary>
     [HttpGet("verify")]
-    [Authorize(Policy = Policies.AdminOrReception)]
+    [Authorize(Policy = Policies.ReceptionOnly)]
     public async Task<IActionResult> Verify([FromQuery] string code)
     {
         try { return Ok(new ApiResponse<CouponVerifyDto> { Data = await _svc.VerifyByCodeAsync(code) }); }
         catch (Exception ex) when (ErrorText.IsHandled(ex)) { return BadRequest(new ApiResponse<object> { Code = 400, Message = ErrorText.Safe(ex), Success = false }); }
     }
 
-    ///<summary>前台核销该券（置为已使用，核销后不可再用）</summary>
+    ///<summary>前台核销该券（置为已使用，核销后不可再用；仅前台）</summary>
     [HttpPost("consume")]
-    [Authorize(Policy = Policies.AdminOrReception)]
+    [Authorize(Policy = Policies.ReceptionOnly)]
     public async Task<IActionResult> Consume([FromBody] CouponRedeemInput input)
     {
         try

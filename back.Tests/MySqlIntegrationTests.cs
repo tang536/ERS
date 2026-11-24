@@ -243,6 +243,41 @@ public class MySqlIntegrationTests
     }
 
     [MySqlFact]
+    public async Task UserService_AdminPasswordGuard_TranslatesOnRealDatabase()
+    {
+        using var testDb = TestDatabase.Create();
+        var db = testDb.Db;
+
+        db.Roles.AddRange(Role.Create("管理员", null), Role.Create("前台", null), Role.Create("财务", null));
+        await db.SaveChangesAsync();
+        var adminRole = await db.Roles.SingleAsync(r => r.RoleName == "管理员");
+
+        var hash = BCrypt.Net.BCrypt.HashPassword("Guard12345");
+        var admin = SystemUser.CreateStaff<AdminUser>("guard_admin", hash, adminRole.RoleId, "守卫管理员");
+        db.SystemUsers.Add(admin);
+        await db.SaveChangesAsync();
+
+        var service = new UserService(db, null!);
+
+        // 回归：UserType 是 [NotMapped] 的 TPH 判别属性，曾把 u.UserType == "admin" 写进 Where
+        // 导致 EF 翻译失败，所有需要管理员密码确认的账号操作一律 500。
+        await service.VerifyAdminPassword(admin.UserId, "Guard12345");
+        await Assert.ThrowsAsync<BusinessException>(() => service.VerifyAdminPassword(admin.UserId, "wrong-password"));
+
+        // 守卫通过后真实创建前台账号：TPH 判别值必须落成 reception
+        var created = await service.CreateStaff(new CreateUserDto
+        {
+            LoginAccount = "guard_qt",
+            Password = "Guard12345",
+            UserName = "守卫前台",
+            RoleType = "reception"
+        });
+        var row = await db.SystemUsers.AsNoTracking().SingleAsync(u => u.UserId == created.UserId);
+        Assert.IsType<ReceptionUser>(row);
+        Assert.Equal("reception", row.UserType);
+    }
+
+    [MySqlFact]
     public async Task LogArchive_WritesJsonlThenDeletesOnlyExpiredRows()
     {
         using var testDb = TestDatabase.Create();

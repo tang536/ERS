@@ -189,10 +189,6 @@ export default function Landing() {
         <div className="hero-inner">
           <div className="hero-copy">
             <h1>电动车租赁，<br className="hero-break" />全程线上办理</h1>
-            <p className="hero-sub">
-              顾客在线选车、下单、支付，到店扫码取车，归还自动结算；
-              门店员工登录后可处理订单、车辆、会员与对账事务。
-            </p>
             <div className="hero-actions">
               {allowedModes.includes('customer') && (
                 <button className="btn-primary hero-btn-primary" onClick={() => igniteAndFocusStage('customer')}>
@@ -207,11 +203,6 @@ export default function Landing() {
                 </button>
               )}
             </div>
-            <ul className="hero-meta">
-              <li><Icon name="check" size={14} />线上选车下单</li>
-              <li><Icon name="check" size={14} />到店取车即走</li>
-              <li><Icon name="check" size={14} />归还自动结算</li>
-            </ul>
           </div>
 
           <div className="hero-stage-wrap" ref={stageWrapRef}>
@@ -233,10 +224,7 @@ export default function Landing() {
       <section className="landing-rules" id="features">
         <div className="rules-head">
           <h2>系统里真实存在的六条规则</h2>
-          <p>
-            下面这些不是功能名词，而是上线后每天都会生效的约束：状态机、并发占车、计费口径、
-            结算顺序、视图同源与角色权限。每条都能在代码或数据库对象里找到对应实现。
-          </p>
+          <p>它们不是功能名词，而是上线后每天都会生效的约束，每条都能在代码或数据库对象里找到对应实现。</p>
         </div>
         <dl className="rules-list">
           {capabilities.map(c => (
@@ -254,16 +242,20 @@ export default function Landing() {
 
       {/* ── 底部 CTA ── */}
       <section className="landing-cta">
-        <h2>现在就开始</h2>
-        <p>顾客注册即享普通会员价；门店账号由管理员在后台开通。</p>
+        <h2>还没开始用车？</h2>
+        <p>顾客注册后即可在线选车下单；门店账号由管理员在后台开通。</p>
         <div className="landing-cta-actions">
-          {allowedModes.includes('customer') && (
-            <button className="btn-primary cta-btn-primary" onClick={() => igniteAndFocusStage('register')}>
-              免费注册租车
-            </button>
-          )}
-          {allowedModes.includes('staff') && (
-            <button className="cta-btn-ghost" onClick={() => igniteAndFocusStage('staff')}>
+          {allowedModes.includes('customer') ? (
+            <>
+              <button className="btn-primary cta-btn-primary" onClick={() => igniteAndFocusStage('register')}>
+                免费注册
+              </button>
+              <button className="cta-btn-ghost" onClick={() => igniteAndFocusStage('customer')}>
+                已有账号，直接登录
+              </button>
+            </>
+          ) : allowedModes.includes('staff') && (
+            <button className="btn-primary cta-btn-primary" onClick={() => igniteAndFocusStage('staff')}>
               工作人员登录
             </button>
           )}

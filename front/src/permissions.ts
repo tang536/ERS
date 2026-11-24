@@ -42,8 +42,8 @@ export const ROUTE_ROLES: Record<string, string[]> = {
   '/members': [ROLE.ADMIN],
   // 运营配置（优惠券 / 增值服务）：仅管理员维护
   '/operations': [ROLE.ADMIN],
-  // 优惠券核销：前台执行扫码核销，管理员可查可办
-  '/coupon-verify': [ROLE.ADMIN, ROLE.RECEPTION],
+  // 优惠券核销：前台执行扫码核销，仅前台角色
+  '/coupon-verify': [ROLE.RECEPTION],
   // 交接班：前台开班/交班，管理员可查历史与核对
   '/shifts': [ROLE.ADMIN, ROLE.RECEPTION],
   // 车辆管理页含「车辆档案 / 车辆盘点 / 维保管理」三页签：

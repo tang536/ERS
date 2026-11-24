@@ -203,8 +203,10 @@ npm run build       # 生产构建，产物在 front/dist
 
 ```bash
 cd front
-# 先启动前后端，再准备一个管理员/前台账号和一个顾客账号；账号密码只放环境变量
-E2E_STAFF_ACCOUNT=... E2E_STAFF_PASSWORD=... E2E_CUSTOMER_ACCOUNT=... E2E_CUSTOMER_PASSWORD=... npm run test:e2e
+# 先启动前后端，再准备管理员、前台、顾客三类账号；账号密码只放环境变量
+E2E_STAFF_ACCOUNT=... E2E_STAFF_PASSWORD=... \
+E2E_RECEPTION_ACCOUNT=... E2E_RECEPTION_PASSWORD=... \
+E2E_CUSTOMER_ACCOUNT=... E2E_CUSTOMER_PASSWORD=... npm run test:e2e
 ```
 
 回归覆盖 390 / 768 / 1280 三档视口，检查员工端与顾客端关键路由的横向溢出、表格卡片字段名与页面可达性，并输出整页截图作为失败证据。未配置账号时对应用例自动跳过；`front/test-results`、`playwright-report` 只留在本地，不入库。

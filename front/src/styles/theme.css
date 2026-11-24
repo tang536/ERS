@@ -524,7 +524,6 @@ html[data-theme='dark'] .sidebar { background: var(--card); }
   letter-spacing: -0.02em;
   font-weight: 600;
 }
-.hero-sub { color: var(--text-secondary); }
 .hero-badge {
   border-radius: 3px;
   border-color: var(--border-strong);
